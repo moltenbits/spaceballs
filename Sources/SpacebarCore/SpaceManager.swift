@@ -163,57 +163,48 @@ public class SpaceManager {
 
   /// Activates (brings to front) the window with the given CGWindowID.
   ///
-  /// Uses the same private SkyLight APIs as yabai and AltTab:
-  /// 1. `_SLPSSetFrontProcessWithOptions` — targets a specific CGWindowID,
+  /// Uses the same approach as AltTab:
+  /// 1. Find the target window's AXUIElement via brute-force enumeration
+  ///    (kAXWindowsAttribute cannot see windows on other Spaces)
+  /// 2. `_SLPSSetFrontProcessWithOptions` — targets the specific CGWindowID,
   ///    triggering macOS's automatic space-switch animation
-  /// 2. `SLPSPostEventRecordTo` — synthetic key-window events
-  /// 3. `AXUIElementPerformAction(kAXRaiseAction)` — z-order raise (best-effort)
+  /// 3. `SLPSPostEventRecordTo` — synthetic key-window events
+  /// 4. `AXUIElementPerformAction(kAXRaiseAction)` — z-order raise
   ///
   /// Requires Accessibility permission to be granted to the calling process.
   public func activateWindow(id windowID: Int) throws {
-    let log = { (msg: String) in _ = fputs("[spacebar] \(msg)\n", stderr) }
-
-    log("Bundle ID: \(Bundle.main.bundleIdentifier ?? "nil")")
-    log("Target window ID: \(windowID)")
-
-    // 1. Find the window in our enumeration
+    // 1. Find the window in our CGWindowList enumeration
     let windows = getAllWindows()
     guard let window = windows.first(where: { $0.id == windowID }) else {
       throw WindowActivationError.windowNotFound(windowID: windowID)
     }
 
-    log("Found: \(window.ownerName) (pid \(window.pid)) — \"\(window.name ?? "<no title>")\"")
-    log("Window spaces: \(window.spaceIDs)")
-
-    // Find which space is current
-    let spaces = getAllSpaces()
-    let currentSpace = spaces.first(where: { $0.isCurrent })
-    log("Current space: \(currentSpace?.id ?? 0)")
-
-    let windowOnCurrentSpace = window.spaceIDs.contains(where: { sid in
-      spaces.first(where: { $0.id == sid })?.isCurrent == true
-    })
-    log("Window on current space: \(windowOnCurrentSpace)")
-
     // 2. Check AX trust
     guard AXIsProcessTrusted() else {
       throw WindowActivationError.accessibilityNotTrusted
     }
-    log("AX trusted: true")
 
-    // 3. Get the ProcessSerialNumber for the owning app
     let pid = pid_t(window.pid)
+
+    // 3. Find the AXUIElement for this window via brute-force enumeration.
+    //    kAXWindowsAttribute does NOT return windows on other Spaces.
+    //    We construct AXUIElement handles directly via _AXUIElementCreateWithRemoteToken,
+    //    iterating AXUIElementID values until we find one matching our CGWindowID.
+    //    (Workaround discovered by AltTab in Feb 2025, issue #1324.)
+    let axElement = findAXWindowBruteForce(pid: pid, targetCGWindowID: CGWindowID(windowID))
+
+    // 4. Get PSN and activate via SkyLight (same sequence as AltTab).
+    //    _SLPSSetFrontProcessWithOptions targets the specific CGWindowID and
+    //    triggers macOS's space-switch animation if the window is on another Space.
     var psn = ProcessSerialNumber()
-    let psnResult = GetProcessForPID(pid, &psn)
-    log("GetProcessForPID: \(psnResult) — PSN: \(psn.highLongOfPSN):\(psn.lowLongOfPSN)")
+    GetProcessForPID(pid, &psn)
 
     let wid = CGWindowID(windowID)
+    _SLPSSetFrontProcessWithOptions(&psn, wid, 0x200)
 
-    // 4. Bring the process to front targeting the specific window.
-    let slpsResult = _SLPSSetFrontProcessWithOptions(&psn, wid, 0x200)
-    log("_SLPSSetFrontProcessWithOptions(\(wid), 0x200): \(slpsResult.rawValue)")
-
-    // 5. Send synthetic key-window events to make it the key window.
+    // 5. Send synthetic key-window events (Hammerspoon technique via AltTab).
+    //    Two event records (type 0x01 key-down, 0x02 key-up) with the
+    //    CGWindowID embedded at offset 0x3c in a 0xf8-byte record.
     var bytes = [UInt8](repeating: 0, count: 0xf8)
     bytes[0x04] = 0xf8
     bytes[0x3a] = 0x10
@@ -223,72 +214,76 @@ public class SpaceManager {
       memset(buf.baseAddress! + 0x20, 0xff, 0x10)
     }
     bytes[0x08] = 0x01
-    let evt1 = SLPSPostEventRecordTo(&psn, &bytes)
+    SLPSPostEventRecordTo(&psn, &bytes)
     bytes[0x08] = 0x02
-    let evt2 = SLPSPostEventRecordTo(&psn, &bytes)
-    log("SLPSPostEventRecordTo: evt1=\(evt1.rawValue), evt2=\(evt2.rawValue)")
+    SLPSPostEventRecordTo(&psn, &bytes)
 
-    // 6. Raise via AX for z-ordering
-    let appElement = AXUIElementCreateApplication(pid)
-    var axWindowsRef: CFTypeRef?
-    let attrResult = AXUIElementCopyAttributeValue(
-      appElement, kAXWindowsAttribute as CFString, &axWindowsRef)
-    log("AXUIElementCopyAttributeValue(kAXWindows): \(attrResult.rawValue)")
-
-    if attrResult == .success, let axWindows = axWindowsRef as? [AXUIElement] {
-      log("AX windows count: \(axWindows.count)")
-      if let axWindow = findAXWindowByID(windowID, in: axWindows) {
-        let raiseResult = AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
-        log("AXUIElementPerformAction(kAXRaise): \(raiseResult.rawValue)")
-      } else {
-        log("AX window ID \(windowID) not matched — trying all AX windows:")
-        for (i, ax) in axWindows.enumerated() {
-          var axWid: CGWindowID = 0
-          let r = _AXUIElementGetWindow(ax, &axWid)
-          log("  AX[\(i)]: _AXUIElementGetWindow=\(r.rawValue), cgWindowID=\(axWid)")
-        }
-      }
-    }
-
-    // 7. Trigger space switch via Apple Events.
-    //    NSRunningApplication.activate() talks to WindowServer directly and
-    //    does NOT trigger the Dock's space-switch animation on Sequoia.
-    //    Apple Events go through the target app's event handler, which the
-    //    Dock observes and responds to with a space switch.
-    let runningApp = NSRunningApplication(processIdentifier: pid)
-    if let bundleID = runningApp?.bundleIdentifier {
-      let script = NSAppleScript(source: "tell application id \"\(bundleID)\" to activate")
-      var errorInfo: NSDictionary?
-      script?.executeAndReturnError(&errorInfo)
-      if let err = errorInfo {
-        log("AppleScript activate error: \(err)")
-      } else {
-        log("AppleScript activate: success (bundle: \(bundleID))")
-      }
-    } else {
-      // Fallback for apps without bundle ID — use app name
-      let script = NSAppleScript(
-        source: "tell application \"\(window.ownerName)\" to activate")
-      var errorInfo: NSDictionary?
-      script?.executeAndReturnError(&errorInfo)
-      if let err = errorInfo {
-        log("AppleScript activate error: \(err)")
-      } else {
-        log("AppleScript activate: success (name: \(window.ownerName))")
-      }
+    // 6. Raise via AX for z-ordering within the app's window stack.
+    if let axElement {
+      AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
     }
   }
 
-  /// Matches an AXUIElement window to a CGWindowID using `_AXUIElementGetWindow`.
-  private func findAXWindowByID(_ targetID: Int, in axWindows: [AXUIElement]) -> AXUIElement? {
-    for axWindow in axWindows {
-      var cgWindowID: CGWindowID = 0
-      if _AXUIElementGetWindow(axWindow, &cgWindowID) == .success,
-        Int(cgWindowID) == targetID
+  // MARK: - AX Brute-Force Window Discovery
+
+  /// Finds an AXUIElement for a window on any Space by brute-forcing
+  /// AXUIElementID values via `_AXUIElementCreateWithRemoteToken`.
+  ///
+  /// `kAXWindowsAttribute` only returns windows on the current Space.
+  /// This method constructs AXUIElement handles directly, iterating element
+  /// IDs 0..999 and checking each for a matching CGWindowID.
+  private func findAXWindowBruteForce(
+    pid: pid_t, targetCGWindowID: CGWindowID
+  ) -> AXUIElement? {
+    // Build the 20-byte remote token template:
+    //   bytes  0..3:  pid (Int32)
+    //   bytes  4..7:  0 (Int32)
+    //   bytes  8..11: 0x636f636f ("coco")
+    //   bytes 12..19: AXUIElementID (UInt64, varies per iteration)
+    var tokenData = Data(count: 20)
+    tokenData.replaceSubrange(0..<4, with: withUnsafeBytes(of: pid) { Data($0) })
+    tokenData.replaceSubrange(4..<8, with: withUnsafeBytes(of: Int32(0)) { Data($0) })
+    tokenData.replaceSubrange(8..<12, with: withUnsafeBytes(of: Int32(0x636f636f)) { Data($0) })
+
+    let startTime = DispatchTime.now()
+
+    for elementID: UInt64 in 0..<1000 {
+      tokenData.replaceSubrange(12..<20, with: withUnsafeBytes(of: elementID) { Data($0) })
+
+      guard
+        let unmanaged = _AXUIElementCreateWithRemoteToken(tokenData as CFData),
+        case let element = unmanaged.takeRetainedValue()
+      else {
+        continue
+      }
+
+      // Check if this element is a window (standard or dialog)
+      var subroleRef: CFTypeRef?
+      guard
+        AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleRef)
+          == .success,
+        let subrole = subroleRef as? String,
+        subrole == kAXStandardWindowSubrole as String
+          || subrole == kAXDialogSubrole as String
+      else {
+        continue
+      }
+
+      // Check if this window's CGWindowID matches our target
+      var cgWid: CGWindowID = 0
+      if _AXUIElementGetWindow(element, &cgWid) == .success,
+        cgWid == targetCGWindowID
       {
-        return axWindow
+        return element
+      }
+
+      // Timeout after 100ms (same as AltTab) to avoid blocking too long
+      let elapsed = DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds
+      if elapsed > 100_000_000 {
+        break
       }
     }
+
     return nil
   }
 
