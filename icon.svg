@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Two offset window rectangles suggesting spaces/switching -->
+  <rect x="96" y="87" width="220" height="160" rx="16" stroke="#E0E0E0" stroke-width="28" fill="none"/>
+  <rect x="196" y="175" width="220" height="160" rx="16" stroke="#FFFFFF" stroke-width="28" fill="none"/>
+
+  <!-- Spacebar key shape at the bottom -->
+  <rect x="112" y="383" width="288" height="56" rx="12" fill="#FFFFFF"/>
+</svg>
