@@ -7,6 +7,7 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorConfirm()
   func keyInterceptorCancel()
   func keyInterceptorReady()
+  func keyInterceptorOpenSettings()
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -164,6 +165,14 @@ private func keyInterceptorCallback(
         if interceptor.panelVisible {
           interceptor.delegate?.keyInterceptorMoveUp()
         }
+      }
+      return nil  // consume
+    }
+
+    // Cmd+Comma (keyCode 43) — open settings
+    if cmdHeld && keyCode == 43 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorOpenSettings()
       }
       return nil  // consume
     }

@@ -5,12 +5,16 @@ import SpacebarCore
 
 public struct SwitcherSection: Identifiable {
   public let id: UInt64  // space ID
+  public let spaceUUID: String
   public let label: String
   public let isCurrent: Bool
   public var windows: [SwitcherRow]
 
-  public init(id: UInt64, label: String, isCurrent: Bool, windows: [SwitcherRow]) {
+  public init(
+    id: UInt64, spaceUUID: String = "", label: String, isCurrent: Bool, windows: [SwitcherRow]
+  ) {
     self.id = id
+    self.spaceUUID = spaceUUID
     self.label = label
     self.isCurrent = isCurrent
     self.windows = windows
@@ -44,8 +48,10 @@ public final class SwitcherViewModel: ObservableObject {
   @Published public var sections: [SwitcherSection] = []
   @Published public var searchText: String = ""
   @Published public var selectedRowID: Int?
+  @Published public var settingsSelected: Bool = false
 
   public let spaceManager: SpaceManager
+  public let spaceNameStore: SpaceNameStoring
 
   /// Persistent MRU history of space IDs, most recent first.
   /// Updated on each refresh() when the current space changes.
@@ -58,8 +64,12 @@ public final class SwitcherViewModel: ObservableObject {
   /// Cache app icons by bundle identifier to avoid repeated lookups.
   private var iconCache: [pid_t: NSImage] = [:]
 
-  public init(spaceManager: SpaceManager = SpaceManager()) {
+  public init(
+    spaceManager: SpaceManager = SpaceManager(),
+    spaceNameStore: SpaceNameStoring = SpaceNameStore()
+  ) {
     self.spaceManager = spaceManager
+    self.spaceNameStore = spaceNameStore
   }
 
   // MARK: - Refresh
@@ -161,6 +171,7 @@ public final class SwitcherViewModel: ObservableObject {
       let windows = windowMap[spaceID] ?? []
       guard !windows.isEmpty || spaceInfo != nil else { continue }
 
+      let spaceUUID = spaceInfo?.uuid ?? ""
       let label: String
       if let info = spaceInfo {
         let ordinal = desktopOrdinal[info.id] ?? 1
@@ -169,7 +180,11 @@ public final class SwitcherViewModel: ObservableObject {
           let appName = windows.first?.ownerName ?? "App"
           label = "Fullscreen — \(appName)"
         case .desktop:
-          label = "Desktop \(ordinal)"
+          if let customName = spaceNameStore.customName(forSpaceUUID: info.uuid) {
+            label = customName
+          } else {
+            label = "Desktop \(ordinal)"
+          }
         }
       } else {
         label = "Space \(spaceID)"
@@ -184,6 +199,7 @@ public final class SwitcherViewModel: ObservableObject {
 
       newSections.append(SwitcherSection(
         id: spaceID,
+        spaceUUID: spaceUUID,
         label: label,
         isCurrent: isCurrent,
         windows: rows
@@ -192,6 +208,7 @@ public final class SwitcherViewModel: ObservableObject {
 
     sections = newSections
     searchText = ""
+    settingsSelected = false
 
     // Prune window MRU entries for windows that no longer exist.
     let activeWindowIDs = Set(allWindows.map(\.id))
@@ -211,6 +228,7 @@ public final class SwitcherViewModel: ObservableObject {
       guard !filtered.isEmpty else { return nil }
       return SwitcherSection(
         id: section.id,
+        spaceUUID: section.spaceUUID,
         label: section.label,
         isCurrent: section.isCurrent,
         windows: filtered
@@ -228,11 +246,24 @@ public final class SwitcherViewModel: ObservableObject {
     let rows = flatFilteredRows
     guard !rows.isEmpty else { return }
 
+    if settingsSelected {
+      // Wrap from settings back to first row
+      settingsSelected = false
+      selectedRowID = rows.first?.id
+      return
+    }
+
     if let current = selectedRowID,
       let idx = rows.firstIndex(where: { $0.id == current })
     {
-      let next = (idx + 1) % rows.count
-      selectedRowID = rows[next].id
+      let next = idx + 1
+      if next >= rows.count {
+        // Past last row → select settings
+        selectedRowID = nil
+        settingsSelected = true
+      } else {
+        selectedRowID = rows[next].id
+      }
     } else {
       selectedRowID = rows.first?.id
     }
@@ -242,17 +273,31 @@ public final class SwitcherViewModel: ObservableObject {
     let rows = flatFilteredRows
     guard !rows.isEmpty else { return }
 
+    if settingsSelected {
+      // Up from settings → last row
+      settingsSelected = false
+      selectedRowID = rows.last?.id
+      return
+    }
+
     if let current = selectedRowID,
       let idx = rows.firstIndex(where: { $0.id == current })
     {
-      let prev = (idx - 1 + rows.count) % rows.count
-      selectedRowID = rows[prev].id
+      let prev = idx - 1
+      if prev < 0 {
+        // Before first row → select settings
+        selectedRowID = nil
+        settingsSelected = true
+      } else {
+        selectedRowID = rows[prev].id
+      }
     } else {
       selectedRowID = rows.last?.id
     }
   }
 
   public func resetSelection() {
+    settingsSelected = false
     let rows = flatFilteredRows
     selectedRowID = rows.first?.id
   }

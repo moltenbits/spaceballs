@@ -4,37 +4,44 @@ import SwiftUI
 struct SwitcherRowView: View {
   let row: SwitcherRow
   let isSelected: Bool
+  var showAppIcon: Bool = true
+  var textSize: CGFloat = 13
+  var iconSize: CGFloat = 20
+
+  private var pinSize: CGFloat { round(textSize * 9.0 / 13.0) }
 
   var body: some View {
     HStack(spacing: 8) {
       // App name — right-aligned in a fixed-width column
       Text(row.appName)
-        .font(.system(size: 13))
+        .font(.system(size: textSize))
         .foregroundStyle(.secondary)
         .frame(width: 110, alignment: .trailing)
         .lineLimit(1)
 
       // App icon
-      if let icon = row.appIcon {
-        Image(nsImage: icon)
-          .resizable()
-          .frame(width: 20, height: 20)
-      } else {
-        Image(systemName: "app.fill")
-          .resizable()
-          .frame(width: 20, height: 20)
-          .foregroundStyle(.secondary)
+      if showAppIcon {
+        if let icon = row.appIcon {
+          Image(nsImage: icon)
+            .resizable()
+            .frame(width: iconSize, height: iconSize)
+        } else {
+          Image(systemName: "app.fill")
+            .resizable()
+            .frame(width: iconSize, height: iconSize)
+            .foregroundStyle(.secondary)
+        }
       }
 
       // Window title
       Text(row.windowTitle.isEmpty ? row.appName : row.windowTitle)
-        .font(.system(size: 13))
+        .font(.system(size: textSize))
         .foregroundStyle(.primary)
         .lineLimit(1)
 
       if row.isSticky {
         Image(systemName: "pin.fill")
-          .font(.system(size: 9))
+          .font(.system(size: pinSize))
           .foregroundStyle(.tertiary)
       }
     }
@@ -55,16 +62,21 @@ struct SwitcherRowView: View {
 struct SectionHeaderView: View {
   let label: String
   let isCurrent: Bool
+  var showCurrentBadge: Bool = true
+  var textSize: CGFloat = 13
+
+  private var headerSize: CGFloat { round(textSize * 11.0 / 13.0) }
+  private var badgeSize: CGFloat { round(textSize * 10.0 / 13.0) }
 
   var body: some View {
     HStack(spacing: 4) {
       Text(label)
-        .font(.system(size: 11, weight: .semibold))
+        .font(.system(size: headerSize, weight: .semibold))
         .foregroundStyle(.secondary)
 
-      if isCurrent {
+      if isCurrent && showCurrentBadge {
         Text("(current)")
-          .font(.system(size: 10))
+          .font(.system(size: badgeSize))
           .foregroundStyle(.tertiary)
       }
     }

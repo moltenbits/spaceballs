@@ -4,6 +4,28 @@ import Testing
 @testable import SpacebarCore
 @testable import SpacebarGUILib
 
+// MARK: - Mock Space Name Store
+
+final class MockSpaceNameStore: SpaceNameStoring {
+  private var names: [String: String] = [:]
+
+  func customName(forSpaceUUID uuid: String) -> String? {
+    names[uuid]
+  }
+
+  func setCustomName(_ name: String?, forSpaceUUID uuid: String) {
+    if let name, !name.isEmpty {
+      names[uuid] = name
+    } else {
+      names.removeValue(forKey: uuid)
+    }
+  }
+
+  func allCustomNames() -> [String: String] {
+    names
+  }
+}
+
 // MARK: - Mock Data Source
 
 struct MockDataSource: SystemDataSource {
@@ -428,14 +450,28 @@ struct SelectionNavigationTests {
     #expect(vm.selectedRowID == 20)  // Space 2, window 20
   }
 
-  @Test("moveSelectionDown wraps to top")
-  func moveDownWraps() {
+  @Test("moveSelectionDown past last row selects settings")
+  func moveDownToSettings() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
     vm.selectedRowID = 20  // last row
     vm.moveSelectionDown()
+    #expect(vm.settingsSelected == true)
+    #expect(vm.selectedRowID == nil)
+  }
+
+  @Test("moveSelectionDown from settings wraps to first row")
+  func moveDownFromSettings() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedRowID = nil
+    vm.settingsSelected = true
+    vm.moveSelectionDown()
+    #expect(vm.settingsSelected == false)
     #expect(vm.selectedRowID == 10)  // wraps to first
   }
 
@@ -451,26 +487,42 @@ struct SelectionNavigationTests {
     #expect(vm.selectedRowID == 20)  // last row
   }
 
-  @Test("moveSelectionUp wraps to bottom")
-  func moveUpWraps() {
+  @Test("moveSelectionUp past first row selects settings")
+  func moveUpToSettings() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
     vm.selectedRowID = 10  // first row
     vm.moveSelectionUp()
-    #expect(vm.selectedRowID == 20)  // wraps to last
+    #expect(vm.settingsSelected == true)
+    #expect(vm.selectedRowID == nil)
   }
 
-  @Test("resetSelection selects first row")
+  @Test("moveSelectionUp from settings goes to last row")
+  func moveUpFromSettings() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedRowID = nil
+    vm.settingsSelected = true
+    vm.moveSelectionUp()
+    #expect(vm.settingsSelected == false)
+    #expect(vm.selectedRowID == 20)  // last row
+  }
+
+  @Test("resetSelection selects first row and clears settings")
   func resetSelection() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedRowID = 20  // some row
+    vm.settingsSelected = true
+    vm.selectedRowID = nil
     vm.resetSelection()
     #expect(vm.selectedRowID == 10)  // first row (Space 1, current)
+    #expect(vm.settingsSelected == false)
   }
 
   @Test("Navigation works with filtered results")
@@ -488,7 +540,11 @@ struct SelectionNavigationTests {
     #expect(vm.selectedRowID == 11)  // second Safari window
 
     vm.moveSelectionDown()
-    #expect(vm.selectedRowID == 10)  // wraps
+    #expect(vm.settingsSelected == true)  // past last → settings
+
+    vm.moveSelectionDown()
+    #expect(vm.selectedRowID == 10)  // wraps back to first
+    #expect(vm.settingsSelected == false)
   }
 
   @Test("Selection on empty results is a no-op")
@@ -565,5 +621,88 @@ struct RefreshTests {
 
     let row = vm.flatFilteredRows.first(where: { $0.id == 10 })
     #expect(row?.isSticky == true)
+  }
+}
+
+// MARK: - Custom Space Names Tests
+
+@Suite("Custom Space Names")
+struct CustomSpaceNamesTests {
+
+  @Test("Custom name replaces default Desktop N label")
+  func customNameReplacesDefault() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    store.setCustomName("Work", forSpaceUUID: "uuid-1")
+
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    let space1 = vm.sections.first(where: { $0.id == 1 })
+    #expect(space1?.label == "Work")
+  }
+
+  @Test("Space without custom name uses default label")
+  func defaultLabelWhenNoCustomName() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    let space1 = vm.sections.first(where: { $0.id == 1 })
+    let space2 = vm.sections.first(where: { $0.id == 2 })
+    #expect(space1?.label == "Desktop 1")
+    #expect(space2?.label == "Desktop 2")
+  }
+
+  @Test("Fullscreen spaces ignore custom names")
+  func fullscreenIgnoresCustomName() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 1, uuid: "uuid-fs", type: 4)  // fullscreen
+        ],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Keynote", name: "Presentation", pid: 100)
+    ]
+    ds.windowSpaces = [10: [1]]
+
+    let store = MockSpaceNameStore()
+    store.setCustomName("Should Be Ignored", forSpaceUUID: "uuid-fs")
+
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    #expect(vm.sections[0].label == "Fullscreen — Keynote")
+  }
+
+  @Test("SwitcherSection carries correct spaceUUID")
+  func sectionCarriesUUID() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: MockSpaceNameStore()
+    )
+    vm.refresh()
+
+    let space1 = vm.sections.first(where: { $0.id == 1 })
+    let space2 = vm.sections.first(where: { $0.id == 2 })
+    #expect(space1?.spaceUUID == "uuid-1")
+    #expect(space2?.spaceUUID == "uuid-2")
   }
 }
