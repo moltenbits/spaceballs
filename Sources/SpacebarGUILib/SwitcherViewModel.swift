@@ -315,6 +315,58 @@ public final class SwitcherViewModel: ObservableObject {
     }
   }
 
+  // MARK: - Close / Quit
+
+  /// Closes the currently selected window and refreshes the list.
+  public func closeSelectedWindow() {
+    guard let windowID = selectedRowID else { return }
+    do {
+      try spaceManager.closeWindow(id: windowID)
+    } catch {
+      print("Failed to close window \(windowID): \(error)")
+      return
+    }
+    windowMRUHistory.removeAll { $0 == windowID }
+    // Brief delay so the window has time to close before we re-enumerate
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+      self?.refreshKeepingSelection()
+    }
+  }
+
+  /// Quits the app that owns the currently selected window and refreshes.
+  public func quitSelectedApp() {
+    guard let windowID = selectedRowID else { return }
+    let rows = flatFilteredRows
+    let affectedPid = rows.first(where: { $0.id == windowID })?.pid
+    do {
+      try spaceManager.quitApp(owningWindowID: windowID)
+    } catch {
+      print("Failed to quit app for window \(windowID): \(error)")
+      return
+    }
+    // Remove all MRU entries for windows belonging to the quitting app
+    if let pid = affectedPid {
+      let appWindowIDs = Set(rows.filter { $0.pid == pid }.map(\.id))
+      windowMRUHistory.removeAll { appWindowIDs.contains($0) }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      self?.refreshKeepingSelection()
+    }
+  }
+
+  /// Refreshes sections while keeping the selection on the next available row.
+  private func refreshKeepingSelection() {
+    let previousID = selectedRowID
+    refresh()
+    let rows = flatFilteredRows
+    if let prev = previousID, rows.contains(where: { $0.id == prev }) {
+      selectedRowID = prev
+    } else {
+      // Previous window is gone — select the first row
+      selectedRowID = rows.first?.id
+    }
+  }
+
   // MARK: - Helpers
 
   /// Returns the CGS display UUID for the screen with keyboard focus.

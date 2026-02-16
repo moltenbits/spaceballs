@@ -8,6 +8,8 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorCancel()
   func keyInterceptorReady()
   func keyInterceptorOpenSettings()
+  func keyInterceptorCloseWindow()
+  func keyInterceptorQuitApp()
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -165,6 +167,22 @@ private func keyInterceptorCallback(
         if interceptor.panelVisible {
           interceptor.delegate?.keyInterceptorMoveUp()
         }
+      }
+      return nil  // consume
+    }
+
+    // Cmd+W (keyCode 13) — close selected window
+    if cmdHeld && keyCode == 13 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorCloseWindow()
+      }
+      return nil  // consume
+    }
+
+    // Cmd+Q (keyCode 12) — quit selected app
+    if cmdHeld && keyCode == 12 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorQuitApp()
       }
       return nil  // consume
     }

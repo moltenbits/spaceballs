@@ -224,6 +224,56 @@ public class SpaceManager {
     }
   }
 
+  // MARK: - Close Window
+
+  /// Closes a window by pressing its AX close button.
+  /// Works across Spaces via brute-force AX element discovery.
+  public func closeWindow(id windowID: Int) throws {
+    let windows = getAllWindows()
+    guard let window = windows.first(where: { $0.id == windowID }) else {
+      throw WindowActivationError.windowNotFound(windowID: windowID)
+    }
+
+    guard AXIsProcessTrusted() else {
+      throw WindowActivationError.accessibilityNotTrusted
+    }
+
+    let pid = pid_t(window.pid)
+    guard let axWindow = findAXWindowBruteForce(pid: pid, targetCGWindowID: CGWindowID(windowID))
+    else {
+      return
+    }
+
+    var closeButtonRef: CFTypeRef?
+    guard
+      AXUIElementCopyAttributeValue(axWindow, kAXCloseButtonAttribute as CFString, &closeButtonRef)
+        == .success,
+      let closeButton = closeButtonRef
+    else {
+      return
+    }
+
+    AXUIElementPerformAction(closeButton as! AXUIElement, kAXPressAction as CFString)
+  }
+
+  // MARK: - Quit App
+
+  /// Terminates the app that owns the given window.
+  public func quitApp(owningWindowID windowID: Int) throws {
+    let windows = getAllWindows()
+    guard let window = windows.first(where: { $0.id == windowID }) else {
+      throw WindowActivationError.windowNotFound(windowID: windowID)
+    }
+
+    guard
+      let app = NSRunningApplication(processIdentifier: pid_t(window.pid))
+    else {
+      return
+    }
+
+    app.terminate()
+  }
+
   // MARK: - AX Brute-Force Window Discovery
 
   /// Finds an AXUIElement for a window on any Space by brute-forcing

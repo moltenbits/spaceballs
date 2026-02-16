@@ -183,6 +183,14 @@ extension AppDelegate: KeyInterceptorDelegate {
     hidePanel()
   }
 
+  func keyInterceptorCloseWindow() {
+    viewModel.closeSelectedWindow()
+  }
+
+  func keyInterceptorQuitApp() {
+    viewModel.quitSelectedApp()
+  }
+
   func keyInterceptorOpenSettings() {
     openSettings()
   }
