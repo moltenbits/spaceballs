@@ -133,6 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func resizePanelToFit(_ panel: SwitcherPanel, on screen: NSScreen) {
     guard let hostingView = panel.contentView else { return }
+    // Force layout so the first show gets an accurate measurement
+    hostingView.layoutSubtreeIfNeeded()
     let fittingSize = hostingView.fittingSize
     let maxHeight = screen.visibleFrame.height * 0.8
     let height = min(fittingSize.height, maxHeight)
