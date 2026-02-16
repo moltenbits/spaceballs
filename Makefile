@@ -1,4 +1,4 @@
-.PHONY: build release clean test run run.json run.activate app format lint install brewfile
+.PHONY: build release clean test run run.json run.activate app format lint install brewfile build-gui app-gui gui kill
 
 # Build configuration
 SWIFT_BUILD_FLAGS = --disable-sandbox
@@ -48,10 +48,28 @@ app: build
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	@cp .build/debug/spacebar $(APP_BUNDLE)/Contents/MacOS/spacebar
 	@cp Resources/Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	@codesign --force --sign "Spacebar Dev" $(APP_BUNDLE)
 
 run.activate: ## Activate a window by ID (usage: make run.activate ID=<window-id>)
 run.activate: app
 	open -n -W --stdout `tty` --stderr `tty` $(APP_BUNDLE) --args activate $(ID)
+
+build-gui: ## Build GUI target (debug)
+	swift build $(DEBUG_FLAGS) --product spacebar-gui
+
+app-gui: ## Build .app bundle with GUI executable
+app-gui: kill build-gui
+	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
+	@cp .build/debug/spacebar-gui $(APP_BUNDLE)/Contents/MacOS/spacebar
+	@cp Resources/Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	@codesign --force --sign "Spacebar Dev" $(APP_BUNDLE)
+
+gui: ## Build and run the GUI window switcher
+gui: app-gui
+	open -n --stdout `tty` --stderr `tty` $(APP_BUNDLE)
+
+kill: ## Kill running Spacebar app
+	@pkill -f "Spacebar.app" 2>/dev/null || true
 
 clean: ## Clean build artifacts
 	swift package clean
