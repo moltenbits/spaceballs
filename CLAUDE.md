@@ -4,9 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Spacebar is a macOS window switcher app inspired by [Contexts](https://contexts.co) — a fast, keyboard-driven way to navigate between windows across Spaces. The goal is to provide features like search-based window switching, per-window (not per-app) listing, and Space-aware organization.
-
-Currently in early development: the foundation is a CLI that enumerates Spaces and windows using private CoreGraphics Server (CGS) APIs via `@_silgen_name` (SkyLight framework). It supports text and JSON (`--json`) output modes.
+Spacebar is a macOS window switcher app inspired by [Contexts](https://contexts.co) — a fast, keyboard-driven way to navigate between windows across Spaces. It provides per-window (not per-app) listing, Space-aware organization with MRU ordering, cross-space window activation, and a configurable floating panel UI.
 
 ## Build & Run Commands
 
@@ -15,8 +13,11 @@ All commands use `make`. The build requires `--disable-sandbox` for CGS access.
 ```bash
 make build        # Debug build
 make release      # Optimized release build
-make run          # Build + run (text output)
-make run-json     # Build + run (JSON output)
+make gui          # Build and run GUI switcher
+make app          # Build .app bundle at .build/Spacebar.app/
+make run          # Build + run CLI (text output)
+make run.json     # Build + run CLI (JSON output)
+make run.activate ID=<wid>  # Activate a window by CGWindowID via .app bundle
 make test         # Run tests
 make format       # Format with swift-format
 make lint         # Lint with swift-format
@@ -27,20 +28,95 @@ Underlying tool: Swift Package Manager (`swift build`, `swift test`, etc.).
 
 ## Architecture
 
-Three source files in `Sources/Spacebar/`:
+### Package Structure
 
-- **PrivateCGS.swift** — Declares bindings to three private CGS functions (`CGSMainConnectionID`, `CGSCopyManagedDisplaySpaces`, `CGSCopySpacesForWindows`) and supporting types (`CGSConnectionID`, `CGSSpaceMask`, `CGSSpaceType`). These are resolved at link time from the dyld shared cache via `@_silgen_name`.
+Four targets in `Package.swift`:
 
-- **SpaceManager.swift** — Core logic. `SpaceManager` uses the CGS connection to enumerate spaces across all displays (`getAllSpaces`), enumerate normal-layer windows (`getAllWindows`), map windows to space IDs (`spacesForWindow`), and aggregate everything (`windowsBySpace`). Data models: `SpaceInfo` and `WindowInfo`. Filters out non-layer-0 windows and tiny (<50px) helper windows.
+| Target | Type | Purpose |
+|---|---|---|
+| `SpacebarCore` | Library | Space/window enumeration, activation, private API bindings |
+| `SpacebarGUILib` | Library | View model, settings store, space name store (testable) |
+| `spacebar` | Executable | CLI tool (ArgumentParser) |
+| `spacebar-gui` | Executable | GUI app (NSApplication accessory) |
 
-- **main.swift** — CLI entry point. Parses `--json`, calls `SpaceManager.windowsBySpace()`, formats output. Includes permission warnings (Screen Recording access required for window titles).
+### Source Layout
+
+```
+Sources/
+├── SpacebarCore/          # Reusable library — no UI dependency
+│   ├── PrivateCGS.swift         # CGS type definitions & @_silgen_name bindings
+│   ├── PrivateSkyLight.swift    # SkyLight process/window activation APIs
+│   ├── PrivateAX.swift          # Accessibility framework bindings
+│   ├── SpaceManager.swift       # Core logic: enumeration, activation, close, quit
+│   ├── SystemDataSource.swift   # Protocol for CGS data abstraction (testable)
+│   ├── CGSDataSource.swift      # Real CGS implementation
+│   └── WindowActivationError.swift
+├── SpacebarGUILib/        # Testable view model layer
+│   ├── SwitcherViewModel.swift  # ObservableObject: sections, selection, MRU, search
+│   ├── AppSettings.swift        # UserDefaults-backed settings (color, text, opacity)
+│   └── SpaceNameStore.swift     # Custom space name persistence (UUID → name)
+├── SpacebarGUI/           # GUI app — AppKit + SwiftUI
+│   ├── main.swift               # Entry point: NSApp.accessory + AppDelegate
+│   ├── AppDelegate.swift        # Panel lifecycle, multi-display, key interception
+│   ├── KeyInterceptor.swift     # CGEvent tap: Cmd+Tab/`/W/Q/,/Esc
+│   ├── SwitcherPanel.swift      # Floating NSPanel configuration
+│   ├── SwitcherView.swift       # Root SwiftUI view (sections + settings row)
+│   ├── SwitcherRowView.swift    # Window row + section header views
+│   ├── SettingsView.swift       # Sidebar-navigated settings container
+│   ├── SettingsWindowController.swift
+│   └── Settings/
+│       ├── GeneralPane.swift    # Launch at login (SMAppService)
+│       ├── AppearancePane.swift # Color scheme, opacity, text size, display
+│       └── AboutPane.swift      # Version/build info
+└── Spacebar/              # CLI tool
+    ├── SpacebarCommand.swift    # @main ParsableCommand
+    ├── ListCommand.swift        # list subcommand (default)
+    ├── ActivateCommand.swift    # activate <windowID> subcommand
+    ├── Output.swift             # Text/JSON formatting
+    └── Version.swift
+```
+
+### Key Design Patterns
+
+- **SpaceManager** accepts a `SystemDataSource` protocol — production uses `CGSDataSource`, tests use `MockDataSource`
+- **SwitcherViewModel** is the single source of truth for UI state — sections, selection (`SelectedItem` enum), search filtering, MRU ordering
+- **SelectedItem** enum: `.spaceHeader(UInt64)`, `.windowRow(Int)`, `.settings` — unifies the keyboard navigation cycle through space headers, window rows, and the settings row
+- **AppDelegate** manages an array of `SwitcherPanel` instances (one per display for "All" mode), all sharing the same `SwitcherViewModel`
+- **KeyInterceptor** uses a `CGEvent.tapCreate` at `.cghidEventTap` level with signal handlers to ensure cleanup on process exit (prevents system-wide input freeze)
+
+## Private APIs
+
+| API | Framework | Purpose |
+|---|---|---|
+| `CGSMainConnectionID` | SkyLight | Default CGS connection |
+| `CGSCopyManagedDisplaySpaces` | SkyLight | Space enumeration per display |
+| `CGSCopySpacesForWindows` | SkyLight | Window-to-space mapping |
+| `_SLPSSetFrontProcessWithOptions` | SkyLight | Activate process+window, triggers space switch |
+| `SLPSPostEventRecordTo` | SkyLight | Synthetic key-window events |
+| `GetProcessForPID` | Carbon (deprecated) | PID → ProcessSerialNumber |
+| `_AXUIElementCreateWithRemoteToken` | HIServices | Construct AX handles for cross-space windows |
+| `_AXUIElementGetWindow` | HIServices | AXUIElement → CGWindowID |
+
+### Cross-Space Window Activation Flow
+
+1. Brute-force AX element discovery: iterate element IDs 0–999 via `_AXUIElementCreateWithRemoteToken` (20-byte token: pid + zero + "coco" + elementID), match by CGWindowID. Required because `kAXWindowsAttribute` only returns current-Space windows.
+2. `_SLPSSetFrontProcessWithOptions` — targets specific CGWindowID, triggers macOS space-switch animation
+3. `SLPSPostEventRecordTo` — two synthetic event records (key-down + key-up) with CGWindowID at offset 0x3c
+4. `AXUIElementPerformAction(kAXRaiseAction)` — z-order raise within the app's window stack
+5. 100ms timeout on brute-force search (same as AltTab)
+
+### Cross-Space Window Activation Requires .app Bundle
+
+`_SLPSSetFrontProcessWithOptions` requires a process registered with WindowServer as a proper application. A bare CLI executable doesn't get this registration. The `.app` bundle with `LSUIElement=true` in `Info.plist` and `NSApplication.setActivationPolicy(.accessory)` provides the necessary registration while remaining invisible in the Dock.
 
 ## Key Constraints
 
-- **macOS 13+ only** (uses Cocoa + CoreGraphics APIs)
-- **Screen Recording permission** must be granted to the terminal for window titles to be visible
-- **Private APIs**: The CGS functions are undocumented Apple internals (sourced from yabai/Amethyst reverse-engineering). They may break across macOS versions.
-- **No external dependencies** — pure Swift + system frameworks
+- **macOS 14+ only** (uses Cocoa, CoreGraphics, SkyLight, Accessibility APIs)
+- **Accessibility permission** required for keyboard interception and window activation
+- **Screen Recording permission** required for window titles
+- **Private APIs** — undocumented Apple internals; may break across macOS versions
+- **No external dependencies** beyond swift-argument-parser (CLI only); GUI is pure Swift + system frameworks
+- **Read-only for spaces** — cannot move windows between Spaces on modern macOS without SIP disabled (see Known Limitations below)
 
 ## Known Limitations
 
@@ -49,44 +125,23 @@ Three source files in `Sources/Spacebar/`:
 macOS does not store human-readable names for Spaces. The "Desktop 1", "Desktop 2" labels in Mission Control are generated at runtime by the Dock based on ordinal position — they are not persisted anywhere.
 
 - `CGSCopyManagedDisplaySpaces` returns `ManagedSpaceID`, `id64`, `type`, and `uuid` per space — no name field.
-- `CGSSpaceCopyName` / `SLSSpaceCopyName` exist but are misleadingly named: they return the space's UUID, not a display name. Confirmed by yabai's maintainer ([issue #119](https://github.com/koekeishiya/yabai/issues/119)).
-- `CGSSpaceSetName` / `SLSSpaceSetName` exist in reverse-engineered headers but have no known effect on Mission Control display.
-- `com.apple.spaces.plist` has a `"name"` field per space, but it stores the UUID, not a custom label.
+- `CGSSpaceCopyName` / `SLSSpaceCopyName` exist but return the space's UUID, not a display name. Confirmed by yabai's maintainer ([issue #119](https://github.com/koekeishiya/yabai/issues/119)).
 - No public Cocoa API (`NSWorkspace`, `NSScreen`) or AppleScript support exists for space names.
 
-**Workarounds considered:**
-- **SIMBL injection** (e.g. spaces-renamer) — injects into the Dock process to override rendering. Requires SIP disabled, fragile, Intel-only.
-- **Accessibility overlay** (e.g. rename-spaces) — draws labels on top of Mission Control. Visual trick, not real renaming.
-- **Hammerspoon AX scraping** — briefly opens Mission Control to read accessibility elements. Causes a visible flash.
+**Spacebar's approach:** Store custom names locally in UserDefaults, keyed by space UUID. Users can rename spaces in Settings. Default labels use ordinal numbering ("Desktop 1", "Desktop 2").
 
-### Moving Windows Between Spaces Requires SIP Disabled on Modern macOS
+### Moving Windows Between Spaces Requires SIP Disabled
 
-Private CGS/SkyLight APIs exist for moving windows between spaces, but Apple has progressively locked them down so they only work from `Dock.app`'s privileged WindowServer connection.
-
-**Available APIs:**
-- `CGSMoveWindowsToManagedSpace(cid, windowIDs, spaceID)` — atomic single-call move. Silently no-ops on macOS 14.5+ for non-Dock connections.
-- `CGSAddWindowsToSpaces` / `CGSRemoveWindowsFromSpaces` — two-step add/remove (must add before removing on macOS 12.1+). No-ops on Monterey+ for non-Dock connections.
-- `SLSSetWindowListWorkspace` + `SLSSpaceSetCompatID` — workaround used by yabai. Also no-ops on Sequoia 15.0+.
-
-**macOS version restrictions:**
+Private CGS/SkyLight APIs exist for moving windows between spaces, but Apple has locked them down so they only work from `Dock.app`'s privileged WindowServer connection.
 
 | macOS Version | Move APIs Work Without SIP? |
 |---|---|
 | < 14.5 (pre-Sonoma) | Yes |
-| 14.5+ (Sonoma) | No — Apple added `connection_holds_rights_on_window` checks |
+| 14.5+ (Sonoma) | No — `connection_holds_rights_on_window` checks |
 | 15.0+ (Sequoia) | No — workarounds also blocked |
 
-The root cause: WindowServer grants each app a connection with limited rights. `Dock.app` holds a special "universal owner" connection that bypasses authorization checks. The only reliable approach on modern macOS is injecting a scripting addition into Dock (as yabai does), which requires SIP to be partially disabled.
+**Spacebar's approach:** Treat the app as read-only for space/window topology. Focus on enumeration and focus-switching only.
 
-**Other constraints:**
-- Cannot move windows into/out of fullscreen spaces.
-- After moving, the window loses focus on the source space — focus management must be handled manually.
-- No visible animation — the window simply disappears from one space and appears on the other.
+### Opening New Windows on a Specific Space
 
-**How other projects handle this:**
-- **yabai** — Dock injection via scripting addition (requires partial SIP disable). The only reliable approach on modern macOS.
-- **AeroSpace** — Avoids native Spaces entirely; emulates virtual workspaces by moving windows off-screen.
-- **Amethyst** — Simulates mouse-drag + keyboard space-switch. Fragile, user-visible animation.
-- **Hammerspoon** — Version-branching: direct API on older macOS, yabai-style workarounds on newer.
-
-**Recommended approach for Spacebar:** Treat Spacebar as read-only for space/window enumeration and focus-switching. Moving windows between spaces is not viable without requiring users to disable SIP, which is a non-starter for a general-purpose app.
+`NSRunningApplication.activate()` from an accessory app does not set space context on Sequoia. Launch Services (`open`) also opens on the app's existing space, not the caller's space. There is no reliable way to open a new window for an arbitrary app on the current space from an accessory process.
