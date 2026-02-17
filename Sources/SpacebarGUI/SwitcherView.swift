@@ -20,9 +20,9 @@ struct SwitcherView: View {
       }
       settingsRow
     }
-    .padding(.top, 10)
+    .padding(.top, 6)
     .padding(.bottom, 10)
-    .padding(.leading, 10)
+    .padding(.horizontal, 6)
     .fixedSize()
     .background(
       ZStack {
@@ -39,26 +39,34 @@ struct SwitcherView: View {
 
   private var settingsRow: some View {
     let gearSize = CGFloat(round(appSettings.textSize * 14.0 / 13.0))
-    return HStack(spacing: 8) {
-      Spacer()
-        .frame(width: 110)
-      Image(systemName: "gearshape")
-        .resizable()
-        .frame(width: gearSize, height: gearSize)
-        .foregroundStyle(.secondary)
-      Text("Settings")
-        .font(.system(size: CGFloat(appSettings.textSize)))
-        .foregroundStyle(.secondary)
+    let iconFrame = appSettings.iconSize
+    return VStack(spacing: 0) {
+      Spacer().frame(height: 6)
+      HStack(spacing: 8) {
+        // Empty column matching the app-name width in window rows
+        Text("")
+          .frame(width: 110, alignment: .trailing)
+
+        // Gear icon in the same frame size as app icons
+        Image(systemName: "gearshape")
+          .resizable()
+          .frame(width: gearSize, height: gearSize)
+          .frame(width: iconFrame, height: iconFrame)
+          .foregroundStyle(.secondary)
+
+        Text("Settings")
+          .font(.system(size: CGFloat(appSettings.textSize)))
+          .foregroundStyle(.secondary)
+      }
+      .padding(.vertical, 1)
+      .padding(.horizontal, 10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(
+        viewModel.selectedItem == .settings
+          ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
+          : nil
+      )
     }
-    .padding(.vertical, 1)
-    .padding(.horizontal, 10)
-    .padding(.top, 6)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      viewModel.settingsSelected
-        ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
-        : nil
-    )
     .contentShape(Rectangle())
   }
 
@@ -67,14 +75,14 @@ struct SwitcherView: View {
       ForEach(section.windows) { row in
         SwitcherRowView(
           row: row,
-          isSelected: viewModel.selectedRowID == row.id,
+          isSelected: viewModel.selectedItem == .windowRow(row.id),
           showAppIcon: appSettings.showAppIcons,
           textSize: CGFloat(appSettings.textSize),
           iconSize: appSettings.iconSize
         )
         .id(row.id)
         .onTapGesture {
-          viewModel.selectedRowID = row.id
+          viewModel.selectedItem = .windowRow(row.id)
           viewModel.activateSelected()
         }
       }
@@ -82,9 +90,14 @@ struct SwitcherView: View {
       SectionHeaderView(
         label: section.label,
         isCurrent: section.isCurrent,
+        isSelected: viewModel.selectedItem == .spaceHeader(section.id),
         showCurrentBadge: appSettings.showCurrentBadge,
         textSize: CGFloat(appSettings.textSize)
       )
+      .onTapGesture {
+        viewModel.selectedItem = .spaceHeader(section.id)
+        viewModel.activateSelected()
+      }
     }
   }
 }

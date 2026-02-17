@@ -62,6 +62,7 @@ struct SwitcherRowView: View {
 struct SectionHeaderView: View {
   let label: String
   let isCurrent: Bool
+  var isSelected: Bool = false
   var showCurrentBadge: Bool = true
   var textSize: CGFloat = 13
 
@@ -72,16 +73,23 @@ struct SectionHeaderView: View {
     HStack(spacing: 4) {
       Text(label)
         .font(.system(size: headerSize, weight: .semibold))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(isSelected ? .primary : .secondary)
 
       if isCurrent && showCurrentBadge {
         Text("(current)")
           .font(.system(size: badgeSize))
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(isSelected ? .secondary : .tertiary)
       }
     }
-    .padding(.leading, 10)
-    .padding(.top, 6)
-    .padding(.bottom, 2)
+    .padding(.vertical, 2)
+    .padding(.horizontal, 10)
+    .padding(.top, 4)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      isSelected
+        ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
+        : nil
+    )
+    .contentShape(Rectangle())
   }
 }

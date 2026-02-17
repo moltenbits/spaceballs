@@ -172,10 +172,13 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorConfirm() {
-    if viewModel.settingsSelected {
+    switch viewModel.selectedItem {
+    case .settings:
       openSettings()
-    } else {
+    case .spaceHeader, .windowRow:
       activateAndDismiss()
+    case nil:
+      break
     }
   }
 

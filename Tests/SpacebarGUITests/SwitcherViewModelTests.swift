@@ -260,7 +260,7 @@ struct WindowMRUOrderingTests {
     #expect(space1.windows[1].id == 11)
 
     // Activate window 11 (second in Z-order)
-    vm.selectedRowID = 11
+    vm.selectedItem = .windowRow(11)
     vm.activateSelected()
 
     // Refresh to rebuild sections with MRU ordering
@@ -295,9 +295,9 @@ struct WindowMRUOrderingTests {
     #expect(vm.sections[0].windows.map(\.id) == [10, 11, 12])
 
     // Activate 12, then 11
-    vm.selectedRowID = 12
+    vm.selectedItem = .windowRow(12)
     vm.activateSelected()
-    vm.selectedRowID = 11
+    vm.selectedItem = .windowRow(11)
     vm.activateSelected()
 
     vm.refresh()
@@ -327,7 +327,7 @@ struct WindowMRUOrderingTests {
     vm.refresh()
 
     // Activate only window 12
-    vm.selectedRowID = 12
+    vm.selectedItem = .windowRow(12)
     vm.activateSelected()
 
     vm.refresh()
@@ -422,32 +422,41 @@ struct SearchFilteringTests {
 @Suite("Selection Navigation")
 struct SelectionNavigationTests {
 
-  @Test("moveSelectionDown selects first row when nothing selected")
+  // Tab-cycle order for makeTwoSpaceDataSource():
+  // [Space 1 header] → [10] → [11] → [Space 2 header] → [20] → [Settings]
+
+  @Test("moveSelectionDown selects first item (space header) when nothing selected")
   func moveDownFromNone() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedRowID = nil
+    vm.selectedItem = nil
     vm.moveSelectionDown()
 
-    // Space 1 is current → first. Window 10 is first row.
-    #expect(vm.selectedRowID == 10)
+    // First selectable item is Space 1's header
+    #expect(vm.selectedItem == .spaceHeader(1))
   }
 
-  @Test("moveSelectionDown advances through rows")
+  @Test("moveSelectionDown advances through headers and rows")
   func moveDownSequential() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    // Order: Space 1 [10, 11], Space 2 [20]
-    vm.selectedRowID = 10  // Space 1, window 10
+    // Start at Space 1 header
+    vm.selectedItem = .spaceHeader(1)
     vm.moveSelectionDown()
-    #expect(vm.selectedRowID == 11)  // Space 1, window 11
+    #expect(vm.selectedItem == .windowRow(10))  // first window in Space 1
 
     vm.moveSelectionDown()
-    #expect(vm.selectedRowID == 20)  // Space 2, window 20
+    #expect(vm.selectedItem == .windowRow(11))  // second window in Space 1
+
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .spaceHeader(2))  // Space 2 header
+
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .windowRow(20))  // Space 2's window
   }
 
   @Test("moveSelectionDown past last row selects settings")
@@ -456,47 +465,44 @@ struct SelectionNavigationTests {
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedRowID = 20  // last row
+    vm.selectedItem = .windowRow(20)  // last row
     vm.moveSelectionDown()
-    #expect(vm.settingsSelected == true)
-    #expect(vm.selectedRowID == nil)
+    #expect(vm.selectedItem == .settings)
   }
 
-  @Test("moveSelectionDown from settings wraps to first row")
+  @Test("moveSelectionDown from settings wraps to first header")
   func moveDownFromSettings() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedRowID = nil
-    vm.settingsSelected = true
+    vm.selectedItem = .settings
     vm.moveSelectionDown()
-    #expect(vm.settingsSelected == false)
-    #expect(vm.selectedRowID == 10)  // wraps to first
+    #expect(vm.selectedItem == .spaceHeader(1))  // wraps to first
   }
 
-  @Test("moveSelectionUp selects last row when nothing selected")
+  @Test("moveSelectionUp selects settings when nothing selected")
   func moveUpFromNone() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedRowID = nil
+    vm.selectedItem = nil
     vm.moveSelectionUp()
 
-    #expect(vm.selectedRowID == 20)  // last row
+    // Last selectable item is settings
+    #expect(vm.selectedItem == .settings)
   }
 
-  @Test("moveSelectionUp past first row selects settings")
-  func moveUpToSettings() {
+  @Test("moveSelectionUp from first header wraps to settings")
+  func moveUpFromFirstHeader() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedRowID = 10  // first row
+    vm.selectedItem = .spaceHeader(1)  // first item
     vm.moveSelectionUp()
-    #expect(vm.settingsSelected == true)
-    #expect(vm.selectedRowID == nil)
+    #expect(vm.selectedItem == .settings)
   }
 
   @Test("moveSelectionUp from settings goes to last row")
@@ -505,24 +511,31 @@ struct SelectionNavigationTests {
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedRowID = nil
-    vm.settingsSelected = true
+    vm.selectedItem = .settings
     vm.moveSelectionUp()
-    #expect(vm.settingsSelected == false)
-    #expect(vm.selectedRowID == 20)  // last row
+    #expect(vm.selectedItem == .windowRow(20))  // last row
   }
 
-  @Test("resetSelection selects first row and clears settings")
+  @Test("moveSelectionUp from first window in section goes to that section's header")
+  func moveUpToSectionHeader() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedItem = .windowRow(20)  // first (only) window in Space 2
+    vm.moveSelectionUp()
+    #expect(vm.selectedItem == .spaceHeader(2))  // Space 2's header
+  }
+
+  @Test("resetSelection selects first window row, not header")
   func resetSelection() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.settingsSelected = true
-    vm.selectedRowID = nil
+    vm.selectedItem = .settings
     vm.resetSelection()
-    #expect(vm.selectedRowID == 10)  // first row (Space 1, current)
-    #expect(vm.settingsSelected == false)
+    #expect(vm.selectedItem == .windowRow(10))  // first window row, skipping header
   }
 
   @Test("Navigation works with filtered results")
@@ -532,19 +545,22 @@ struct SelectionNavigationTests {
     vm.refresh()
 
     vm.searchText = "Safari"
-    vm.selectedRowID = nil
+    // Filtered: Space 1 [10, 11] only
+    vm.selectedItem = nil
     vm.moveSelectionDown()
-    #expect(vm.selectedRowID == 10)  // first Safari window
+    #expect(vm.selectedItem == .spaceHeader(1))  // Space 1 header
 
     vm.moveSelectionDown()
-    #expect(vm.selectedRowID == 11)  // second Safari window
+    #expect(vm.selectedItem == .windowRow(10))  // first Safari window
 
     vm.moveSelectionDown()
-    #expect(vm.settingsSelected == true)  // past last → settings
+    #expect(vm.selectedItem == .windowRow(11))  // second Safari window
 
     vm.moveSelectionDown()
-    #expect(vm.selectedRowID == 10)  // wraps back to first
-    #expect(vm.settingsSelected == false)
+    #expect(vm.selectedItem == .settings)  // past last → settings
+
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .spaceHeader(1))  // wraps back to header
   }
 
   @Test("Selection on empty results is a no-op")
@@ -554,10 +570,59 @@ struct SelectionNavigationTests {
     vm.refresh()
 
     vm.moveSelectionDown()
-    #expect(vm.selectedRowID == nil)
+    #expect(vm.selectedItem == nil)
 
     vm.moveSelectionUp()
-    #expect(vm.selectedRowID == nil)
+    #expect(vm.selectedItem == nil)
+  }
+
+  @Test("Confirming on a space header activates first window in that space")
+  func activateSpaceHeader() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(2)  // Space 2 header
+    vm.activateSelected()
+
+    // Should have added Space 2's first window (20) to MRU
+    vm.refresh()
+    let space2 = vm.sections.first(where: { $0.id == 2 })!
+    #expect(space2.windows[0].id == 20)
+  }
+
+  @Test("Cmd+W on space header is a no-op")
+  func closeOnHeaderNoOp() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.closeSelectedWindow()  // should not crash or do anything
+    #expect(vm.selectedItem == .spaceHeader(1))
+  }
+
+  @Test("Full tab cycle visits all headers, rows, and settings")
+  func fullTabCycle() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    // Expected cycle: header1 → 10 → 11 → header2 → 20 → settings → header1
+    let expected: [SelectedItem] = [
+      .spaceHeader(1), .windowRow(10), .windowRow(11),
+      .spaceHeader(2), .windowRow(20), .settings,
+    ]
+
+    vm.selectedItem = nil
+    for expectedItem in expected {
+      vm.moveSelectionDown()
+      #expect(vm.selectedItem == expectedItem)
+    }
+
+    // One more wraps back
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .spaceHeader(1))
   }
 }
 

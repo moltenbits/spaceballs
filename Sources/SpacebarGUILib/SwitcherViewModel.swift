@@ -42,13 +42,20 @@ public struct SwitcherRow: Identifiable {
   }
 }
 
+// MARK: - Selection
+
+public enum SelectedItem: Equatable, Hashable {
+  case spaceHeader(UInt64)  // space ID
+  case windowRow(Int)  // CGWindowID
+  case settings
+}
+
 // MARK: - ViewModel
 
 public final class SwitcherViewModel: ObservableObject {
   @Published public var sections: [SwitcherSection] = []
   @Published public var searchText: String = ""
-  @Published public var selectedRowID: Int?
-  @Published public var settingsSelected: Bool = false
+  @Published public var selectedItem: SelectedItem?
 
   public let spaceManager: SpaceManager
   public let spaceNameStore: SpaceNameStoring
@@ -208,7 +215,7 @@ public final class SwitcherViewModel: ObservableObject {
 
     sections = newSections
     searchText = ""
-    settingsSelected = false
+    selectedItem = nil
 
     // Prune window MRU entries for windows that no longer exist.
     let activeWindowIDs = Set(allWindows.map(\.id))
@@ -240,72 +247,93 @@ public final class SwitcherViewModel: ObservableObject {
     filteredSections.flatMap(\.windows)
   }
 
+  /// All selectable items in tab-cycle order:
+  /// [header] → [window] → ... → [header] → [window] → ... → [settings]
+  public var flatSelectableItems: [SelectedItem] {
+    var items: [SelectedItem] = []
+    for section in filteredSections {
+      items.append(.spaceHeader(section.id))
+      for window in section.windows {
+        items.append(.windowRow(window.id))
+      }
+    }
+    items.append(.settings)
+    return items
+  }
+
+  // MARK: - Selection Convenience
+
+  public var settingsSelected: Bool {
+    selectedItem == .settings
+  }
+
+  public var selectedRowID: Int? {
+    if case .windowRow(let id) = selectedItem { return id }
+    return nil
+  }
+
+  public var selectedSpaceID: UInt64? {
+    if case .spaceHeader(let id) = selectedItem { return id }
+    return nil
+  }
+
   // MARK: - Selection
 
   public func moveSelectionDown() {
-    let rows = flatFilteredRows
-    guard !rows.isEmpty else { return }
+    let items = flatSelectableItems
+    guard items.count > 1 else { return }  // only settings → no-op
 
-    if settingsSelected {
-      // Wrap from settings back to first row
-      settingsSelected = false
-      selectedRowID = rows.first?.id
+    guard let current = selectedItem,
+      let idx = items.firstIndex(of: current)
+    else {
+      selectedItem = items.first
       return
     }
 
-    if let current = selectedRowID,
-      let idx = rows.firstIndex(where: { $0.id == current })
-    {
-      let next = idx + 1
-      if next >= rows.count {
-        // Past last row → select settings
-        selectedRowID = nil
-        settingsSelected = true
-      } else {
-        selectedRowID = rows[next].id
-      }
-    } else {
-      selectedRowID = rows.first?.id
-    }
+    let next = idx + 1
+    selectedItem = next >= items.count ? items.first : items[next]
   }
 
   public func moveSelectionUp() {
-    let rows = flatFilteredRows
-    guard !rows.isEmpty else { return }
+    let items = flatSelectableItems
+    guard items.count > 1 else { return }
 
-    if settingsSelected {
-      // Up from settings → last row
-      settingsSelected = false
-      selectedRowID = rows.last?.id
+    guard let current = selectedItem,
+      let idx = items.firstIndex(of: current)
+    else {
+      selectedItem = items.last
       return
     }
 
-    if let current = selectedRowID,
-      let idx = rows.firstIndex(where: { $0.id == current })
-    {
-      let prev = idx - 1
-      if prev < 0 {
-        // Before first row → select settings
-        selectedRowID = nil
-        settingsSelected = true
-      } else {
-        selectedRowID = rows[prev].id
-      }
-    } else {
-      selectedRowID = rows.last?.id
-    }
+    let prev = idx - 1
+    selectedItem = prev < 0 ? items.last : items[prev]
   }
 
   public func resetSelection() {
-    settingsSelected = false
-    let rows = flatFilteredRows
-    selectedRowID = rows.first?.id
+    let items = flatSelectableItems
+    selectedItem = items.first(where: {
+      if case .windowRow = $0 { return true }
+      return false
+    })
   }
 
   // MARK: - Activation
 
   public func activateSelected() {
-    guard let windowID = selectedRowID else { return }
+    let windowID: Int
+    switch selectedItem {
+    case .windowRow(let id):
+      windowID = id
+    case .spaceHeader(let spaceID):
+      // Activate the first window in this space to trigger space switch
+      guard let section = filteredSections.first(where: { $0.id == spaceID }),
+        let firstWindow = section.windows.first
+      else { return }
+      windowID = firstWindow.id
+    case .settings, nil:
+      return
+    }
+
     windowMRUHistory.removeAll { $0 == windowID }
     windowMRUHistory.insert(windowID, at: 0)
     do {
@@ -319,7 +347,7 @@ public final class SwitcherViewModel: ObservableObject {
 
   /// Closes the currently selected window and refreshes the list.
   public func closeSelectedWindow() {
-    guard let windowID = selectedRowID else { return }
+    guard case .windowRow(let windowID) = selectedItem else { return }
     do {
       try spaceManager.closeWindow(id: windowID)
     } catch {
@@ -335,7 +363,7 @@ public final class SwitcherViewModel: ObservableObject {
 
   /// Quits the app that owns the currently selected window and refreshes.
   public func quitSelectedApp() {
-    guard let windowID = selectedRowID else { return }
+    guard case .windowRow(let windowID) = selectedItem else { return }
     let rows = flatFilteredRows
     let affectedPid = rows.first(where: { $0.id == windowID })?.pid
     do {
@@ -356,14 +384,13 @@ public final class SwitcherViewModel: ObservableObject {
 
   /// Refreshes sections while keeping the selection on the next available row.
   private func refreshKeepingSelection() {
-    let previousID = selectedRowID
+    let previous = selectedItem
     refresh()
     let rows = flatFilteredRows
-    if let prev = previousID, rows.contains(where: { $0.id == prev }) {
-      selectedRowID = prev
+    if case .windowRow(let prevID) = previous, rows.contains(where: { $0.id == prevID }) {
+      selectedItem = .windowRow(prevID)
     } else {
-      // Previous window is gone — select the first row
-      selectedRowID = rows.first?.id
+      selectedItem = rows.first.map { .windowRow($0.id) }
     }
   }
 
