@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       appSettings: appSettings
     )
 
+    setupMainMenu()
+
     keyInterceptor = KeyInterceptor()
     keyInterceptor.delegate = self
     keyInterceptor.start()
@@ -43,6 +45,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if let monitor = clickMonitor {
       NSEvent.removeMonitor(monitor)
     }
+  }
+
+  // MARK: - Menu
+
+  /// Accessory apps have no menu bar, so Cmd+W/Cmd+Q don't work by default.
+  /// A minimal main menu provides the key equivalents for the Settings window.
+  private func setupMainMenu() {
+    let mainMenu = NSMenu()
+
+    let appMenuItem = NSMenuItem()
+    let appMenu = NSMenu()
+    appMenu.addItem(
+      withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)),
+      keyEquivalent: "w")
+    appMenu.addItem(
+      withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)),
+      keyEquivalent: "q")
+    appMenuItem.submenu = appMenu
+    mainMenu.addItem(appMenuItem)
+
+    NSApp.mainMenu = mainMenu
   }
 
   // MARK: - Panel Factory
