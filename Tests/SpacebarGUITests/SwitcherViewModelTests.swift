@@ -93,7 +93,8 @@ private func makeWindowDict(
   name: String? = nil,
   pid: Int = 100,
   layer: Int = 0,
-  bounds: CFDictionary? = nil
+  bounds: CFDictionary? = nil,
+  isOnscreen: Bool = true
 ) -> [String: Any] {
   let defaultBounds = makeBoundsDict(x: 0, y: 0, width: 800, height: 600)
   var dict: [String: Any] = [
@@ -102,6 +103,7 @@ private func makeWindowDict(
     "kCGWindowOwnerPID": pid,
     "kCGWindowLayer": layer,
     "kCGWindowBounds": bounds ?? defaultBounds,
+    "kCGWindowIsOnscreen": isOnscreen,
   ]
   if let name {
     dict["kCGWindowName"] = name

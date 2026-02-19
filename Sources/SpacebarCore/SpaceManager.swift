@@ -28,13 +28,15 @@ public struct WindowInfo {
   public let pid: Int
   public let bounds: CGRect
   public let spaceIDs: [UInt64]
+  public let isOnscreen: Bool
 
   /// Window appears on multiple spaces (e.g. "Assign to All Desktops")
   public var isSticky: Bool { spaceIDs.count > 1 }
 
   public init(
     id: Int, ownerName: String, name: String?,
-    pid: Int, bounds: CGRect, spaceIDs: [UInt64]
+    pid: Int, bounds: CGRect, spaceIDs: [UInt64],
+    isOnscreen: Bool = true
   ) {
     self.id = id
     self.ownerName = ownerName
@@ -42,6 +44,7 @@ public struct WindowInfo {
     self.pid = pid
     self.bounds = bounds
     self.spaceIDs = spaceIDs
+    self.isOnscreen = isOnscreen
   }
 }
 
@@ -146,6 +149,7 @@ public class SpaceManager {
       guard bounds.width > 50 && bounds.height > 50 else { continue }
 
       let spaceIDs = dataSource.fetchSpacesForWindow(windowID)
+      let isOnscreen = entry[kCGWindowIsOnscreen as String] as? Bool ?? false
 
       windows.append(
         WindowInfo(
@@ -154,7 +158,8 @@ public class SpaceManager {
           name: name,
           pid: pid,
           bounds: bounds,
-          spaceIDs: spaceIDs
+          spaceIDs: spaceIDs,
+          isOnscreen: isOnscreen
         ))
     }
 
@@ -247,8 +252,9 @@ public class SpaceManager {
 
   // MARK: - Close Window
 
-  /// Closes a window by pressing its AX close button.
-  /// Works across Spaces via brute-force AX element discovery.
+  /// Closes a window by pressing its AX close button (same approach as AltTab).
+  /// AX operations are dispatched to a background queue to avoid blocking the
+  /// main thread and to match AltTab's threading model.
   public func closeWindow(id windowID: Int) throws {
     let windows = getAllWindows()
     guard let window = windows.first(where: { $0.id == windowID }) else {
@@ -260,21 +266,35 @@ public class SpaceManager {
     }
 
     let pid = pid_t(window.pid)
-    guard let axWindow = findAXWindowBruteForce(pid: pid, targetCGWindowID: CGWindowID(windowID))
-    else {
-      return
-    }
+    let targetCGWindowID = CGWindowID(windowID)
 
-    var closeButtonRef: CFTypeRef?
-    guard
-      AXUIElementCopyAttributeValue(axWindow, kAXCloseButtonAttribute as CFString, &closeButtonRef)
-        == .success,
-      let closeButton = closeButtonRef
-    else {
-      return
-    }
+    // Dispatch AX close to a background queue (same pattern as AltTab).
+    DispatchQueue.global(qos: .userInteractive).async { [self] in
+      guard
+        let axWindow = findAXWindowStandard(pid: pid, targetCGWindowID: targetCGWindowID)
+          ?? findAXWindowBruteForce(pid: pid, targetCGWindowID: targetCGWindowID)
+      else {
+        print("closeWindow: AX element not found for window \(windowID)")
+        return
+      }
 
-    AXUIElementPerformAction(closeButton as! AXUIElement, kAXPressAction as CFString)
+      var closeButtonRef: CFTypeRef?
+      guard
+        AXUIElementCopyAttributeValue(
+          axWindow, kAXCloseButtonAttribute as CFString, &closeButtonRef
+        ) == .success,
+        let closeButton = closeButtonRef
+      else {
+        print("closeWindow: close button not found for window \(windowID)")
+        return
+      }
+
+      let result = AXUIElementPerformAction(
+        closeButton as! AXUIElement, kAXPressAction as CFString)
+      if result != .success {
+        print("closeWindow: kAXPressAction failed (\(result.rawValue)) for window \(windowID)")
+      }
+    }
   }
 
   // MARK: - Quit App
@@ -295,7 +315,33 @@ public class SpaceManager {
     app.terminate()
   }
 
-  // MARK: - AX Brute-Force Window Discovery
+  // MARK: - AX Window Discovery
+
+  /// Finds an AXUIElement via the standard `kAXWindowsAttribute` API.
+  /// Only returns windows on the current Space.
+  private func findAXWindowStandard(
+    pid: pid_t, targetCGWindowID: CGWindowID
+  ) -> AXUIElement? {
+    let appElement = AXUIElementCreateApplication(pid)
+    var windowsRef: CFTypeRef?
+    guard
+      AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        == .success,
+      let windows = windowsRef as? [AXUIElement]
+    else {
+      return nil
+    }
+
+    for window in windows {
+      var cgWid: CGWindowID = 0
+      if _AXUIElementGetWindow(window, &cgWid) == .success,
+        cgWid == targetCGWindowID
+      {
+        return window
+      }
+    }
+    return nil
+  }
 
   /// Finds an AXUIElement for a window on any Space by brute-forcing
   /// AXUIElementID values via `_AXUIElementCreateWithRemoteToken`.

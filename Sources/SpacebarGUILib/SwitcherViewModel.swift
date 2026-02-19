@@ -82,6 +82,10 @@ public final class SwitcherViewModel: ObservableObject {
   /// Cache app icons by bundle identifier to avoid repeated lookups.
   private var iconCache: [pid_t: NSImage] = [:]
 
+  /// Window IDs that have been closed/quit but may still linger in CGWindowList.
+  /// Filtered out during refresh() until they actually disappear.
+  private var pendingCloseWindowIDs = Set<Int>()
+
   public init(
     spaceManager: SpaceManager = SpaceManager(),
     spaceNameStore: SpaceNameStoring = SpaceNameStore()
@@ -97,8 +101,28 @@ public final class SwitcherViewModel: ObservableObject {
     let allWindows = spaceManager.getAllWindows()
     let displayNames = Self.displayNameMap()
 
-    // Reorder windows within each space by MRU history.
+    // Prune pending-close IDs that have actually disappeared from CGWindowList.
+    let activeWindowIDs = Set(allWindows.map(\.id))
+    pendingCloseWindowIDs = pendingCloseWindowIDs.filter { activeWindowIDs.contains($0) }
+
+    // Filter out windows that are pending close (optimistic removal)
+    // and windows that are hidden on a current space. Off-screen windows
+    // on non-current spaces are expected (cross-space) and kept.
+    let currentSpaceIDs = Set(spaces.filter(\.isCurrent).map(\.id))
     var windowMap = rawWindowMap
+    for (spaceID, windows) in windowMap {
+      windowMap[spaceID] = windows.filter { window in
+        if pendingCloseWindowIDs.contains(window.id) { return false }
+        if !window.isOnscreen
+          && window.spaceIDs.allSatisfy({ currentSpaceIDs.contains($0) })
+        {
+          return false
+        }
+        return true
+      }
+    }
+
+    // Reorder windows within each space by MRU history.
     for (spaceID, windows) in windowMap {
       windowMap[spaceID] = reorderByMRU(windows)
     }
@@ -238,7 +262,6 @@ public final class SwitcherViewModel: ObservableObject {
     selectedItem = nil
 
     // Prune window MRU entries for windows that no longer exist.
-    let activeWindowIDs = Set(allWindows.map(\.id))
     windowMRUHistory.removeAll { !activeWindowIDs.contains($0) }
   }
 
@@ -376,30 +399,67 @@ public final class SwitcherViewModel: ObservableObject {
       return
     }
     windowMRUHistory.removeAll { $0 == windowID }
-    // Brief delay so the window has time to close before we re-enumerate
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-      self?.refreshKeepingSelection()
-    }
+    pendingCloseWindowIDs.insert(windowID)
+    removeWindowFromSections(windowID)
   }
 
   /// Quits the app that owns the currently selected window and refreshes.
+  /// For Finder, closes the window instead (Finder auto-relaunches on terminate).
   public func quitSelectedApp() {
     guard case .windowRow(let windowID) = selectedItem else { return }
     let rows = flatFilteredRows
-    let affectedPid = rows.first(where: { $0.id == windowID })?.pid
+    guard let row = rows.first(where: { $0.id == windowID }) else { return }
+
+    // Finder auto-relaunches on terminate — close just this window instead
+    let pid = pid_t(row.pid)
+    if NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.finder" {
+      closeSelectedWindow()
+      return
+    }
+
     do {
       try spaceManager.quitApp(owningWindowID: windowID)
     } catch {
       print("Failed to quit app for window \(windowID): \(error)")
       return
     }
-    // Remove all MRU entries for windows belonging to the quitting app
-    if let pid = affectedPid {
-      let appWindowIDs = Set(rows.filter { $0.pid == pid }.map(\.id))
-      windowMRUHistory.removeAll { appWindowIDs.contains($0) }
+    // Remove all MRU entries and rows for the quitting app immediately
+    let appWindowIDs = Set(rows.filter { $0.pid == row.pid }.map(\.id))
+    windowMRUHistory.removeAll { appWindowIDs.contains($0) }
+    for wid in appWindowIDs {
+      pendingCloseWindowIDs.insert(wid)
+      removeWindowFromSections(wid)
     }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-      self?.refreshKeepingSelection()
+  }
+
+  /// Optimistically removes a window from the published sections and advances
+  /// the selection to the next row. Gives instant visual feedback before the
+  /// OS finishes tearing down the window.
+  private func removeWindowFromSections(_ windowID: Int) {
+    let previousIndex = flatFilteredRows.firstIndex(where: { $0.id == windowID })
+
+    // Remove the window from sections, dropping empty sections
+    sections = sections.compactMap { section in
+      let filtered = section.windows.filter { $0.id != windowID }
+      guard !filtered.isEmpty else { return nil }
+      return SwitcherSection(
+        id: section.id,
+        spaceUUID: section.spaceUUID,
+        displayUUID: section.displayUUID,
+        displayName: section.displayName,
+        label: section.label,
+        isCurrent: section.isCurrent,
+        windows: filtered
+      )
+    }
+
+    // Advance selection to the next row at the same position
+    let rows = flatFilteredRows
+    if let idx = previousIndex, !rows.isEmpty {
+      let clampedIndex = min(idx, rows.count - 1)
+      selectedItem = .windowRow(rows[clampedIndex].id)
+    } else {
+      selectedItem = rows.first.map { .windowRow($0.id) }
     }
   }
 
