@@ -41,6 +41,8 @@ struct AppearancePane: View {
       Section("Elements") {
         Toggle("Show app icons", isOn: $settings.showAppIcons)
         Toggle("Show current space badge", isOn: $settings.showCurrentBadge)
+        Toggle("Show display name badge", isOn: $settings.showDisplayBadge)
+          .disabled(settings.filterSpacesByDisplay)
       }
 
       Section("Display") {
@@ -50,10 +52,17 @@ struct AppearancePane: View {
           }
         }
         .pickerStyle(.radioGroup)
+        .disabled(settings.filterSpacesByDisplay)
 
-        Text(settings.panelDisplay.description)
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        Text(
+          settings.filterSpacesByDisplay
+            ? "Forced to active display when filtering by display"
+            : settings.panelDisplay.description
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+        Toggle("Only show current display's spaces", isOn: $settings.filterSpacesByDisplay)
       }
     }
     .formStyle(.grouped)

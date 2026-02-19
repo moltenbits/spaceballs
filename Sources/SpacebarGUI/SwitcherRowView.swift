@@ -38,6 +38,8 @@ struct SwitcherRowView: View {
         .font(.system(size: textSize))
         .foregroundStyle(.primary)
         .lineLimit(1)
+        .truncationMode(.tail)
+        .frame(maxWidth: 400, alignment: .leading)
 
       if row.isSticky {
         Image(systemName: "pin.fill")
@@ -64,6 +66,7 @@ struct SectionHeaderView: View {
   let isCurrent: Bool
   var isSelected: Bool = false
   var showCurrentBadge: Bool = true
+  var displayName: String = ""
   var textSize: CGFloat = 13
 
   private var headerSize: CGFloat { round(textSize * 11.0 / 13.0) }
@@ -77,6 +80,12 @@ struct SectionHeaderView: View {
 
       if isCurrent && showCurrentBadge {
         Text("(current)")
+          .font(.system(size: badgeSize))
+          .foregroundStyle(isSelected ? .secondary : .tertiary)
+      }
+
+      if !displayName.isEmpty {
+        Text("— \(displayName)")
           .font(.system(size: badgeSize))
           .foregroundStyle(isSelected ? .secondary : .tertiary)
       }

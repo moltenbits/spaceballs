@@ -53,7 +53,7 @@ private func makeDisplayDict(
 func makeWindowDict(
   id: Int,
   ownerName: String,
-  name: String? = nil,
+  name: String? = "Window",
   pid: Int = 100,
   layer: Int = 0,
   bounds: CFDictionary? = nil
@@ -256,9 +256,9 @@ struct WindowFilteringTests {
   func nonZeroLayer() {
     var ds = MockDataSource()
     ds.windowList = [
-      makeWindowDict(id: 1, ownerName: "Dock", layer: 20),
-      makeWindowDict(id: 2, ownerName: "Menubar", layer: 25),
-      makeWindowDict(id: 3, ownerName: "App", layer: 0),
+      makeWindowDict(id: 1, ownerName: "Dock", name: "Dock", layer: 20),
+      makeWindowDict(id: 2, ownerName: "Menubar", name: "Menubar", layer: 25),
+      makeWindowDict(id: 3, ownerName: "App", name: "Main", layer: 0),
     ]
     ds.windowSpaces = [3: [100]]
 
@@ -274,19 +274,19 @@ struct WindowFilteringTests {
     var ds = MockDataSource()
     ds.windowList = [
       makeWindowDict(
-        id: 1, ownerName: "Helper",
+        id: 1, ownerName: "Helper", name: "Helper",
         bounds: makeBoundsDict(x: 0, y: 0, width: 30, height: 30)
       ),
       makeWindowDict(
-        id: 2, ownerName: "ThinBar",
+        id: 2, ownerName: "ThinBar", name: "ThinBar",
         bounds: makeBoundsDict(x: 0, y: 0, width: 200, height: 10)
       ),
       makeWindowDict(
-        id: 3, ownerName: "NarrowBar",
+        id: 3, ownerName: "NarrowBar", name: "NarrowBar",
         bounds: makeBoundsDict(x: 0, y: 0, width: 10, height: 200)
       ),
       makeWindowDict(
-        id: 4, ownerName: "Normal",
+        id: 4, ownerName: "Normal", name: "Main",
         bounds: makeBoundsDict(x: 0, y: 0, width: 100, height: 100)
       ),
     ]
@@ -299,19 +299,21 @@ struct WindowFilteringTests {
     #expect(windows[0].id == 4)
   }
 
-  @Test("Handles windows with no title")
+  @Test("Filters out windows with no title")
   func windowWithoutTitle() {
     var ds = MockDataSource()
     ds.windowList = [
-      makeWindowDict(id: 1, ownerName: "App", name: nil)
+      makeWindowDict(id: 1, ownerName: "App", name: nil),
+      makeWindowDict(id: 2, ownerName: "App", name: ""),
+      makeWindowDict(id: 3, ownerName: "App", name: "Real Window"),
     ]
-    ds.windowSpaces = [1: [100]]
+    ds.windowSpaces = [3: [100]]
 
     let manager = SpaceManager(dataSource: ds)
     let windows = manager.getAllWindows()
 
     #expect(windows.count == 1)
-    #expect(windows[0].name == nil)
+    #expect(windows[0].id == 3)
   }
 
   @Test("Skips entries with missing required fields")

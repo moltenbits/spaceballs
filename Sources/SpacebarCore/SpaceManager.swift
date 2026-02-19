@@ -98,6 +98,9 @@ public class SpaceManager {
   public func getAllWindows() -> [WindowInfo] {
     let windowList = dataSource.fetchWindowList()
 
+    // Cache activation policy per PID to avoid repeated lookups.
+    var policyCache: [pid_t: NSApplication.ActivationPolicy] = [:]
+
     var windows: [WindowInfo] = []
 
     for entry in windowList {
@@ -114,6 +117,24 @@ public class SpaceManager {
       guard layer == 0 else { continue }
 
       let name = entry[kCGWindowName as String] as? String
+
+      // Skip windows with no title (auxiliary windows like Safari's toolbar
+      // containers, web inspector panels, etc.)
+      guard let name, !name.isEmpty else { continue }
+
+      // Skip windows from menu bar / background apps (accessory or prohibited
+      // activation policy). These never appear as normal user-facing windows.
+      let pidT = pid_t(pid)
+      let policy: NSApplication.ActivationPolicy
+      if let cached = policyCache[pidT] {
+        policy = cached
+      } else if let app = NSRunningApplication(processIdentifier: pidT) {
+        policy = app.activationPolicy
+        policyCache[pidT] = policy
+      } else {
+        policy = .regular
+      }
+      guard policy == .regular else { continue }
 
       var bounds = CGRect.zero
       if let boundsRef = entry[kCGWindowBounds as String] {

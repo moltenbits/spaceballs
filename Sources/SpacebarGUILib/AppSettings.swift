@@ -71,6 +71,14 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(panelDisplay.rawValue, forKey: "panelDisplay") }
   }
 
+  @Published public var filterSpacesByDisplay: Bool {
+    didSet { defaults.set(filterSpacesByDisplay, forKey: "filterSpacesByDisplay") }
+  }
+
+  @Published public var showDisplayBadge: Bool {
+    didSet { defaults.set(showDisplayBadge, forKey: "showDisplayBadge") }
+  }
+
   public init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
 
@@ -81,6 +89,8 @@ public final class AppSettings: ObservableObject {
       "textSize": 13.0,
       "backgroundOpacity": 1.0,
       "panelDisplay": PanelDisplay.active.rawValue,
+      "filterSpacesByDisplay": false,
+      "showDisplayBadge": true,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -91,6 +101,8 @@ public final class AppSettings: ObservableObject {
     self.backgroundOpacity = defaults.double(forKey: "backgroundOpacity")
     self.panelDisplay =
       PanelDisplay(rawValue: defaults.string(forKey: "panelDisplay") ?? "") ?? .active
+    self.filterSpacesByDisplay = defaults.bool(forKey: "filterSpacesByDisplay")
+    self.showDisplayBadge = defaults.bool(forKey: "showDisplayBadge")
   }
 
   /// Icon size proportional to text size (20px at 13pt text).

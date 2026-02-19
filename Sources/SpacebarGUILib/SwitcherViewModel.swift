@@ -6,15 +6,20 @@ import SpacebarCore
 public struct SwitcherSection: Identifiable {
   public let id: UInt64  // space ID
   public let spaceUUID: String
+  public let displayUUID: String
+  public let displayName: String
   public let label: String
   public let isCurrent: Bool
   public var windows: [SwitcherRow]
 
   public init(
-    id: UInt64, spaceUUID: String = "", label: String, isCurrent: Bool, windows: [SwitcherRow]
+    id: UInt64, spaceUUID: String = "", displayUUID: String = "",
+    displayName: String = "", label: String, isCurrent: Bool, windows: [SwitcherRow]
   ) {
     self.id = id
     self.spaceUUID = spaceUUID
+    self.displayUUID = displayUUID
+    self.displayName = displayName
     self.label = label
     self.isCurrent = isCurrent
     self.windows = windows
@@ -60,6 +65,12 @@ public final class SwitcherViewModel: ObservableObject {
   public let spaceManager: SpaceManager
   public let spaceNameStore: SpaceNameStoring
 
+  /// When true, keyboard navigation and per-panel rendering filter by display.
+  public var filterByDisplay: Bool = false
+
+  /// Override the focused display UUID (for testing, since NSScreen.main is unavailable).
+  public var overrideDisplayUUID: String?
+
   /// Persistent MRU history of space IDs, most recent first.
   /// Updated on each refresh() when the current space changes.
   private var spaceMRUHistory: [UInt64] = []
@@ -84,6 +95,7 @@ public final class SwitcherViewModel: ObservableObject {
   public func refresh() {
     let (spaces, rawWindowMap) = spaceManager.windowsBySpace()
     let allWindows = spaceManager.getAllWindows()
+    let displayNames = Self.displayNameMap()
 
     // Reorder windows within each space by MRU history.
     var windowMap = rawWindowMap
@@ -94,7 +106,7 @@ public final class SwitcherViewModel: ObservableObject {
     // Determine the current space on the focused display.
     // With multiple displays, each has its own current space (from CGS isCurrent).
     // NSScreen.main identifies which display has keyboard focus.
-    let focusedDisplayUUID = Self.focusedDisplayUUID()
+    let focusedDisplayUUID = overrideDisplayUUID ?? Self.focusedDisplayUUID()
     let focusedCurrentSpace: UInt64? = {
       if let uuid = focusedDisplayUUID {
         return spaces.first(where: { $0.isCurrent && $0.displayUUID == uuid })?.id
@@ -152,6 +164,11 @@ public final class SwitcherViewModel: ObservableObject {
       spaceInfoMap[space.id] = space
     }
 
+    // Filter to only the focused display's spaces when enabled.
+    if filterByDisplay, let uuid = focusedDisplayUUID {
+      spaceMRUOrder = spaceMRUOrder.filter { spaceInfoMap[$0]?.displayUUID == uuid }
+    }
+
     // Build global ordinal labels: "Desktop 1", "Desktop 2", etc.
     // Only count desktop-type spaces (fullscreen spaces get their own label).
     // Number globally across all displays so there's no duplicate "Desktop 1".
@@ -204,9 +221,12 @@ public final class SwitcherViewModel: ObservableObject {
 
       guard !rows.isEmpty else { continue }
 
+      let dispUUID = spaceInfo?.displayUUID ?? ""
       newSections.append(SwitcherSection(
         id: spaceID,
         spaceUUID: spaceUUID,
+        displayUUID: dispUUID,
+        displayName: displayNames[dispUUID] ?? "",
         label: label,
         isCurrent: isCurrent,
         windows: rows
@@ -236,6 +256,7 @@ public final class SwitcherViewModel: ObservableObject {
       return SwitcherSection(
         id: section.id,
         spaceUUID: section.spaceUUID,
+        displayUUID: section.displayUUID,
         label: section.label,
         isCurrent: section.isCurrent,
         windows: filtered
@@ -405,6 +426,21 @@ public final class SwitcherViewModel: ObservableObject {
     let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
     guard let cfUUID else { return nil }
     return CFUUIDCreateString(nil, cfUUID) as String
+  }
+
+  /// Builds a mapping from CGS display UUID → NSScreen.localizedName.
+  private static func displayNameMap() -> [String: String] {
+    var map: [String: String] = [:]
+    for screen in NSScreen.screens {
+      guard let screenNumber = screen.deviceDescription[
+        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+      else { continue }
+      let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
+      guard let cfUUID else { continue }
+      let uuid = CFUUIDCreateString(nil, cfUUID) as String
+      map[uuid] = screen.localizedName
+    }
+    return map
   }
 
   private func reorderByMRU(_ windows: [WindowInfo]) -> [WindowInfo] {

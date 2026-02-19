@@ -92,6 +92,8 @@ struct SwitcherView: View {
         isCurrent: section.isCurrent,
         isSelected: viewModel.selectedItem == .spaceHeader(section.id),
         showCurrentBadge: appSettings.showCurrentBadge,
+        displayName: appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
+          ? section.displayName : "",
         textSize: CGFloat(appSettings.textSize)
       )
       .onTapGesture {

@@ -90,6 +90,37 @@ private func makeWindowDict(
   return dict
 }
 
+/// Creates a mock data source with two displays:
+/// - display-1: spaces 1 (current) and 2, with windows 10 and 20
+/// - display-2: space 3 (current), with window 30
+private func makeTwoDisplayDataSource() -> MockDataSource {
+  var ds = MockDataSource()
+  ds.displaySpaces = [
+    makeDisplayDict(
+      displayUUID: "display-1",
+      spaces: [
+        makeSpaceDict(id: 1, uuid: "uuid-1"),
+        makeSpaceDict(id: 2, uuid: "uuid-2"),
+      ],
+      currentSpaceID: 1
+    ),
+    makeDisplayDict(
+      displayUUID: "display-2",
+      spaces: [
+        makeSpaceDict(id: 3, uuid: "uuid-3")
+      ],
+      currentSpaceID: 3
+    ),
+  ]
+  ds.windowList = [
+    makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100),
+    makeWindowDict(id: 20, ownerName: "Terminal", name: "bash", pid: 200),
+    makeWindowDict(id: 30, ownerName: "Code", name: "main.swift", pid: 300),
+  ]
+  ds.windowSpaces = [10: [1], 20: [2], 30: [3]]
+  return ds
+}
+
 /// Creates a mock data source with two spaces and windows in a known Z-order.
 /// Window list order = front-to-back = MRU order.
 private func makeTwoSpaceDataSource() -> MockDataSource {
@@ -769,5 +800,75 @@ struct CustomSpaceNamesTests {
     let space2 = vm.sections.first(where: { $0.id == 2 })
     #expect(space1?.spaceUUID == "uuid-1")
     #expect(space2?.spaceUUID == "uuid-2")
+  }
+}
+
+// MARK: - Display Filtering Tests
+
+@Suite("Display Filtering")
+struct DisplayFilteringTests {
+
+  @Test("With filterByDisplay off, all displays' spaces appear")
+  func allDisplaysShownByDefault() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.overrideDisplayUUID = "display-1"
+    vm.filterByDisplay = false
+    vm.refresh()
+
+    let spaceIDs = Set(vm.sections.map(\.id))
+    #expect(spaceIDs.contains(1))
+    #expect(spaceIDs.contains(2))
+    #expect(spaceIDs.contains(3))
+  }
+
+  @Test("With filterByDisplay on, only focused display's spaces appear")
+  func filterToDisplay1() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.overrideDisplayUUID = "display-1"
+    vm.filterByDisplay = true
+    vm.refresh()
+
+    let spaceIDs = vm.sections.map(\.id)
+    #expect(spaceIDs.contains(1))
+    #expect(spaceIDs.contains(2))
+    #expect(!spaceIDs.contains(3))
+  }
+
+  @Test("Filtering to display-2 shows only that display's space")
+  func filterToDisplay2() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.overrideDisplayUUID = "display-2"
+    vm.filterByDisplay = true
+    vm.refresh()
+
+    #expect(vm.sections.count == 1)
+    #expect(vm.sections[0].id == 3)
+    #expect(vm.sections[0].windows[0].appName == "Code")
+  }
+
+  @Test("Sections carry correct displayUUID")
+  func sectionsCarryDisplayUUID() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    let section1 = vm.sections.first(where: { $0.id == 1 })
+    let section3 = vm.sections.first(where: { $0.id == 3 })
+    #expect(section1?.displayUUID == "display-1")
+    #expect(section3?.displayUUID == "display-2")
+  }
+
+  @Test("Filtering with unknown display UUID shows no sections")
+  func filterWithUnknownUUID() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.overrideDisplayUUID = "unknown-display"
+    vm.filterByDisplay = true
+    vm.refresh()
+
+    #expect(vm.sections.isEmpty)
   }
 }

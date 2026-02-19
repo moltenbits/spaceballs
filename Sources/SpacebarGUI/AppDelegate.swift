@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // MARK: - Panel Management
 
   func showPanel() {
+    viewModel.filterByDisplay = appSettings.filterSpacesByDisplay
     viewModel.refresh()
     viewModel.resetSelection()
 
@@ -142,6 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // MARK: - Display Targeting
 
   private func targetScreens() -> [NSScreen] {
+    // When filtering by display, always show on the active display only —
+    // showing on all displays would be confusing since only the focused
+    // panel handles keyboard input and activation.
+    if appSettings.filterSpacesByDisplay {
+      return [NSScreen.main ?? NSScreen.screens.first!]
+    }
     switch appSettings.panelDisplay {
     case .active:
       return [NSScreen.main ?? NSScreen.screens.first!]
