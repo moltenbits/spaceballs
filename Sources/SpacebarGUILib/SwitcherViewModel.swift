@@ -404,12 +404,25 @@ public final class SwitcherViewModel: ObservableObject {
   }
 
   /// Refreshes sections while keeping the selection on the next available row.
-  private func refreshKeepingSelection() {
+  func refreshKeepingSelection() {
     let previous = selectedItem
+    // Capture the position of the selected window before refresh so we can
+    // select the next item at the same index if it disappears.
+    let previousIndex: Int?
+    if case .windowRow(let prevID) = previous {
+      previousIndex = flatFilteredRows.firstIndex(where: { $0.id == prevID })
+    } else {
+      previousIndex = nil
+    }
+
     refresh()
     let rows = flatFilteredRows
     if case .windowRow(let prevID) = previous, rows.contains(where: { $0.id == prevID }) {
       selectedItem = .windowRow(prevID)
+    } else if let idx = previousIndex, !rows.isEmpty {
+      // Window was removed — stay at the same position (or clamp to last)
+      let clampedIndex = min(idx, rows.count - 1)
+      selectedItem = .windowRow(rows[clampedIndex].id)
     } else {
       selectedItem = rows.first.map { .windowRow($0.id) }
     }

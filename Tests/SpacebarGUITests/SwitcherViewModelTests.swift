@@ -46,6 +46,25 @@ struct MockDataSource: SystemDataSource {
   }
 }
 
+/// Class-based mock that can be mutated between refreshes.
+final class MutableMockDataSource: SystemDataSource {
+  var displaySpaces: [[String: Any]] = []
+  var windowList: [[String: Any]] = []
+  var windowSpaces: [Int: [UInt64]] = [:]
+
+  func fetchManagedDisplaySpaces() -> [[String: Any]] {
+    displaySpaces
+  }
+
+  func fetchWindowList() -> [[String: Any]] {
+    windowList
+  }
+
+  func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] {
+    windowSpaces[windowID] ?? []
+  }
+}
+
 // MARK: - Helpers
 
 private func makeBoundsDict(x: Double, y: Double, width: Double, height: Double) -> CFDictionary {
@@ -870,5 +889,152 @@ struct DisplayFilteringTests {
     vm.refresh()
 
     #expect(vm.sections.isEmpty)
+  }
+}
+
+// MARK: - Refresh Keeping Selection Tests
+
+@Suite("Refresh Keeping Selection")
+struct RefreshKeepingSelectionTests {
+
+  @Test("Selection stays at same position when selected window disappears")
+  func selectionStaysAtPosition() {
+    let ds = MutableMockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 1, uuid: "uuid-1")],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100),
+      makeWindowDict(id: 11, ownerName: "Terminal", name: "bash", pid: 200),
+      makeWindowDict(id: 12, ownerName: "Code", name: "main.swift", pid: 300),
+    ]
+    ds.windowSpaces = [10: [1], 11: [1], 12: [1]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    // Select the middle window (index 1)
+    vm.selectedItem = .windowRow(11)
+
+    // Remove window 11 (Terminal quit)
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100),
+      makeWindowDict(id: 12, ownerName: "Code", name: "main.swift", pid: 300),
+    ]
+    ds.windowSpaces = [10: [1], 12: [1]]
+
+    vm.refreshKeepingSelection()
+
+    // Should select the window now at index 1 (Code), not jump to first (Safari)
+    #expect(vm.selectedItem == .windowRow(12))
+  }
+
+  @Test("Selection clamps to last when removed window was at end")
+  func selectionClampsToLast() {
+    let ds = MutableMockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 1, uuid: "uuid-1")],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100),
+      makeWindowDict(id: 11, ownerName: "Terminal", name: "bash", pid: 200),
+    ]
+    ds.windowSpaces = [10: [1], 11: [1]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    // Select the last window
+    vm.selectedItem = .windowRow(11)
+
+    // Remove window 11
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100)
+    ]
+    ds.windowSpaces = [10: [1]]
+
+    vm.refreshKeepingSelection()
+
+    // Should clamp to last available (Safari at index 0)
+    #expect(vm.selectedItem == .windowRow(10))
+  }
+
+  @Test("Selection preserved when selected window still exists")
+  func selectionPreservedWhenWindowExists() {
+    let ds = MutableMockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 1, uuid: "uuid-1")],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100),
+      makeWindowDict(id: 11, ownerName: "Terminal", name: "bash", pid: 200),
+      makeWindowDict(id: 12, ownerName: "Code", name: "main.swift", pid: 300),
+    ]
+    ds.windowSpaces = [10: [1], 11: [1], 12: [1]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+    vm.selectedItem = .windowRow(11)
+
+    // Remove a different window (Code)
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100),
+      makeWindowDict(id: 11, ownerName: "Terminal", name: "bash", pid: 200),
+    ]
+    ds.windowSpaces = [10: [1], 11: [1]]
+
+    vm.refreshKeepingSelection()
+
+    // Should stay on Terminal since it still exists
+    #expect(vm.selectedItem == .windowRow(11))
+  }
+
+  @Test("Selection moves to next when all app windows removed (quit)")
+  func selectionAfterAppQuit() {
+    let ds = MutableMockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 1, uuid: "uuid-1")],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Tab 1", pid: 100),
+      makeWindowDict(id: 11, ownerName: "Safari", name: "Tab 2", pid: 100),
+      makeWindowDict(id: 12, ownerName: "Terminal", name: "bash", pid: 200),
+      makeWindowDict(id: 13, ownerName: "Code", name: "main.swift", pid: 300),
+    ]
+    ds.windowSpaces = [10: [1], 11: [1], 12: [1], 13: [1]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    // Select first Safari window (index 0)
+    vm.selectedItem = .windowRow(10)
+
+    // Quit Safari — both windows 10 and 11 disappear
+    ds.windowList = [
+      makeWindowDict(id: 12, ownerName: "Terminal", name: "bash", pid: 200),
+      makeWindowDict(id: 13, ownerName: "Code", name: "main.swift", pid: 300),
+    ]
+    ds.windowSpaces = [12: [1], 13: [1]]
+
+    vm.refreshKeepingSelection()
+
+    // Should select Terminal (now at index 0, same position as Safari was)
+    #expect(vm.selectedItem == .windowRow(12))
   }
 }
