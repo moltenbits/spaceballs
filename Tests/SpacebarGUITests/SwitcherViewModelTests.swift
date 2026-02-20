@@ -894,6 +894,101 @@ struct DisplayFilteringTests {
   }
 }
 
+// MARK: - Display Cycling Tests
+
+@Suite("Display Cycling")
+struct DisplayCyclingTests {
+
+  @Test("Cycling from display-1 to display-2 shows display-2's spaces")
+  func cycleToDisplay2() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.filterByDisplay = true
+
+    // Start on display-1
+    vm.overrideDisplayUUID = "display-1"
+    vm.refresh()
+    #expect(vm.sections.map(\.id).contains(1))
+    #expect(!vm.sections.map(\.id).contains(3))
+
+    // Cycle to display-2
+    vm.overrideDisplayUUID = "display-2"
+    vm.refresh()
+    vm.resetSelection()
+
+    #expect(vm.sections.count == 1)
+    #expect(vm.sections[0].id == 3)
+    #expect(vm.sections[0].windows[0].appName == "Code")
+  }
+
+  @Test("Cycling back from display-2 to display-1 restores display-1's spaces")
+  func cycleBackToDisplay1() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.filterByDisplay = true
+
+    // Start on display-1, cycle to display-2, then back
+    vm.overrideDisplayUUID = "display-1"
+    vm.refresh()
+
+    vm.overrideDisplayUUID = "display-2"
+    vm.refresh()
+
+    vm.overrideDisplayUUID = "display-1"
+    vm.refresh()
+
+    let spaceIDs = vm.sections.map(\.id)
+    #expect(spaceIDs.contains(1))
+    #expect(spaceIDs.contains(2))
+    #expect(!spaceIDs.contains(3))
+  }
+
+  @Test("Selection resets to first window after cycling display")
+  func selectionResetsOnCycle() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.filterByDisplay = true
+
+    // Start on display-1, select a window
+    vm.overrideDisplayUUID = "display-1"
+    vm.refresh()
+    vm.resetSelection()
+    #expect(vm.selectedItem == .windowRow(10))
+
+    // Cycle to display-2 and reset selection
+    vm.overrideDisplayUUID = "display-2"
+    vm.refresh()
+    vm.resetSelection()
+
+    // Should select display-2's first window
+    #expect(vm.selectedItem == .windowRow(30))
+  }
+
+  @Test("Clearing overrideDisplayUUID resets to default behavior")
+  func clearOverrideResetsDefault() {
+    let ds = makeTwoDisplayDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.filterByDisplay = true
+
+    // Cycle to display-2
+    vm.overrideDisplayUUID = "display-2"
+    vm.refresh()
+    #expect(vm.sections.count == 1)
+
+    // Clear override — without NSScreen.main, focusedDisplayUUID returns nil,
+    // so filterByDisplay has no UUID to match and shows no sections.
+    // In production, NSScreen.main provides the UUID.
+    vm.overrideDisplayUUID = nil
+    vm.filterByDisplay = false
+    vm.refresh()
+
+    // All spaces visible when filtering is off
+    let spaceIDs = Set(vm.sections.map(\.id))
+    #expect(spaceIDs.contains(1))
+    #expect(spaceIDs.contains(3))
+  }
+}
+
 // MARK: - Refresh Keeping Selection Tests
 
 @Suite("Refresh Keeping Selection")

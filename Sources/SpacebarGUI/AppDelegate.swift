@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var spaceNameStore: SpaceNameStore!
   private var appSettings: AppSettings!
   private var settingsController: SettingsWindowController!
+  private var currentPanelDisplayUUID: String?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     spaceNameStore = SpaceNameStore()
@@ -82,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // MARK: - Panel Management
 
   func showPanel() {
+    viewModel.overrideDisplayUUID = nil
     viewModel.filterByDisplay = appSettings.filterSpacesByDisplay
     viewModel.refresh()
     viewModel.resetSelection()
@@ -107,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       panels[i].orderOut(nil)
     }
 
+    currentPanelDisplayUUID = Self.displayUUID(for: screens[0])
     keyInterceptor.setPanelVisible(true)
   }
 
@@ -114,6 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     for panel in panels {
       panel.orderOut(nil)
     }
+    currentPanelDisplayUUID = nil
+    viewModel.overrideDisplayUUID = nil
     keyInterceptor.setPanelVisible(false)
   }
 
@@ -141,6 +146,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   // MARK: - Display Targeting
+
+  private static func displayUUID(for screen: NSScreen) -> String? {
+    guard let screenNumber = screen.deviceDescription[
+      NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    else { return nil }
+    let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
+    guard let cfUUID else { return nil }
+    return CFUUIDCreateString(nil, cfUUID) as String
+  }
+
+  private func cycleDisplay(forward: Bool) {
+    guard appSettings.filterSpacesByDisplay else { return }
+    let screens = NSScreen.screens
+    guard screens.count > 1 else { return }
+
+    let currentIndex = screens.firstIndex(where: {
+      Self.displayUUID(for: $0) == currentPanelDisplayUUID
+    }) ?? 0
+
+    let nextIndex = forward
+      ? (currentIndex + 1) % screens.count
+      : (currentIndex - 1 + screens.count) % screens.count
+    let targetScreen = screens[nextIndex]
+
+    let targetUUID = Self.displayUUID(for: targetScreen)
+    viewModel.overrideDisplayUUID = targetUUID
+    viewModel.refresh()
+    viewModel.resetSelection()
+
+    let panel = panels[0]
+    resizePanelToFit(panel, on: targetScreen)
+    centerPanel(panel, on: targetScreen)
+    currentPanelDisplayUUID = targetUUID
+  }
 
   private func targetScreens() -> [NSScreen] {
     // When filtering by display, always show on the active display only —
@@ -226,5 +265,13 @@ extension AppDelegate: KeyInterceptorDelegate {
 
   func keyInterceptorOpenSettings() {
     openSettings()
+  }
+
+  func keyInterceptorCycleDisplayLeft() {
+    cycleDisplay(forward: false)
+  }
+
+  func keyInterceptorCycleDisplayRight() {
+    cycleDisplay(forward: true)
   }
 }

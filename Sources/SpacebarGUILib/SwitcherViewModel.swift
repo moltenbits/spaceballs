@@ -68,7 +68,7 @@ public final class SwitcherViewModel: ObservableObject {
   /// When true, keyboard navigation and per-panel rendering filter by display.
   public var filterByDisplay: Bool = false
 
-  /// Override the focused display UUID (for testing, since NSScreen.main is unavailable).
+  /// Override the focused display UUID (used for display cycling via Cmd+Left/Right and for testing).
   public var overrideDisplayUUID: String?
 
   /// Persistent MRU history of space IDs, most recent first.
