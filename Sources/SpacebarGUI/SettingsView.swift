@@ -42,8 +42,9 @@ struct SettingsView: View {
       sidebar
       Divider()
       content
+        .frame(maxHeight: .infinity, alignment: .top)
     }
-    .frame(width: 600, height: 400)
+    .frame(width: 600)
   }
 
   // MARK: - Sidebar

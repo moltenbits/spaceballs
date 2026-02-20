@@ -29,16 +29,28 @@ final class SettingsWindowController {
     )
     let hostingView = NSHostingView(rootView: settingsView)
 
+    // Measure the tallest pane (Appearance) to size the window correctly.
+    // Other panes fill the available space with top-aligned content.
+    let measureRoot = AppearancePane(settings: appSettings)
+      .formStyle(.grouped)
+      .fixedSize(horizontal: false, vertical: true)
+      .frame(width: 430)  // content area: 600 - 170 sidebar
+    let measureView = NSHostingView(rootView: measureRoot)
+    let paneHeight = measureView.fittingSize.height
+    let screenHeight = NSScreen.main?.visibleFrame.height ?? 800
+    let maxHeight = screenHeight * 0.8
+    let initialHeight = min(max(paneHeight, 400), maxHeight)
+
     let win = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
-      styleMask: [.titled, .closable],
+      contentRect: NSRect(x: 0, y: 0, width: 600, height: initialHeight),
+      styleMask: [.titled, .closable, .resizable],
       backing: .buffered,
       defer: false
     )
     win.title = "Spacebar Settings"
     win.contentView = hostingView
     win.contentMinSize = NSSize(width: 600, height: 400)
-    win.contentMaxSize = NSSize(width: 600, height: 400)
+    win.contentMaxSize = NSSize(width: 600, height: maxHeight)
     win.center()
     win.isReleasedWhenClosed = false
     win.makeKeyAndOrderFront(nil)
