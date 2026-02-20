@@ -173,6 +173,22 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
+    // Down arrow (keyCode 125) — move selection down
+    if keyCode == 125 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorMoveDown()
+      }
+      return nil  // consume
+    }
+
+    // Up arrow (keyCode 126) — move selection up
+    if keyCode == 126 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorMoveUp()
+      }
+      return nil  // consume
+    }
+
     // Cmd+W (keyCode 13) — close selected window
     if cmdHeld && keyCode == 13 && interceptor.panelVisible {
       DispatchQueue.main.async {
