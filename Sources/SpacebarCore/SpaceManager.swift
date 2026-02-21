@@ -211,13 +211,10 @@ public class SpaceManager {
     }
 
     let pid = pid_t(window.pid)
+    let targetCGWindowID = CGWindowID(windowID)
 
-    // 3. Find the AXUIElement for this window via brute-force enumeration.
-    //    kAXWindowsAttribute does NOT return windows on other Spaces.
-    //    We construct AXUIElement handles directly via _AXUIElementCreateWithRemoteToken,
-    //    iterating AXUIElementID values until we find one matching our CGWindowID.
-    //    (Workaround discovered by AltTab in Feb 2025, issue #1324.)
-    let axElement = findAXWindowBruteForce(pid: pid, targetCGWindowID: CGWindowID(windowID))
+    // 3. Try the standard kAXWindowsAttribute first (fast, works for same-space windows).
+    let axElement = findAXWindowStandard(pid: pid, targetCGWindowID: targetCGWindowID)
 
     // 4. Get PSN and activate via SkyLight (same sequence as AltTab).
     //    _SLPSSetFrontProcessWithOptions targets the specific CGWindowID and
@@ -225,8 +222,7 @@ public class SpaceManager {
     var psn = ProcessSerialNumber()
     GetProcessForPID(pid, &psn)
 
-    let wid = CGWindowID(windowID)
-    _SLPSSetFrontProcessWithOptions(&psn, wid, 0x200)
+    _SLPSSetFrontProcessWithOptions(&psn, targetCGWindowID, 0x200)
 
     // 5. Send synthetic key-window events (Hammerspoon technique via AltTab).
     //    Two event records (type 0x01 key-down, 0x02 key-up) with the
@@ -235,7 +231,7 @@ public class SpaceManager {
     bytes[0x04] = 0xf8
     bytes[0x3a] = 0x10
     bytes.withUnsafeMutableBufferPointer { buf in
-      var widCopy = wid
+      var widCopy = targetCGWindowID
       memcpy(buf.baseAddress! + 0x3c, &widCopy, MemoryLayout<UInt32>.size)
       memset(buf.baseAddress! + 0x20, 0xff, 0x10)
     }
@@ -245,8 +241,26 @@ public class SpaceManager {
     SLPSPostEventRecordTo(&psn, &bytes)
 
     // 6. Raise via AX for z-ordering within the app's window stack.
+    //    If the standard lookup found the element (same-space), raise immediately.
+    //    Otherwise, dispatch brute-force search to a background thread with a
+    //    longer timeout — apps like Safari can have very high AX element IDs
+    //    after many tabs have been opened/closed, and the search can't complete
+    //    within a main-thread-safe timeout.
     if let axElement {
       AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+    } else {
+      DispatchQueue.global(qos: .userInteractive).async { [self] in
+        if let axElement = findAXWindowBruteForce(
+          pid: pid, targetCGWindowID: targetCGWindowID)
+        {
+          AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+        } else {
+          print(
+            "activateWindow: AX element not found for window \(windowID)"
+              + " (\(window.ownerName) — \(window.name ?? "untitled"))"
+              + " — kAXRaiseAction skipped")
+        }
+      }
     }
   }
 
@@ -348,7 +362,14 @@ public class SpaceManager {
   ///
   /// `kAXWindowsAttribute` only returns windows on the current Space.
   /// This method constructs AXUIElement handles directly, iterating element
-  /// IDs 0..999 and checking each for a matching CGWindowID.
+  /// IDs and checking each for a matching CGWindowID.
+  ///
+  /// The search checks `_AXUIElementGetWindow` first (fast) and only queries
+  /// `kAXSubroleAttribute` when the CGWindowID matches, to verify it's the
+  /// window element and not a child (buttons etc. report the same window ID).
+  ///
+  /// Called from a background thread with a 1-second timeout — apps like Safari
+  /// can accumulate very high AX element IDs after many tabs are opened/closed.
   private func findAXWindowBruteForce(
     pid: pid_t, targetCGWindowID: CGWindowID
   ) -> AXUIElement? {
@@ -363,8 +384,10 @@ public class SpaceManager {
     tokenData.replaceSubrange(8..<12, with: withUnsafeBytes(of: Int32(0x636f636f)) { Data($0) })
 
     let startTime = DispatchTime.now()
+    let maxElementID: UInt64 = 1_000_000
+    let timeoutNanos: UInt64 = 1_000_000_000  // 1 second
 
-    for elementID: UInt64 in 0..<1000 {
+    for elementID: UInt64 in 0..<maxElementID {
       tokenData.replaceSubrange(12..<20, with: withUnsafeBytes(of: elementID) { Data($0) })
 
       guard
@@ -374,30 +397,26 @@ public class SpaceManager {
         continue
       }
 
-      // Check if this element is a window (standard or dialog)
-      var subroleRef: CFTypeRef?
-      guard
-        AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleRef)
-          == .success,
-        let subrole = subroleRef as? String,
-        subrole == kAXStandardWindowSubrole as String
-          || subrole == kAXDialogSubrole as String
+      // Check CGWindowID first — eliminates elements not in our target window.
+      var cgWid: CGWindowID = 0
+      guard _AXUIElementGetWindow(element, &cgWid) == .success,
+        cgWid == targetCGWindowID
       else {
+        let elapsed = DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds
+        if elapsed > timeoutNanos { break }
         continue
       }
 
-      // Check if this window's CGWindowID matches our target
-      var cgWid: CGWindowID = 0
-      if _AXUIElementGetWindow(element, &cgWid) == .success,
-        cgWid == targetCGWindowID
+      // CGWindowID matches — verify this is a window element, not a child
+      // (buttons, text fields etc. also report their containing window's ID).
+      var subroleRef: CFTypeRef?
+      if AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleRef)
+        == .success,
+        let subrole = subroleRef as? String,
+        subrole == kAXStandardWindowSubrole as String
+          || subrole == kAXDialogSubrole as String
       {
         return element
-      }
-
-      // Timeout after 100ms (same as AltTab) to avoid blocking too long
-      let elapsed = DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds
-      if elapsed > 100_000_000 {
-        break
       }
     }
 
