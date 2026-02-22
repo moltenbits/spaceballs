@@ -12,6 +12,9 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorQuitApp()
   func keyInterceptorCycleDisplayLeft()
   func keyInterceptorCycleDisplayRight()
+  func keyInterceptorStartRename()
+  func keyInterceptorCommitRename()
+  func keyInterceptorCancelRename()
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -34,9 +37,14 @@ final class KeyInterceptor {
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
   private(set) var panelVisible = false
+  private(set) var renameMode = false
 
   func setPanelVisible(_ visible: Bool) {
     panelVisible = visible
+  }
+
+  func setRenameMode(_ active: Bool) {
+    renameMode = active
   }
 
   private var pollTimer: Timer?
@@ -152,6 +160,46 @@ private func keyInterceptorCallback(
   case .keyDown:
     let cmdHeld = flags.contains(.maskCommand)
 
+    // Rename mode — most keys pass through to the TextField
+    if interceptor.renameMode {
+      // Enter/Return (36/76) — commit rename
+      if keyCode == 36 || keyCode == 76 {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorCommitRename()
+        }
+        return nil  // consume
+      }
+      // Escape (53) — cancel rename
+      if keyCode == 53 {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorCancelRename()
+        }
+        return nil  // consume
+      }
+      // Cmd+Tab (48) — commit rename, then move down
+      if cmdHeld && keyCode == 48 {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorCommitRename()
+          interceptor.delegate?.keyInterceptorMoveDown()
+        }
+        return nil  // consume
+      }
+      // Cmd+` (50) — commit rename, then move up
+      if cmdHeld && keyCode == 50 {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorCommitRename()
+          interceptor.delegate?.keyInterceptorMoveUp()
+        }
+        return nil  // consume
+      }
+      // Cmd+W (13) / Cmd+Q (12) — no-op during rename
+      if cmdHeld && (keyCode == 13 || keyCode == 12) {
+        return nil  // consume
+      }
+      // Everything else — pass through to TextField
+      return Unmanaged.passUnretained(event)
+    }
+
     // Cmd+Tab (keyCode 48)
     if cmdHeld && keyCode == 48 {
       DispatchQueue.main.async {
@@ -185,6 +233,14 @@ private func keyInterceptorCallback(
     if keyCode == 126 && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorMoveUp()
+      }
+      return nil  // consume
+    }
+
+    // Cmd+N (keyCode 45) — start inline rename
+    if cmdHeld && keyCode == 45 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorStartRename()
       }
       return nil  // consume
     }
@@ -238,6 +294,11 @@ private func keyInterceptorCallback(
     }
 
   case .flagsChanged:
+    // In rename mode, pass through modifier changes without confirming
+    if interceptor.renameMode {
+      return Unmanaged.passUnretained(event)
+    }
+
     // Cmd released — if panel is visible, confirm selection
     if interceptor.panelVisible && !flags.contains(.maskCommand) {
       DispatchQueue.main.async {

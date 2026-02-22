@@ -115,6 +115,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func hidePanel() {
+    if viewModel.isRenaming {
+      viewModel.cancelRename()
+      keyInterceptor.setRenameMode(false)
+    }
     for panel in panels {
       panel.orderOut(nil)
     }
@@ -274,5 +278,22 @@ extension AppDelegate: KeyInterceptorDelegate {
 
   func keyInterceptorCycleDisplayRight() {
     cycleDisplay(forward: true)
+  }
+
+  func keyInterceptorStartRename() {
+    guard case .spaceHeader = viewModel.selectedItem else { return }
+    viewModel.startRenaming()
+    guard viewModel.isRenaming else { return }
+    keyInterceptor.setRenameMode(true)
+  }
+
+  func keyInterceptorCommitRename() {
+    viewModel.commitRename()
+    keyInterceptor.setRenameMode(false)
+  }
+
+  func keyInterceptorCancelRename() {
+    viewModel.cancelRename()
+    keyInterceptor.setRenameMode(false)
   }
 }

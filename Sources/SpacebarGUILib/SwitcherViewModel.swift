@@ -61,6 +61,10 @@ public final class SwitcherViewModel: ObservableObject {
   @Published public var sections: [SwitcherSection] = []
   @Published public var searchText: String = ""
   @Published public var selectedItem: SelectedItem?
+  @Published public var renamingSpaceID: UInt64? = nil
+  @Published public var renameText: String = ""
+
+  public var isRenaming: Bool { renamingSpaceID != nil }
 
   public let spaceManager: SpaceManager
   public let spaceNameStore: SpaceNameStoring
@@ -362,6 +366,43 @@ public final class SwitcherViewModel: ObservableObject {
       if case .windowRow = $0 { return true }
       return false
     })
+  }
+
+  // MARK: - Inline Rename
+
+  public func startRenaming() {
+    guard case .spaceHeader(let spaceID) = selectedItem else { return }
+    guard let section = sections.first(where: { $0.id == spaceID }) else { return }
+    // Don't rename fullscreen spaces (auto-generated labels)
+    if section.label.hasPrefix("Fullscreen") { return }
+    renamingSpaceID = spaceID
+    renameText = section.label
+  }
+
+  public func commitRename() {
+    guard let spaceID = renamingSpaceID else { return }
+    guard let section = sections.first(where: { $0.id == spaceID }) else {
+      cancelRename()
+      return
+    }
+
+    let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      spaceNameStore.setCustomName(nil, forSpaceUUID: section.spaceUUID)
+    } else {
+      spaceNameStore.setCustomName(trimmed, forSpaceUUID: section.spaceUUID)
+    }
+
+    let savedSelection = selectedItem
+    renamingSpaceID = nil
+    renameText = ""
+    refresh()
+    selectedItem = savedSelection
+  }
+
+  public func cancelRename() {
+    renamingSpaceID = nil
+    renameText = ""
   }
 
   // MARK: - Activation

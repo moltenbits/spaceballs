@@ -69,32 +69,44 @@ struct SectionHeaderView: View {
   var showCurrentBadge: Bool = true
   var displayName: String = ""
   var textSize: CGFloat = 13
+  var isRenaming: Bool = false
+  var renameText: Binding<String> = .constant("")
+
+  @FocusState private var isTextFieldFocused: Bool
 
   private var headerSize: CGFloat { round(textSize * 11.0 / 13.0) }
   private var badgeSize: CGFloat { round(textSize * 10.0 / 13.0) }
 
   var body: some View {
     HStack(spacing: 4) {
-      Text(label)
-        .font(.system(size: headerSize, weight: .semibold))
-        .foregroundStyle(isSelected ? .primary : .secondary)
+      if isRenaming {
+        TextField("Space name", text: renameText)
+          .font(.system(size: headerSize, weight: .semibold))
+          .textFieldStyle(.plain)
+          .focused($isTextFieldFocused)
+          .onAppear { isTextFieldFocused = true }
+      } else {
+        Text(label)
+          .font(.system(size: headerSize, weight: .semibold))
+          .foregroundStyle(isSelected ? .primary : .secondary)
 
-      if isCurrent && showCurrentBadge {
-        Text("(current)")
-          .font(.system(size: badgeSize))
-          .foregroundStyle(isSelected ? .secondary : .tertiary)
-      }
+        if isCurrent && showCurrentBadge {
+          Text("(current)")
+            .font(.system(size: badgeSize))
+            .foregroundStyle(isSelected ? .secondary : .tertiary)
+        }
 
-      if isEmpty {
-        Text("(no windows)")
-          .font(.system(size: badgeSize))
-          .foregroundStyle(isSelected ? .secondary : .tertiary)
-      }
+        if isEmpty {
+          Text("(no windows)")
+            .font(.system(size: badgeSize))
+            .foregroundStyle(isSelected ? .secondary : .tertiary)
+        }
 
-      if !displayName.isEmpty {
-        Text("— \(displayName)")
-          .font(.system(size: badgeSize))
-          .foregroundStyle(isSelected ? .secondary : .tertiary)
+        if !displayName.isEmpty {
+          Text("— \(displayName)")
+            .font(.system(size: badgeSize))
+            .foregroundStyle(isSelected ? .secondary : .tertiary)
+        }
       }
     }
     .padding(.vertical, 2)

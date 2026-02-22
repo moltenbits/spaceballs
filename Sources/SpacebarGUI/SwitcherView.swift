@@ -71,7 +71,8 @@ struct SwitcherView: View {
   }
 
   private func sectionContent(_ section: SwitcherSection) -> some View {
-    Section {
+    let isRenamingThisSection = viewModel.renamingSpaceID == section.id
+    return Section {
       ForEach(section.windows) { row in
         SwitcherRowView(
           row: row,
@@ -82,6 +83,7 @@ struct SwitcherView: View {
         )
         .id(row.id)
         .onTapGesture {
+          guard !viewModel.isRenaming else { return }
           viewModel.selectedItem = .windowRow(row.id)
           viewModel.activateSelected()
         }
@@ -95,9 +97,12 @@ struct SwitcherView: View {
         showCurrentBadge: appSettings.showCurrentBadge,
         displayName: appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
           ? section.displayName : "",
-        textSize: CGFloat(appSettings.textSize)
+        textSize: CGFloat(appSettings.textSize),
+        isRenaming: isRenamingThisSection,
+        renameText: isRenamingThisSection ? $viewModel.renameText : .constant("")
       )
       .onTapGesture {
+        guard !viewModel.isRenaming else { return }
         viewModel.selectedItem = .spaceHeader(section.id)
         viewModel.activateSelected()
       }

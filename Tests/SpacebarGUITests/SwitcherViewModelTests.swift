@@ -1023,6 +1023,190 @@ struct DisplayCyclingTests {
   }
 }
 
+// MARK: - Inline Rename Tests
+
+@Suite("Inline Rename")
+struct InlineRenameTests {
+
+  @Test("startRenaming sets state when space header selected")
+  func startRenamingSetsState() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.startRenaming()
+
+    #expect(vm.renamingSpaceID == 1)
+    #expect(vm.renameText == "Desktop 1")
+    #expect(vm.isRenaming == true)
+  }
+
+  @Test("startRenaming pre-populates with custom name")
+  func startRenamingWithCustomName() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    store.setCustomName("Work", forSpaceUUID: "uuid-1")
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.startRenaming()
+
+    #expect(vm.renameText == "Work")
+  }
+
+  @Test("startRenaming is no-op when window row selected")
+  func startRenamingNoOpOnWindowRow() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: MockSpaceNameStore()
+    )
+    vm.refresh()
+
+    vm.selectedItem = .windowRow(10)
+    vm.startRenaming()
+
+    #expect(vm.renamingSpaceID == nil)
+    #expect(vm.isRenaming == false)
+  }
+
+  @Test("startRenaming is no-op when settings selected")
+  func startRenamingNoOpOnSettings() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: MockSpaceNameStore()
+    )
+    vm.refresh()
+
+    vm.selectedItem = .settings
+    vm.startRenaming()
+
+    #expect(vm.renamingSpaceID == nil)
+    #expect(vm.isRenaming == false)
+  }
+
+  @Test("startRenaming is no-op for fullscreen spaces")
+  func startRenamingNoOpOnFullscreen() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 1, uuid: "uuid-fs", type: 4)],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Keynote", name: "Presentation", pid: 100)
+    ]
+    ds.windowSpaces = [10: [1]]
+
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: MockSpaceNameStore()
+    )
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.startRenaming()
+
+    #expect(vm.renamingSpaceID == nil)
+  }
+
+  @Test("commitRename saves to store and refreshes label")
+  func commitRenameSaves() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.startRenaming()
+    vm.renameText = "Work"
+    vm.commitRename()
+
+    #expect(store.customName(forSpaceUUID: "uuid-1") == "Work")
+    #expect(vm.isRenaming == false)
+    // Label should reflect the new name after refresh
+    let space1 = vm.sections.first(where: { $0.id == 1 })
+    #expect(space1?.label == "Work")
+  }
+
+  @Test("commitRename with empty text removes custom name")
+  func commitRenameEmptyRemoves() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    store.setCustomName("Work", forSpaceUUID: "uuid-1")
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.startRenaming()
+    vm.renameText = ""
+    vm.commitRename()
+
+    #expect(store.customName(forSpaceUUID: "uuid-1") == nil)
+    let space1 = vm.sections.first(where: { $0.id == 1 })
+    #expect(space1?.label == "Desktop 1")
+  }
+
+  @Test("cancelRename clears state without saving")
+  func cancelRenameDiscardsChanges() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.startRenaming()
+    vm.renameText = "New Name"
+    vm.cancelRename()
+
+    #expect(vm.isRenaming == false)
+    #expect(vm.renamingSpaceID == nil)
+    #expect(store.customName(forSpaceUUID: "uuid-1") == nil)
+    // Label unchanged
+    let space1 = vm.sections.first(where: { $0.id == 1 })
+    #expect(space1?.label == "Desktop 1")
+  }
+
+  @Test("commitRename preserves selection on renamed space header")
+  func commitRenamePreservesSelection() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    vm.selectedItem = .spaceHeader(1)
+    vm.startRenaming()
+    vm.renameText = "Work"
+    vm.commitRename()
+
+    #expect(vm.selectedItem == .spaceHeader(1))
+  }
+}
+
 // MARK: - Refresh Keeping Selection Tests
 
 @Suite("Refresh Keeping Selection")
