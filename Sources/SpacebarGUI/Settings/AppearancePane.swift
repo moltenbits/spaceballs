@@ -43,6 +43,7 @@ struct AppearancePane: View {
         Toggle("Show current space badge", isOn: $settings.showCurrentBadge)
         Toggle("Show display name badge", isOn: $settings.showDisplayBadge)
           .disabled(settings.filterSpacesByDisplay)
+        Toggle("Show empty spaces", isOn: $settings.showEmptySpaces)
       }
 
       Section("Display") {

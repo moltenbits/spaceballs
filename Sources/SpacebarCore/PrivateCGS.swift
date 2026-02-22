@@ -66,3 +66,11 @@ func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> CFArray
 /// - Returns: CFArray of space ID numbers
 @_silgen_name("CGSCopySpacesForWindows")
 func CGSCopySpacesForWindows(_ cid: CGSConnectionID, _ mask: Int32, _ windowIDs: CFArray) -> CFArray
+
+/// Sends a notification to the Dock via the private CoreDock framework.
+///
+/// Used to trigger Mission Control (`"com.apple.expose.awake"`).
+/// Part of CoreServices, loaded transitively through AppKit.
+@_silgen_name("CoreDockSendNotification")
+func CoreDockSendNotification(_ notification: CFString)
+

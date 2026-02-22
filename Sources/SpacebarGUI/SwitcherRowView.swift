@@ -65,6 +65,7 @@ struct SectionHeaderView: View {
   let label: String
   let isCurrent: Bool
   var isSelected: Bool = false
+  var isEmpty: Bool = false
   var showCurrentBadge: Bool = true
   var displayName: String = ""
   var textSize: CGFloat = 13
@@ -80,6 +81,12 @@ struct SectionHeaderView: View {
 
       if isCurrent && showCurrentBadge {
         Text("(current)")
+          .font(.system(size: badgeSize))
+          .foregroundStyle(isSelected ? .secondary : .tertiary)
+      }
+
+      if isEmpty {
+        Text("(no windows)")
           .font(.system(size: badgeSize))
           .foregroundStyle(isSelected ? .secondary : .tertiary)
       }

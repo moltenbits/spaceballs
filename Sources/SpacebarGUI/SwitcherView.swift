@@ -91,6 +91,7 @@ struct SwitcherView: View {
         label: section.label,
         isCurrent: section.isCurrent,
         isSelected: viewModel.selectedItem == .spaceHeader(section.id),
+        isEmpty: section.windows.isEmpty,
         showCurrentBadge: appSettings.showCurrentBadge,
         displayName: appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
           ? section.displayName : "",

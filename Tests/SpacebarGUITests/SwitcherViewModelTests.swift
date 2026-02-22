@@ -219,8 +219,8 @@ struct MRUOrderingTests {
     #expect(vm.sections[2].id == 1)
   }
 
-  @Test("Spaces with no windows are appended at the end")
-  func emptySpacesAtEnd() {
+  @Test("Spaces with no windows are omitted when showEmptySpaces is false")
+  func emptySpacesHidden() {
     var ds = MockDataSource()
     ds.displaySpaces = [
       makeDisplayDict(
@@ -239,12 +239,46 @@ struct MRUOrderingTests {
     ds.windowSpaces = [10: [1]]
 
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.showEmptySpaces = false
     vm.refresh()
 
     // Space 1 has windows → included. Spaces 2 and 3 have no windows → omitted.
     #expect(vm.sections.count == 1)
     #expect(vm.sections[0].id == 1)
     #expect(vm.sections[0].windows.count == 1)
+  }
+
+  @Test("Spaces with no windows are shown when showEmptySpaces is true")
+  func emptySpacesShown() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 1, uuid: "uuid-1"),
+          makeSpaceDict(id: 2, uuid: "uuid-2"),
+          makeSpaceDict(id: 3, uuid: "uuid-3"),
+        ],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", name: "Google", pid: 100)
+    ]
+    ds.windowSpaces = [10: [1]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.showEmptySpaces = true
+    vm.refresh()
+
+    // All 3 spaces included; space 1 first (current), then 2 and 3 (empty, appended).
+    #expect(vm.sections.count == 3)
+    #expect(vm.sections[0].id == 1)
+    #expect(vm.sections[0].windows.count == 1)
+    #expect(vm.sections[1].id == 2)
+    #expect(vm.sections[1].windows.isEmpty)
+    #expect(vm.sections[2].id == 3)
+    #expect(vm.sections[2].windows.isEmpty)
   }
 
   @Test("Section labels use ordinal numbering")

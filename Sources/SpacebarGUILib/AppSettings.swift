@@ -79,6 +79,10 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(showDisplayBadge, forKey: "showDisplayBadge") }
   }
 
+  @Published public var showEmptySpaces: Bool {
+    didSet { defaults.set(showEmptySpaces, forKey: "showEmptySpaces") }
+  }
+
   public init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
 
@@ -91,6 +95,7 @@ public final class AppSettings: ObservableObject {
       "panelDisplay": PanelDisplay.active.rawValue,
       "filterSpacesByDisplay": false,
       "showDisplayBadge": true,
+      "showEmptySpaces": true,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -103,6 +108,7 @@ public final class AppSettings: ObservableObject {
       PanelDisplay(rawValue: defaults.string(forKey: "panelDisplay") ?? "") ?? .active
     self.filterSpacesByDisplay = defaults.bool(forKey: "filterSpacesByDisplay")
     self.showDisplayBadge = defaults.bool(forKey: "showDisplayBadge")
+    self.showEmptySpaces = defaults.bool(forKey: "showEmptySpaces")
   }
 
   /// Icon size proportional to text size (20px at 13pt text).

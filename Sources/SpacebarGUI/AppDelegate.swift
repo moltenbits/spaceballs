@@ -85,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func showPanel() {
     viewModel.overrideDisplayUUID = nil
     viewModel.filterByDisplay = appSettings.filterSpacesByDisplay
+    viewModel.showEmptySpaces = appSettings.showEmptySpaces
     viewModel.refresh()
     viewModel.resetSelection()
 

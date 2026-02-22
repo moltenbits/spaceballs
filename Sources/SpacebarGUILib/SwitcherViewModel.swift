@@ -68,6 +68,9 @@ public final class SwitcherViewModel: ObservableObject {
   /// When true, keyboard navigation and per-panel rendering filter by display.
   public var filterByDisplay: Bool = false
 
+  /// When true, spaces with no windows are included in the switcher.
+  public var showEmptySpaces: Bool = true
+
   /// Override the focused display UUID (used for display cycling via Cmd+Left/Right and for testing).
   public var overrideDisplayUUID: String?
 
@@ -243,7 +246,7 @@ public final class SwitcherViewModel: ObservableObject {
         .filter { seenWindowIDs.insert($0.id).inserted }
         .map { makeRow(from: $0) }
 
-      guard !rows.isEmpty else { continue }
+      guard !rows.isEmpty || showEmptySpaces else { continue }
 
       let dispUUID = spaceInfo?.displayUUID ?? ""
       newSections.append(SwitcherSection(
@@ -369,11 +372,23 @@ public final class SwitcherViewModel: ObservableObject {
     case .windowRow(let id):
       windowID = id
     case .spaceHeader(let spaceID):
-      // Activate the first window in this space to trigger space switch
-      guard let section = filteredSections.first(where: { $0.id == spaceID }),
-        let firstWindow = section.windows.first
+      guard let section = filteredSections.first(where: { $0.id == spaceID })
       else { return }
-      windowID = firstWindow.id
+      if let firstWindow = section.windows.first {
+        // Activate the first window in this space to trigger space switch
+        windowID = firstWindow.id
+      } else {
+        // Empty space — switch via Dock accessibility (Mission Control)
+        let allSpaces = spaceManager.getAllSpaces()
+        let displaySpaces = allSpaces.filter { $0.displayUUID == section.displayUUID }
+          .filter { $0.type == .desktop }
+        guard let spaceIndex = displaySpaces.firstIndex(where: { $0.id == spaceID }) else {
+          return
+        }
+        guard let screenNumber = Self.displayIDForUUID(section.displayUUID) else { return }
+        spaceManager.switchToSpace(spaceIndex: spaceIndex, screenNumber: screenNumber)
+        return
+      }
     case .settings, nil:
       return
     }
@@ -438,10 +453,10 @@ public final class SwitcherViewModel: ObservableObject {
   private func removeWindowFromSections(_ windowID: Int) {
     let previousIndex = flatFilteredRows.firstIndex(where: { $0.id == windowID })
 
-    // Remove the window from sections, dropping empty sections
+    // Remove the window from sections, dropping empty sections (unless showEmptySpaces)
     sections = sections.compactMap { section in
       let filtered = section.windows.filter { $0.id != windowID }
-      guard !filtered.isEmpty else { return nil }
+      guard !filtered.isEmpty || showEmptySpaces else { return nil }
       return SwitcherSection(
         id: section.id,
         spaceUUID: section.spaceUUID,
@@ -499,6 +514,22 @@ public final class SwitcherViewModel: ObservableObject {
     let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
     guard let cfUUID else { return nil }
     return CFUUIDCreateString(nil, cfUUID) as String
+  }
+
+  /// Resolves a CGS display UUID → CGDirectDisplayID via NSScreen.
+  private static func displayIDForUUID(_ uuid: String) -> CGDirectDisplayID? {
+    for screen in NSScreen.screens {
+      guard let screenNumber = screen.deviceDescription[
+        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+      else { continue }
+      let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
+      guard let cfUUID else { continue }
+      let screenUUID = CFUUIDCreateString(nil, cfUUID) as String
+      if screenUUID == uuid {
+        return screenNumber
+      }
+    }
+    return nil
   }
 
   /// Builds a mapping from CGS display UUID → NSScreen.localizedName.

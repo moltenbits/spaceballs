@@ -185,6 +185,139 @@ public class SpaceManager {
     return (spaces, windowMap)
   }
 
+  // MARK: - Space Switching
+
+  /// Switches to the specified Space via the Dock's accessibility interface.
+  ///
+  /// Opens Mission Control by posting `com.apple.expose.awake`, navigates the
+  /// Dock's AX hierarchy to find the target space button, and presses it.
+  /// Works on Sequoia without SIP, unlike `CGSManagedDisplaySetCurrentSpace`.
+  ///
+  /// - Parameters:
+  ///   - spaceIndex: 0-based ordinal position of the space on its display
+  ///   - screenNumber: `CGDirectDisplayID` for the target display
+  public func switchToSpace(spaceIndex: Int, screenNumber: CGDirectDisplayID) {
+    guard AXIsProcessTrusted() else {
+      print("switchToSpace: Accessibility not trusted")
+      return
+    }
+
+    guard let dockApp = NSRunningApplication.runningApplications(
+      withBundleIdentifier: "com.apple.dock"
+    ).first else {
+      print("switchToSpace: Dock not running")
+      return
+    }
+
+    let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
+
+    // Open Mission Control via the Dock's private CoreDock API.
+    CoreDockSendNotification("com.apple.expose.awake" as CFString)
+
+    DispatchQueue.global(qos: .userInteractive).async {
+      // Poll for the Mission Control AX group to appear in the Dock's children.
+      let mcGroup: AXUIElement? = {
+        let deadline = DispatchTime.now() + .milliseconds(1000)
+        while DispatchTime.now() < deadline {
+          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") {
+            return mc
+          }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+        return nil
+      }()
+
+      guard let mcGroup else {
+        print("switchToSpace: Mission Control AX group not found")
+        return
+      }
+
+      // Wait for Mission Control's animation to complete — the AX elements
+      // appear in the tree before they're fully interactive.
+      Thread.sleep(forTimeInterval: 0.3)
+
+      // Navigate: mc → mc.display (matching target display) → mc.spaces → mc.spaces.list
+      guard let mcDisplay = Self.axChildMatchingDisplay(mcGroup, screenNumber: screenNumber) else {
+        print("switchToSpace: mc.display not found for display \(screenNumber)")
+        return
+      }
+
+      guard let mcSpaces = Self.axChildWithIdentifier(mcDisplay, identifier: "mc.spaces") else {
+        print("switchToSpace: mc.spaces not found")
+        return
+      }
+
+      guard let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
+      else {
+        print("switchToSpace: mc.spaces.list not found")
+        return
+      }
+
+      let children = Self.axChildren(mcSpacesList)
+      guard spaceIndex >= 0 && spaceIndex < children.count else {
+        print(
+          "switchToSpace: space index \(spaceIndex) out of range (have \(children.count) spaces)")
+        return
+      }
+
+      let spaceButton = children[spaceIndex]
+      AXUIElementPerformAction(spaceButton, kAXPressAction as CFString)
+    }
+  }
+
+  // MARK: - Dock AX Helpers
+
+  private static func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+    var childrenRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
+      == .success,
+      let children = childrenRef as? [AXUIElement]
+    else {
+      return []
+    }
+    return children
+  }
+
+  private static func axChildWithIdentifier(
+    _ element: AXUIElement, identifier: String
+  ) -> AXUIElement? {
+    for child in axChildren(element) {
+      if axStringAttribute(child, name: "AXIdentifier") == identifier {
+        return child
+      }
+    }
+    return nil
+  }
+
+  private static func axStringAttribute(_ element: AXUIElement, name: String) -> String? {
+    var valueRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, name as CFString, &valueRef) == .success else {
+      return nil
+    }
+    return valueRef as? String
+  }
+
+  /// Finds the `mc.display` child whose `AXDisplayID` matches the target screen number.
+  private static func axChildMatchingDisplay(
+    _ mcGroup: AXUIElement, screenNumber: CGDirectDisplayID
+  ) -> AXUIElement? {
+    for child in axChildren(mcGroup) {
+      guard axStringAttribute(child, name: "AXIdentifier") == "mc.display" else { continue }
+      var valueRef: CFTypeRef?
+      if AXUIElementCopyAttributeValue(child, "AXDisplayID" as CFString, &valueRef) == .success,
+        let displayID = valueRef as? Int,
+        CGDirectDisplayID(displayID) == screenNumber
+      {
+        return child
+      }
+    }
+    // Fallback: if only one mc.display exists, use it (single-display setup)
+    let displays = axChildren(mcGroup).filter {
+      axStringAttribute($0, name: "AXIdentifier") == "mc.display"
+    }
+    return displays.count == 1 ? displays.first : nil
+  }
+
   // MARK: - Window Activation
 
   /// Activates (brings to front) the window with the given CGWindowID.
