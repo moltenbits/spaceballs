@@ -8,7 +8,7 @@ A macOS window switcher inspired by [Contexts](https://contexts.co) — a fast, 
 - **Keyboard-driven** — Cmd+Tab to cycle, Cmd+\` to go back, type to search
 - **Window management** — Cmd+W to close a window, Cmd+Q to quit an app
 - **Space navigation** — tab onto a Space header to switch to that Space
-- **Custom space names** — rename Spaces in Settings (persisted locally)
+- **Custom space names** — select a Space header and press Cmd+N to rename inline (names are local to Spacebar; macOS does not expose Space names to apps)
 - **Multi-display** — show the panel on the active display, primary display, or all displays
 - **Configurable appearance** — background opacity, text size, light/dark/auto color scheme
 - **Settings** — Cmd+, to open; General, Appearance, and About panes
@@ -48,6 +48,7 @@ Once running, the app lives in the background (no Dock icon). Keyboard shortcuts
 | Escape | Dismiss panel |
 | Cmd+W | Close selected window |
 | Cmd+Q | Quit selected app |
+| Cmd+N | Rename selected space (Enter to save, Escape to cancel) |
 | Cmd+, | Open Settings |
 | Type | Filter windows by app name or title |
 
