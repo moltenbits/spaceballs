@@ -9,8 +9,9 @@ extension ListCommand {
     let displayGroups = Dictionary(grouping: spaces, by: \.displayUUID)
 
     for (displayUUID, displaySpaces) in displayGroups.sorted(by: { $0.key < $1.key }) {
+      let displayName = SpaceManager.displayNameForUUID(displayUUID) ?? displayUUID
       print("══════════════════════════════════════════════════════════════")
-      print(" Display: \(displayUUID)")
+      print(" Display: \(displayName)")
       print("══════════════════════════════════════════════════════════════")
 
       for (index, space) in displaySpaces.enumerated() {
@@ -71,7 +72,7 @@ extension ListCommand {
       displayGroups
       .sorted(by: { $0.key < $1.key })
       .map { displayUUID, displaySpaces in
-        [
+        var displayDict: [String: Any] = [
           "displayId": displayUUID,
           "spaces": displaySpaces.map { space in
             var spaceDict: [String: Any] = [
@@ -103,7 +104,11 @@ extension ListCommand {
             }
             return spaceDict
           },
-        ] as [String: Any]
+        ]
+        if let displayName = SpaceManager.displayNameForUUID(displayUUID) {
+          displayDict["displayName"] = displayName
+        }
+        return displayDict
       }
 
     let data = try JSONSerialization.data(

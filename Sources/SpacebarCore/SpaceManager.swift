@@ -189,6 +189,17 @@ public class SpaceManager {
 
   /// Resolves a CGS display UUID to a CGDirectDisplayID via NSScreen.
   public static func displayIDForUUID(_ uuid: String) -> CGDirectDisplayID? {
+    screenForUUID(uuid).map { screen in
+      screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! CGDirectDisplayID
+    }
+  }
+
+  /// Resolves a CGS display UUID to a human-readable display name (e.g. "Built-in Retina Display").
+  public static func displayNameForUUID(_ uuid: String) -> String? {
+    screenForUUID(uuid)?.localizedName
+  }
+
+  private static func screenForUUID(_ uuid: String) -> NSScreen? {
     for screen in NSScreen.screens {
       guard
         let screenNumber = screen.deviceDescription[
@@ -198,7 +209,7 @@ public class SpaceManager {
       guard let cfUUID else { continue }
       let screenUUID = CFUUIDCreateString(nil, cfUUID) as String
       if screenUUID == uuid {
-        return screenNumber
+        return screen
       }
     }
     return nil
