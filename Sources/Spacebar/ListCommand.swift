@@ -13,11 +13,12 @@ struct ListCommand: ParsableCommand {
   func run() throws {
     let manager = SpaceManager()
     let (spaces, windowMap) = manager.windowsBySpace()
+    let spaceNameStore = SpaceNameStore()
 
     if json {
-      try printJSON(spaces: spaces, windowMap: windowMap)
+      try printJSON(spaces: spaces, windowMap: windowMap, spaceNameStore: spaceNameStore)
     } else {
-      printText(spaces: spaces, windowMap: windowMap)
+      printText(spaces: spaces, windowMap: windowMap, spaceNameStore: spaceNameStore)
     }
   }
 }

@@ -55,9 +55,12 @@ Once running, the app lives in the background (no Dock icon). Keyboard shortcuts
 ### CLI
 
 ```bash
-spacebar            # List all Spaces and windows (text output)
-spacebar --json     # JSON output
-spacebar --version  # Version
+spacebar                       # List all Spaces and windows (text output)
+spacebar list --json           # JSON output
+spacebar activate <window-id>  # Activate a window by ID (auto-launches .app bundle)
+spacebar switch <space-id>     # Switch to a Space by ID
+spacebar rename <space-id> [name]  # Set or clear a custom Space name
+spacebar --version             # Version
 ```
 
 ```
@@ -65,7 +68,7 @@ spacebar --version  # Version
  Display: 37D8832A-2D66-02CA-B9F7-8F30A301B230
 ══════════════════════════════════════════════════════════════
 
-  Space 1 [Desktop] (ID: 3)  ← ACTIVE
+  Space 1 "Work" [Desktop] (ID: 3)  ← ACTIVE
   ────────────────────────────────────────────────
     [1234] Safari — GitHub
     [5678] Terminal — spacebar
@@ -115,6 +118,7 @@ for space in spaces {
 | `getAllWindows()` | `[WindowInfo]` — all normal-layer windows (>50px) |
 | `windowsBySpace()` | `([SpaceInfo], [UInt64: [WindowInfo]])` — windows grouped by Space ID |
 | `activateWindow(id:)` | Activates a window by CGWindowID (triggers space switch) |
+| `switchToSpace(id:)` | Switches to a Space by ManagedSpaceID via Dock AX |
 | `closeWindow(id:)` | Closes a window via its AX close button |
 | `quitApp(owningWindowID:)` | Terminates the app that owns a window |
 

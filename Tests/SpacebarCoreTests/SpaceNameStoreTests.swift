@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import SpacebarGUILib
+@testable import SpacebarCore
 
 @Suite("SpaceNameStore")
 struct SpaceNameStoreTests {

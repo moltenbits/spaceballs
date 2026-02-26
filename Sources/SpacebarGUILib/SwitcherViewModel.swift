@@ -246,22 +246,24 @@ public final class SwitcherViewModel: ObservableObject {
       }
 
       let isCurrent = spaceID == activeSpaceID
-      let rows = windows
+      let rows =
+        windows
         .filter { seenWindowIDs.insert($0.id).inserted }
         .map { makeRow(from: $0) }
 
       guard !rows.isEmpty || showEmptySpaces else { continue }
 
       let dispUUID = spaceInfo?.displayUUID ?? ""
-      newSections.append(SwitcherSection(
-        id: spaceID,
-        spaceUUID: spaceUUID,
-        displayUUID: dispUUID,
-        displayName: displayNames[dispUUID] ?? "",
-        label: label,
-        isCurrent: isCurrent,
-        windows: rows
-      ))
+      newSections.append(
+        SwitcherSection(
+          id: spaceID,
+          spaceUUID: spaceUUID,
+          displayUUID: dispUUID,
+          displayName: displayNames[dispUUID] ?? "",
+          label: label,
+          isCurrent: isCurrent,
+          windows: rows
+        ))
     }
 
     sections = newSections
@@ -426,7 +428,7 @@ public final class SwitcherViewModel: ObservableObject {
         guard let spaceIndex = displaySpaces.firstIndex(where: { $0.id == spaceID }) else {
           return
         }
-        guard let screenNumber = Self.displayIDForUUID(section.displayUUID) else { return }
+        guard let screenNumber = SpaceManager.displayIDForUUID(section.displayUUID) else { return }
         spaceManager.switchToSpace(spaceIndex: spaceIndex, screenNumber: screenNumber)
         return
       }
@@ -549,36 +551,22 @@ public final class SwitcherViewModel: ObservableObject {
   /// Returns the CGS display UUID for the screen with keyboard focus.
   /// Maps NSScreen.main's CGDirectDisplayID → UUID via CGDisplayCreateUUIDFromDisplayID.
   private static func focusedDisplayUUID() -> String? {
-    guard let screenNumber = NSScreen.main?.deviceDescription[
-      NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    guard
+      let screenNumber = NSScreen.main?.deviceDescription[
+        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     else { return nil }
     let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
     guard let cfUUID else { return nil }
     return CFUUIDCreateString(nil, cfUUID) as String
   }
 
-  /// Resolves a CGS display UUID → CGDirectDisplayID via NSScreen.
-  private static func displayIDForUUID(_ uuid: String) -> CGDirectDisplayID? {
-    for screen in NSScreen.screens {
-      guard let screenNumber = screen.deviceDescription[
-        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-      else { continue }
-      let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
-      guard let cfUUID else { continue }
-      let screenUUID = CFUUIDCreateString(nil, cfUUID) as String
-      if screenUUID == uuid {
-        return screenNumber
-      }
-    }
-    return nil
-  }
-
   /// Builds a mapping from CGS display UUID → NSScreen.localizedName.
   private static func displayNameMap() -> [String: String] {
     var map: [String: String] = [:]
     for screen in NSScreen.screens {
-      guard let screenNumber = screen.deviceDescription[
-        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+      guard
+        let screenNumber = screen.deviceDescription[
+          NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
       else { continue }
       let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
       guard let cfUUID else { continue }

@@ -45,7 +45,7 @@ struct WindowActivationTests {
       ),
       (
         .accessibilityNotTrusted,
-        "Accessibility permission required. Grant access in System Settings → Privacy & Security → Accessibility."
+        "Accessibility permission required. A system prompt should have appeared — grant access in System Settings and re-run the command."
       ),
       (
         .appActivationFailed(appName: "Finder", pid: 123),
@@ -58,4 +58,3 @@ struct WindowActivationTests {
     }
   }
 }
-

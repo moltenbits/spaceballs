@@ -185,7 +185,76 @@ public class SpaceManager {
     return (spaces, windowMap)
   }
 
-  // MARK: - Space Switching
+  // MARK: - Display UUID Resolution
+
+  /// Resolves a CGS display UUID to a CGDirectDisplayID via NSScreen.
+  public static func displayIDForUUID(_ uuid: String) -> CGDirectDisplayID? {
+    for screen in NSScreen.screens {
+      guard
+        let screenNumber = screen.deviceDescription[
+          NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+      else { continue }
+      let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
+      guard let cfUUID else { continue }
+      let screenUUID = CFUUIDCreateString(nil, cfUUID) as String
+      if screenUUID == uuid {
+        return screenNumber
+      }
+    }
+    return nil
+  }
+
+  // MARK: - Accessibility
+
+  /// Checks AX trust with an OS prompt if not yet granted.
+  ///
+  /// On first call for an untrusted process, macOS shows a system dialog
+  /// and opens System Settings → Privacy & Security → Accessibility with
+  /// the app pre-listed. Returns `true` if already trusted.
+  @discardableResult
+  public static func ensureAccessibilityTrusted() -> Bool {
+    let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+    return AXIsProcessTrustedWithOptions(opts)
+  }
+
+  // MARK: - Space Switching (by ID)
+
+  /// Switches to a space by its ManagedSpaceID.
+  ///
+  /// Enumerates all spaces, finds the one with the given ID, computes its
+  /// ordinal index among desktop spaces on the same display, resolves the
+  /// display UUID to a CGDirectDisplayID, and calls
+  /// `switchToSpace(spaceIndex:screenNumber:)`.
+  public func switchToSpace(id spaceID: UInt64) throws {
+    let allSpaces = getAllSpaces()
+    guard let targetSpace = allSpaces.first(where: { $0.id == spaceID }) else {
+      throw SpaceSwitchError.spaceNotFound(spaceID: spaceID)
+    }
+
+    guard targetSpace.type == .desktop else {
+      throw SpaceSwitchError.notDesktopSpace(spaceID: spaceID)
+    }
+
+    guard Self.ensureAccessibilityTrusted() else {
+      throw SpaceSwitchError.accessibilityNotTrusted
+    }
+
+    let displaySpaces =
+      allSpaces
+      .filter { $0.displayUUID == targetSpace.displayUUID && $0.type == .desktop }
+
+    guard let spaceIndex = displaySpaces.firstIndex(where: { $0.id == spaceID }) else {
+      throw SpaceSwitchError.spaceNotFound(spaceID: spaceID)
+    }
+
+    guard let screenNumber = Self.displayIDForUUID(targetSpace.displayUUID) else {
+      throw SpaceSwitchError.displayNotFound(displayUUID: targetSpace.displayUUID)
+    }
+
+    switchToSpace(spaceIndex: spaceIndex, screenNumber: screenNumber)
+  }
+
+  // MARK: - Space Switching (by index)
 
   /// Switches to the specified Space via the Dock's accessibility interface.
   ///
@@ -202,9 +271,11 @@ public class SpaceManager {
       return
     }
 
-    guard let dockApp = NSRunningApplication.runningApplications(
-      withBundleIdentifier: "com.apple.dock"
-    ).first else {
+    guard
+      let dockApp = NSRunningApplication.runningApplications(
+        withBundleIdentifier: "com.apple.dock"
+      ).first
+    else {
       print("switchToSpace: Dock not running")
       return
     }
@@ -269,8 +340,9 @@ public class SpaceManager {
 
   private static func axChildren(_ element: AXUIElement) -> [AXUIElement] {
     var childrenRef: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
-      == .success,
+    guard
+      AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
+        == .success,
       let children = childrenRef as? [AXUIElement]
     else {
       return []
@@ -332,18 +404,27 @@ public class SpaceManager {
   ///
   /// Requires Accessibility permission to be granted to the calling process.
   public func activateWindow(id windowID: Int) throws {
-    // 1. Find the window in our CGWindowList enumeration
-    let windows = getAllWindows()
-    guard let window = windows.first(where: { $0.id == windowID }) else {
+    // 1. Find the window's PID from the raw window list.
+    //    Unlike getAllWindows(), this doesn't filter by title — window names
+    //    require Screen Recording permission, but activation only needs the PID.
+    let windowList = dataSource.fetchWindowList()
+    guard
+      let entry = windowList.first(where: {
+        ($0[kCGWindowNumber as String] as? Int) == windowID
+      }),
+      let rawPID = entry[kCGWindowOwnerPID as String] as? Int
+    else {
       throw WindowActivationError.windowNotFound(windowID: windowID)
     }
+    let ownerName = entry[kCGWindowOwnerName as String] as? String ?? "unknown"
+    let windowName = entry[kCGWindowName as String] as? String
 
-    // 2. Check AX trust
-    guard AXIsProcessTrusted() else {
+    // 2. Check AX trust (prompt opens System Settings → Accessibility on first run)
+    guard Self.ensureAccessibilityTrusted() else {
       throw WindowActivationError.accessibilityNotTrusted
     }
 
-    let pid = pid_t(window.pid)
+    let pid = pid_t(rawPID)
     let targetCGWindowID = CGWindowID(windowID)
 
     // 3. Try the standard kAXWindowsAttribute first (fast, works for same-space windows).
@@ -390,7 +471,7 @@ public class SpaceManager {
         } else {
           print(
             "activateWindow: AX element not found for window \(windowID)"
-              + " (\(window.ownerName) — \(window.name ?? "untitled"))"
+              + " (\(ownerName) — \(windowName ?? "untitled"))"
               + " — kAXRaiseAction skipped")
         }
       }
@@ -514,7 +595,7 @@ public class SpaceManager {
     var tokenData = Data(count: 20)
     tokenData.replaceSubrange(0..<4, with: withUnsafeBytes(of: pid) { Data($0) })
     tokenData.replaceSubrange(4..<8, with: withUnsafeBytes(of: Int32(0)) { Data($0) })
-    tokenData.replaceSubrange(8..<12, with: withUnsafeBytes(of: Int32(0x636f636f)) { Data($0) })
+    tokenData.replaceSubrange(8..<12, with: withUnsafeBytes(of: Int32(0x636f_636f)) { Data($0) })
 
     let startTime = DispatchTime.now()
     let maxElementID: UInt64 = 1_000_000

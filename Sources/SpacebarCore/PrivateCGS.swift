@@ -73,4 +73,3 @@ func CGSCopySpacesForWindows(_ cid: CGSConnectionID, _ mask: Int32, _ windowIDs:
 /// Part of CoreServices, loaded transitively through AppKit.
 @_silgen_name("CoreDockSendNotification")
 func CoreDockSendNotification(_ notification: CFString)
-

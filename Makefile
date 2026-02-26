@@ -5,7 +5,8 @@ SWIFT_BUILD_FLAGS = --disable-sandbox
 RELEASE_FLAGS = -c release $(SWIFT_BUILD_FLAGS)
 DEBUG_FLAGS = -c debug $(SWIFT_BUILD_FLAGS)
 PREFIX ?= /usr/local
-APP_BUNDLE = .build/Spacebar.app
+CLI_APP_BUNDLE = .build/Spacebar-CLI.app
+GUI_APP_BUNDLE = .build/Spacebar.app
 
 help: ## This help screen
 	@IFS=$$'\n' ; \
@@ -43,30 +44,30 @@ run.json: ## Build and run with JSON output
 run.json: build
 	swift run $(SWIFT_BUILD_FLAGS) spacebar --json
 
-app: ## Build .app bundle (required for cross-space window activation)
+app: ## Build CLI .app bundle (required for activate/switch commands)
 app: build
-	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
-	@cp .build/debug/spacebar $(APP_BUNDLE)/Contents/MacOS/spacebar
-	@cp Resources/Info.plist $(APP_BUNDLE)/Contents/Info.plist
-	@codesign --force --sign "Spacebar Dev" $(APP_BUNDLE)
+	@mkdir -p $(CLI_APP_BUNDLE)/Contents/MacOS
+	@cp .build/debug/spacebar $(CLI_APP_BUNDLE)/Contents/MacOS/spacebar
+	@cp Resources/Info-CLI.plist $(CLI_APP_BUNDLE)/Contents/Info.plist
+	@codesign --force --sign "Spacebar Dev" $(CLI_APP_BUNDLE)
 
 run.activate: ## Activate a window by ID (usage: make run.activate ID=<window-id>)
 run.activate: app
-	open -n -W --stdout `tty` --stderr `tty` $(APP_BUNDLE) --args activate $(ID)
+	open -n -W --stdout `tty` --stderr `tty` $(CLI_APP_BUNDLE) --args activate $(ID)
 
 build-gui: ## Build GUI target (debug)
 	swift build $(DEBUG_FLAGS) --product spacebar-gui
 
 app-gui: ## Build .app bundle with GUI executable
 app-gui: kill build-gui
-	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
-	@cp .build/debug/spacebar-gui $(APP_BUNDLE)/Contents/MacOS/spacebar
-	@cp Resources/Info.plist $(APP_BUNDLE)/Contents/Info.plist
-	@codesign --force --sign "Spacebar Dev" $(APP_BUNDLE)
+	@mkdir -p $(GUI_APP_BUNDLE)/Contents/MacOS
+	@cp .build/debug/spacebar-gui $(GUI_APP_BUNDLE)/Contents/MacOS/spacebar
+	@cp Resources/Info.plist $(GUI_APP_BUNDLE)/Contents/Info.plist
+	@codesign --force --sign "Spacebar Dev" $(GUI_APP_BUNDLE)
 
 gui: ## Build and run the GUI window switcher
 gui: app-gui
-	open -n --stdout `tty` --stderr `tty` $(APP_BUNDLE)
+	open -n --stdout `tty` --stderr `tty` $(GUI_APP_BUNDLE)
 
 kill: ## Kill running Spacebar app
 	@pkill -f "Spacebar.app" 2>/dev/null || true
@@ -92,5 +93,18 @@ install: release
 		cp .build/release/spacebar $(PREFIX)/bin/spacebar; \
 	else \
 		sudo cp .build/release/spacebar $(PREFIX)/bin/spacebar; \
+	fi
+	@# Install .app bundle for window activation and space switching
+	@echo "Installing Spacebar-CLI.app to $(PREFIX)/lib/spacebar/..."
+	@if [ -w $(PREFIX) ]; then \
+		mkdir -p $(PREFIX)/lib/spacebar/Spacebar-CLI.app/Contents/MacOS; \
+		cp .build/release/spacebar $(PREFIX)/lib/spacebar/Spacebar-CLI.app/Contents/MacOS/spacebar; \
+		cp Resources/Info-CLI.plist $(PREFIX)/lib/spacebar/Spacebar-CLI.app/Contents/Info.plist; \
+		codesign --force --sign - $(PREFIX)/lib/spacebar/Spacebar-CLI.app; \
+	else \
+		sudo mkdir -p $(PREFIX)/lib/spacebar/Spacebar-CLI.app/Contents/MacOS; \
+		sudo cp .build/release/spacebar $(PREFIX)/lib/spacebar/Spacebar-CLI.app/Contents/MacOS/spacebar; \
+		sudo cp Resources/Info-CLI.plist $(PREFIX)/lib/spacebar/Spacebar-CLI.app/Contents/Info.plist; \
+		sudo codesign --force --sign - $(PREFIX)/lib/spacebar/Spacebar-CLI.app; \
 	fi
 	@echo "Installed! Run 'spacebar --help' to get started."

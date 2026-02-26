@@ -6,7 +6,7 @@ struct SpacebarCommand: ParsableCommand {
     commandName: "spacebar",
     abstract: "A macOS window switcher — enumerate Spaces and windows",
     version: SpacebarVersion.version,
-    subcommands: [ListCommand.self, ActivateCommand.self],
+    subcommands: [ListCommand.self, ActivateCommand.self, RenameCommand.self, SwitchCommand.self],
     defaultSubcommand: ListCommand.self
   )
 }

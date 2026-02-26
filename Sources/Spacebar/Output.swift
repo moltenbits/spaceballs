@@ -2,7 +2,10 @@ import Cocoa
 import SpacebarCore
 
 extension ListCommand {
-  func printText(spaces: [SpaceInfo], windowMap: [UInt64: [WindowInfo]]) {
+  func printText(
+    spaces: [SpaceInfo], windowMap: [UInt64: [WindowInfo]],
+    spaceNameStore: SpaceNameStoring
+  ) {
     let displayGroups = Dictionary(grouping: spaces, by: \.displayUUID)
 
     for (displayUUID, displaySpaces) in displayGroups.sorted(by: { $0.key < $1.key }) {
@@ -12,8 +15,11 @@ extension ListCommand {
 
       for (index, space) in displaySpaces.enumerated() {
         let marker = space.isCurrent ? "  ← ACTIVE" : ""
+        let customName = spaceNameStore.customName(forSpaceUUID: space.uuid)
+        let nameLabel = customName.map { " \"\($0)\"" } ?? ""
         print("")
-        print("  Space \(index + 1) [\(space.type.description)] (ID: \(space.id))\(marker)")
+        print(
+          "  Space \(index + 1)\(nameLabel) [\(space.type.description)] (ID: \(space.id))\(marker)")
         print("  ────────────────────────────────────────────────")
 
         let windows = windowMap[space.id] ?? []
@@ -55,7 +61,10 @@ extension ListCommand {
     }
   }
 
-  func printJSON(spaces: [SpaceInfo], windowMap: [UInt64: [WindowInfo]]) throws {
+  func printJSON(
+    spaces: [SpaceInfo], windowMap: [UInt64: [WindowInfo]],
+    spaceNameStore: SpaceNameStoring
+  ) throws {
     let displayGroups = Dictionary(grouping: spaces, by: \.displayUUID)
 
     let output: [[String: Any]] =
@@ -65,7 +74,7 @@ extension ListCommand {
         [
           "displayId": displayUUID,
           "spaces": displaySpaces.map { space in
-            [
+            var spaceDict: [String: Any] = [
               "id": space.id,
               "uuid": space.uuid,
               "type": space.type.description,
@@ -88,7 +97,11 @@ extension ListCommand {
                 }
                 return dict
               },
-            ] as [String: Any]
+            ]
+            if let customName = spaceNameStore.customName(forSpaceUUID: space.uuid) {
+              spaceDict["name"] = customName
+            }
+            return spaceDict
           },
         ] as [String: Any]
       }

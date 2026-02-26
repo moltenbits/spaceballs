@@ -1,4 +1,5 @@
 import Cocoa
+import SpacebarCore
 import SpacebarGUILib
 import SwiftUI
 
@@ -38,7 +39,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       self.hidePanel()
     }
 
+    // Listen for CLI commands via distributed notifications.
+    // The CLI delegates to the running GUI so activation uses the same
+    // persistent process — no new .app launch, no flicker, no z-order issues.
+    DistributedNotificationCenter.default().addObserver(
+      self,
+      selector: #selector(handleCLIActivate(_:)),
+      name: Notification.Name("com.moltenbits.spacebar.cli.activate"),
+      object: nil
+    )
+
     print("Spacebar GUI running. Press Cmd+Tab to activate.")
+  }
+
+  // MARK: - CLI Bridge
+
+  @objc private func handleCLIActivate(_ notification: Notification) {
+    guard let userInfo = notification.userInfo as? [String: Any],
+      let windowID = userInfo["windowID"] as? Int,
+      let replyTo = userInfo["replyTo"] as? String
+    else { return }
+
+    let center = DistributedNotificationCenter.default()
+    do {
+      try viewModel.spaceManager.activateWindow(id: windowID)
+      center.postNotificationName(
+        Notification.Name(replyTo), object: nil,
+        userInfo: ["success": true],
+        deliverImmediately: true)
+    } catch {
+      center.postNotificationName(
+        Notification.Name(replyTo), object: nil,
+        userInfo: ["error": error.localizedDescription],
+        deliverImmediately: true)
+    }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -153,8 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // MARK: - Display Targeting
 
   private static func displayUUID(for screen: NSScreen) -> String? {
-    guard let screenNumber = screen.deviceDescription[
-      NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    guard
+      let screenNumber = screen.deviceDescription[
+        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     else { return nil }
     let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
     guard let cfUUID else { return nil }
@@ -166,11 +201,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let screens = NSScreen.screens
     guard screens.count > 1 else { return }
 
-    let currentIndex = screens.firstIndex(where: {
-      Self.displayUUID(for: $0) == currentPanelDisplayUUID
-    }) ?? 0
+    let currentIndex =
+      screens.firstIndex(where: {
+        Self.displayUUID(for: $0) == currentPanelDisplayUUID
+      }) ?? 0
 
-    let nextIndex = forward
+    let nextIndex =
+      forward
       ? (currentIndex + 1) % screens.count
       : (currentIndex - 1 + screens.count) % screens.count
     let targetScreen = screens[nextIndex]

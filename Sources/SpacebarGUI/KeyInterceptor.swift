@@ -99,7 +99,9 @@ final class KeyInterceptor {
       )
     else {
       print("ERROR: Failed to create CGEvent tap even though AXIsProcessTrusted() is true.")
-      print("Try removing and re-adding Spacebar in System Settings → Privacy & Security → Accessibility.")
+      print(
+        "Try removing and re-adding Spacebar in System Settings → Privacy & Security → Accessibility."
+      )
       return
     }
 

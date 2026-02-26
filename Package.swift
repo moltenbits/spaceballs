@@ -35,7 +35,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "spacebar-gui",
-            dependencies: ["SpacebarGUILib"],
+            dependencies: ["SpacebarCore", "SpacebarGUILib"],
             path: "Sources/SpacebarGUI"
         ),
         .testTarget(
