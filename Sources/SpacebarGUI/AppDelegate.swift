@@ -317,6 +317,14 @@ extension AppDelegate: KeyInterceptorDelegate {
     cycleDisplay(forward: true)
   }
 
+  func keyInterceptorJumpToNextSpace() {
+    viewModel.moveToNextSpace()
+  }
+
+  func keyInterceptorJumpToPreviousSpace() {
+    viewModel.moveToPreviousSpace()
+  }
+
   func keyInterceptorStartRename() {
     guard case .spaceHeader = viewModel.selectedItem else { return }
     viewModel.startRenaming()

@@ -370,6 +370,50 @@ public final class SwitcherViewModel: ObservableObject {
     })
   }
 
+  public func moveToNextSpace() {
+    let items = flatSelectableItems
+    let headers = items.enumerated().filter {
+      if case .spaceHeader = $0.element { return true }
+      return false
+    }
+    guard !headers.isEmpty else { return }
+
+    guard let current = selectedItem, let currentIdx = items.firstIndex(of: current) else {
+      selectedItem = headers.first?.element
+      return
+    }
+
+    // Find the next space header after the current position
+    if let next = headers.first(where: { $0.offset > currentIdx }) {
+      selectedItem = next.element
+    } else {
+      // Wrap to the first space header
+      selectedItem = headers.first?.element
+    }
+  }
+
+  public func moveToPreviousSpace() {
+    let items = flatSelectableItems
+    let headers = items.enumerated().filter {
+      if case .spaceHeader = $0.element { return true }
+      return false
+    }
+    guard !headers.isEmpty else { return }
+
+    guard let current = selectedItem, let currentIdx = items.firstIndex(of: current) else {
+      selectedItem = headers.last?.element
+      return
+    }
+
+    // Find the previous space header before the current position
+    if let prev = headers.last(where: { $0.offset < currentIdx }) {
+      selectedItem = prev.element
+    } else {
+      // Wrap to the last space header
+      selectedItem = headers.last?.element
+    }
+  }
+
   // MARK: - Inline Rename
 
   public func startRenaming() {

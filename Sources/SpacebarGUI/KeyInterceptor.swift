@@ -12,6 +12,8 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorQuitApp()
   func keyInterceptorCycleDisplayLeft()
   func keyInterceptorCycleDisplayRight()
+  func keyInterceptorJumpToNextSpace()
+  func keyInterceptorJumpToPreviousSpace()
   func keyInterceptorStartRename()
   func keyInterceptorCommitRename()
   func keyInterceptorCancelRename()
@@ -194,8 +196,8 @@ private func keyInterceptorCallback(
         }
         return nil  // consume
       }
-      // Cmd+W (13) / Cmd+Q (12) — no-op during rename
-      if cmdHeld && (keyCode == 13 || keyCode == 12) {
+      // Cmd+W (13) / Cmd+Q (12) / Cmd+Down (125) / Cmd+Up (126) — no-op during rename
+      if cmdHeld && (keyCode == 13 || keyCode == 12 || keyCode == 125 || keyCode == 126) {
         return nil  // consume
       }
       // Everything else — pass through to TextField
@@ -223,8 +225,24 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
+    // Cmd+Down arrow (keyCode 125) — jump to next space
+    if cmdHeld && keyCode == 125 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorJumpToNextSpace()
+      }
+      return nil  // consume
+    }
+
+    // Cmd+Up arrow (keyCode 126) — jump to previous space
+    if cmdHeld && keyCode == 126 && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorJumpToPreviousSpace()
+      }
+      return nil  // consume
+    }
+
     // Down arrow (keyCode 125) — move selection down
-    if keyCode == 125 && interceptor.panelVisible {
+    if !cmdHeld && keyCode == 125 && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorMoveDown()
       }
@@ -232,7 +250,7 @@ private func keyInterceptorCallback(
     }
 
     // Up arrow (keyCode 126) — move selection up
-    if keyCode == 126 && interceptor.panelVisible {
+    if !cmdHeld && keyCode == 126 && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorMoveUp()
       }

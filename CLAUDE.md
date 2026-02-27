@@ -11,16 +11,16 @@ Spacebar is a macOS window switcher app inspired by [Contexts](https://contexts.
 All commands use `make`. The build requires `--disable-sandbox` for CGS access.
 
 ```bash
-make build        # Debug build
-make release      # Optimized release build
-make gui          # Build and run GUI switcher
-make app          # Build .app bundle at .build/Spacebar.app/
+make build        # Debug build + bundle .build/Spacebar.app
+make release      # Release build + bundle .build/Spacebar.app
+make everything   # Kill + build + open the .app
 make run          # Build + run CLI (text output)
 make run.json     # Build + run CLI (JSON output)
-make run.activate ID=<wid>  # Activate a window by CGWindowID via .app bundle
+make kill         # Kill running Spacebar
 make test         # Run tests
 make format       # Format with swift-format
 make lint         # Lint with swift-format
+make install      # Release build + install CLI binary + CLI .app bundle
 make clean        # Remove .build/
 ```
 

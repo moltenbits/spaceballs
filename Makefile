@@ -1,12 +1,19 @@
-.PHONY: build release clean test run run.json run.activate app format lint install brewfile build-gui app-gui gui kill
+.PHONY: build release clean test run run.json everything format lint install bootstrap kill
 
 # Build configuration
 SWIFT_BUILD_FLAGS = --disable-sandbox
 RELEASE_FLAGS = -c release $(SWIFT_BUILD_FLAGS)
 DEBUG_FLAGS = -c debug $(SWIFT_BUILD_FLAGS)
 PREFIX ?= /usr/local
-CLI_APP_BUNDLE = .build/Spacebar-CLI.app
-GUI_APP_BUNDLE = .build/Spacebar.app
+APP_BUNDLE = .build/Spacebar.app
+
+# Usage: $(call bundle_app,source_binary,info_plist,target_bundle,sign_identity)
+define bundle_app
+	@mkdir -p $(3)/Contents/MacOS
+	@cp $(1) $(3)/Contents/MacOS/spacebar
+	@cp $(2) $(3)/Contents/Info.plist
+	@codesign --force --sign $(4) $(3)
+endef
 
 help: ## This help screen
 	@IFS=$$'\n' ; \
@@ -24,68 +31,49 @@ help: ## This help screen
 		printf "%s\n" $$help_info; \
 	done
 
-bootstrap: ## Bootstraps the project with all required tooling
+bootstrap: ## Install required tooling
 bootstrap: brewfile
 
-brewfile: ## Install all required brews for this project
+brewfile:
 	@brew bundle install
 
-build: ## Build debug executable
-	swift build $(DEBUG_FLAGS)
+build: ## Debug build + bundle .app
+	swift build $(DEBUG_FLAGS) --product spacebar-gui
+	$(call bundle_app,.build/debug/spacebar-gui,Resources/Info.plist,$(APP_BUNDLE),"Spacebar Dev")
 
-release: ## Build release executable
-	swift build $(RELEASE_FLAGS)
+release: ## Release build + bundle .app
+	swift build $(RELEASE_FLAGS) --product spacebar-gui
+	$(call bundle_app,.build/release/spacebar-gui,Resources/Info.plist,$(APP_BUNDLE),"Spacebar Dev")
 
-run: ## Build and run (debug)
-run: build
+everything: ## Kill + build + open the .app
+everything: kill build
+	open -n --stdout `tty` --stderr `tty` $(APP_BUNDLE)
+
+run: ## Build + run CLI (text output)
+	swift build $(DEBUG_FLAGS) --product spacebar
 	swift run $(SWIFT_BUILD_FLAGS) spacebar
 
-run.json: ## Build and run with JSON output
-run.json: build
+run.json: ## Build + run CLI (JSON output)
+	swift build $(DEBUG_FLAGS) --product spacebar
 	swift run $(SWIFT_BUILD_FLAGS) spacebar --json
-
-app: ## Build CLI .app bundle (required for activate/switch commands)
-app: build
-	@mkdir -p $(CLI_APP_BUNDLE)/Contents/MacOS
-	@cp .build/debug/spacebar $(CLI_APP_BUNDLE)/Contents/MacOS/spacebar
-	@cp Resources/Info-CLI.plist $(CLI_APP_BUNDLE)/Contents/Info.plist
-	@codesign --force --sign "Spacebar Dev" $(CLI_APP_BUNDLE)
-
-run.activate: ## Activate a window by ID (usage: make run.activate ID=<window-id>)
-run.activate: app
-	open -n -W --stdout `tty` --stderr `tty` $(CLI_APP_BUNDLE) --args activate $(ID)
-
-build-gui: ## Build GUI target (debug)
-	swift build $(DEBUG_FLAGS) --product spacebar-gui
-
-app-gui: ## Build .app bundle with GUI executable
-app-gui: kill build-gui
-	@mkdir -p $(GUI_APP_BUNDLE)/Contents/MacOS
-	@cp .build/debug/spacebar-gui $(GUI_APP_BUNDLE)/Contents/MacOS/spacebar
-	@cp Resources/Info.plist $(GUI_APP_BUNDLE)/Contents/Info.plist
-	@codesign --force --sign "Spacebar Dev" $(GUI_APP_BUNDLE)
-
-gui: ## Build and run the GUI window switcher
-gui: app-gui
-	open -n --stdout `tty` --stderr `tty` $(GUI_APP_BUNDLE)
 
 kill: ## Kill running Spacebar app
 	@pkill -f "Spacebar.app" 2>/dev/null || true
 
-clean: ## Clean build artifacts
+clean: ## Remove .build/
 	swift package clean
 	rm -rf .build dist
 
 test: ## Run tests
 	swift test $(SWIFT_BUILD_FLAGS)
 
-format: ## Format code (requires swift-format)
+format: ## Format code
 	swift-format -i -r Sources/ Tests/
 
-lint: ## Lint code (requires swift-format)
+lint: ## Lint code
 	swift-format lint -r Sources/ Tests/
 
-install: ## Install to PREFIX (default /usr/local)
+install: ## Release build + install CLI binary + CLI .app bundle
 install: release
 	@echo "Installing spacebar to $(PREFIX)/bin..."
 	@mkdir -p $(PREFIX)/bin
@@ -94,7 +82,6 @@ install: release
 	else \
 		sudo cp .build/release/spacebar $(PREFIX)/bin/spacebar; \
 	fi
-	@# Install .app bundle for window activation and space switching
 	@echo "Installing Spacebar-CLI.app to $(PREFIX)/lib/spacebar/..."
 	@if [ -w $(PREFIX) ]; then \
 		mkdir -p $(PREFIX)/lib/spacebar/Spacebar-CLI.app/Contents/MacOS; \
