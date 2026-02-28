@@ -4,6 +4,7 @@ import SwiftUI
 struct SwitcherView: View {
   @ObservedObject var viewModel: SwitcherViewModel
   @ObservedObject var appSettings: AppSettings
+  var displayUUID: String?
 
   private var preferredColorScheme: ColorScheme? {
     switch appSettings.colorScheme {
@@ -13,9 +14,14 @@ struct SwitcherView: View {
     }
   }
 
+  private var visibleSections: [SwitcherSection] {
+    guard let uuid = displayUUID else { return viewModel.filteredSections }
+    return viewModel.filteredSections.filter { $0.displayUUID == uuid }
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      ForEach(viewModel.filteredSections) { section in
+      ForEach(visibleSections) { section in
         sectionContent(section)
       }
       settingsRow

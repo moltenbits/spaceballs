@@ -4,6 +4,18 @@ import SwiftUI
 struct AppearancePane: View {
   @ObservedObject var settings: AppSettings
 
+  private var panelDisplayDescription: String {
+    if settings.filterSpacesByDisplay {
+      switch settings.panelDisplay {
+      case .all:
+        return "A panel on each display shows its own spaces"
+      case .active, .primary:
+        return "Use Cmd+← / Cmd+→ to cycle displays"
+      }
+    }
+    return settings.panelDisplay.description
+  }
+
   var body: some View {
     Form {
       Section("Color") {
@@ -53,15 +65,10 @@ struct AppearancePane: View {
           }
         }
         .pickerStyle(.radioGroup)
-        .disabled(settings.filterSpacesByDisplay)
 
-        Text(
-          settings.filterSpacesByDisplay
-            ? "Forced to active display when filtering by display"
-            : settings.panelDisplay.description
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        Text(panelDisplayDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
 
         Toggle("Only show current display's spaces", isOn: $settings.filterSpacesByDisplay)
       }

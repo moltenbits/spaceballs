@@ -103,48 +103,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.mainMenu = mainMenu
   }
 
+  /// Mode 3: filter enabled + panel on all displays.
+  private var isMultiPanelPerDisplay: Bool {
+    appSettings.filterSpacesByDisplay && appSettings.panelDisplay == .all
+  }
+
   // MARK: - Panel Factory
 
   private func makePanel() -> SwitcherPanel {
-    let hostingView = NSHostingView(
-      rootView: SwitcherView(viewModel: viewModel, appSettings: appSettings)
-    )
-    let panel = SwitcherPanel(contentRect: .zero)
-    panel.contentView = hostingView
-    return panel
+    SwitcherPanel(contentRect: .zero)
   }
 
   // MARK: - Panel Management
 
   func showPanel() {
     viewModel.overrideDisplayUUID = nil
-    viewModel.filterByDisplay = appSettings.filterSpacesByDisplay
     viewModel.showEmptySpaces = appSettings.showEmptySpaces
+
+    let multiPanel = isMultiPanelPerDisplay
+    let screens = targetScreens()
+    let activeScreen = NSScreen.main ?? NSScreen.screens.first!
+    let activeUUID = Self.displayUUID(for: activeScreen)
+
+    // Mode 3: no ViewModel-level filter; each view filters its own display.
+    // Mode 2: ViewModel filters to the focused display.
+    // Mode 1: no filter.
+    viewModel.filterByDisplay = appSettings.filterSpacesByDisplay && !multiPanel
+
+    if multiPanel {
+      // Build display order: active display first, then the rest in screen order
+      var order: [String] = []
+      if let uuid = activeUUID { order.append(uuid) }
+      for screen in NSScreen.screens {
+        if let uuid = Self.displayUUID(for: screen), !order.contains(uuid) {
+          order.append(uuid)
+        }
+      }
+      viewModel.displayOrder = order
+    } else {
+      viewModel.displayOrder = []
+    }
+
     viewModel.refresh()
     viewModel.resetSelection()
 
-    let screens = targetScreens()
-
-    // Ensure we have enough panels (lazily create extras for multi-display)
+    // Ensure we have enough panels
     while panels.count < screens.count {
       panels.append(makePanel())
     }
 
-    // Show a panel on each target screen
+    // Set up root views and show panels
     for (i, screen) in screens.enumerated() {
       let panel = panels[i]
+      let panelUUID = Self.displayUUID(for: screen)
+      panel.displayUUID = panelUUID
+
+      let rootView = SwitcherView(
+        viewModel: viewModel,
+        appSettings: appSettings,
+        displayUUID: multiPanel ? panelUUID : nil
+      )
+      panel.setRootView(rootView)
+
       applyPanelAppearance(panel)
       resizePanelToFit(panel, on: screen)
       centerPanel(panel, on: screen)
-      panel.makeKeyAndOrderFront(nil)
+
+      if panelUUID == activeUUID {
+        panel.makeKeyAndOrderFront(nil)
+      } else {
+        panel.orderFront(nil)
+      }
     }
 
-    // Hide any extra panels from a previous show with more screens
+    // Hide extra panels from a previous show
     for i in screens.count..<panels.count {
       panels[i].orderOut(nil)
+      panels[i].displayUUID = nil
     }
 
-    currentPanelDisplayUUID = Self.displayUUID(for: screens[0])
+    currentPanelDisplayUUID = activeUUID
     keyInterceptor.setPanelVisible(true)
   }
 
@@ -155,9 +193,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     for panel in panels {
       panel.orderOut(nil)
+      panel.displayUUID = nil
     }
     currentPanelDisplayUUID = nil
     viewModel.overrideDisplayUUID = nil
+    viewModel.displayOrder = []
     keyInterceptor.setPanelVisible(false)
   }
 
@@ -201,35 +241,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let screens = NSScreen.screens
     guard screens.count > 1 else { return }
 
-    let currentIndex =
-      screens.firstIndex(where: {
-        Self.displayUUID(for: $0) == currentPanelDisplayUUID
-      }) ?? 0
+    if isMultiPanelPerDisplay {
+      // Mode 3: move selection to next/previous display's first window
+      // and make that panel the key window.
+      let order = viewModel.displayOrder
+      guard order.count > 1 else { return }
+      let currentUUID = viewModel.activeDisplayUUID ?? order.first ?? ""
+      let currentIdx = order.firstIndex(of: currentUUID) ?? 0
+      let nextIdx =
+        forward
+        ? (currentIdx + 1) % order.count
+        : (currentIdx - 1 + order.count) % order.count
+      let targetUUID = order[nextIdx]
+      viewModel.selectFirstWindow(onDisplay: targetUUID)
 
-    let nextIndex =
-      forward
-      ? (currentIndex + 1) % screens.count
-      : (currentIndex - 1 + screens.count) % screens.count
-    let targetScreen = screens[nextIndex]
+      // Move key window to the target panel
+      if let targetPanel = panels.first(where: { $0.displayUUID == targetUUID }) {
+        targetPanel.makeKeyAndOrderFront(nil)
+      }
+      currentPanelDisplayUUID = targetUUID
+    } else {
+      // Mode 2: single panel, cycle display content
+      let currentIndex =
+        screens.firstIndex(where: {
+          Self.displayUUID(for: $0) == currentPanelDisplayUUID
+        }) ?? 0
 
-    let targetUUID = Self.displayUUID(for: targetScreen)
-    viewModel.overrideDisplayUUID = targetUUID
-    viewModel.refresh()
-    viewModel.resetSelection()
+      let nextIndex =
+        forward
+        ? (currentIndex + 1) % screens.count
+        : (currentIndex - 1 + screens.count) % screens.count
+      let targetScreen = screens[nextIndex]
 
-    let panel = panels[0]
-    resizePanelToFit(panel, on: targetScreen)
-    centerPanel(panel, on: targetScreen)
-    currentPanelDisplayUUID = targetUUID
+      let targetUUID = Self.displayUUID(for: targetScreen)
+      viewModel.overrideDisplayUUID = targetUUID
+      viewModel.refresh()
+      viewModel.resetSelection()
+
+      let panel = panels[0]
+      resizePanelToFit(panel, on: targetScreen)
+      centerPanel(panel, on: targetScreen)
+      currentPanelDisplayUUID = targetUUID
+    }
   }
 
   private func targetScreens() -> [NSScreen] {
-    // When filtering by display, always show on the active display only —
-    // showing on all displays would be confusing since only the focused
-    // panel handles keyboard input and activation.
-    if appSettings.filterSpacesByDisplay {
-      return [NSScreen.main ?? NSScreen.screens.first!]
-    }
     switch appSettings.panelDisplay {
     case .active:
       return [NSScreen.main ?? NSScreen.screens.first!]

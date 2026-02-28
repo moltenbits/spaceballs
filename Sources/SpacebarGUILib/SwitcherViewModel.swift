@@ -72,6 +72,10 @@ public final class SwitcherViewModel: ObservableObject {
   /// When true, keyboard navigation and per-panel rendering filter by display.
   public var filterByDisplay: Bool = false
 
+  /// Display UUIDs in navigation order (active display first).
+  /// Non-empty signals mode 3 (multi-panel per-display).
+  public var displayOrder: [String] = []
+
   /// When true, spaces with no windows are included in the switcher.
   public var showEmptySpaces: Bool = true
 
@@ -300,14 +304,37 @@ public final class SwitcherViewModel: ObservableObject {
     filteredSections.flatMap(\.windows)
   }
 
-  /// All selectable items in tab-cycle order:
-  /// [header] → [window] → ... → [header] → [window] → ... → [settings]
+  /// All selectable items in tab-cycle order.
+  /// Mode 3 (multi-panel): groups by `displayOrder`, omits `.settings`.
+  /// Modes 1&2: flat MRU order + `.settings` at the end.
   public var flatSelectableItems: [SelectedItem] {
     var items: [SelectedItem] = []
-    for section in filteredSections {
-      items.append(.spaceHeader(section.id))
-      for window in section.windows {
-        items.append(.windowRow(window.id))
+    let sections = filteredSections
+
+    if !displayOrder.isEmpty {
+      // Mode 3: group sections by display in displayOrder
+      for uuid in displayOrder {
+        for section in sections where section.displayUUID == uuid {
+          items.append(.spaceHeader(section.id))
+          for window in section.windows {
+            items.append(.windowRow(window.id))
+          }
+        }
+      }
+      // Include any sections whose display isn't in displayOrder (shouldn't happen, but safe)
+      let ordered = Set(displayOrder)
+      for section in sections where !ordered.contains(section.displayUUID) {
+        items.append(.spaceHeader(section.id))
+        for window in section.windows {
+          items.append(.windowRow(window.id))
+        }
+      }
+    } else {
+      for section in sections {
+        items.append(.spaceHeader(section.id))
+        for window in section.windows {
+          items.append(.windowRow(window.id))
+        }
       }
     }
     items.append(.settings)
@@ -411,6 +438,36 @@ public final class SwitcherViewModel: ObservableObject {
     } else {
       // Wrap to the last space header
       selectedItem = headers.last?.element
+    }
+  }
+
+  // MARK: - Multi-Panel Display Navigation
+
+  /// Returns the display UUID of the section containing the currently selected item.
+  public var activeDisplayUUID: String? {
+    switch selectedItem {
+    case .spaceHeader(let spaceID):
+      return filteredSections.first(where: { $0.id == spaceID })?.displayUUID
+    case .windowRow(let windowID):
+      return filteredSections.first(where: { $0.windows.contains(where: { $0.id == windowID }) })?
+        .displayUUID
+    case .settings, nil:
+      return nil
+    }
+  }
+
+  /// Moves selection to the first window (or header) on the given display.
+  public func selectFirstWindow(onDisplay uuid: String) {
+    let sections = filteredSections.filter { $0.displayUUID == uuid }
+    for section in sections {
+      if let first = section.windows.first {
+        selectedItem = .windowRow(first.id)
+        return
+      }
+    }
+    // No windows — select the first header on this display
+    if let section = sections.first {
+      selectedItem = .spaceHeader(section.id)
     }
   }
 
