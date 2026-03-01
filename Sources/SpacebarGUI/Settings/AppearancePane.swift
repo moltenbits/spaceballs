@@ -52,7 +52,7 @@ struct AppearancePane: View {
 
       Section("Elements") {
         Toggle("Show app icons", isOn: $settings.showAppIcons)
-        Toggle("Show current space badge", isOn: $settings.showCurrentBadge)
+        Toggle("Show space number badge", isOn: $settings.showCurrentBadge)
         Toggle("Show display name badge", isOn: $settings.showDisplayBadge)
           .disabled(settings.filterSpacesByDisplay)
         Toggle("Show empty spaces", isOn: $settings.showEmptySpaces)

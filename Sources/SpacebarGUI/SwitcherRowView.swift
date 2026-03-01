@@ -66,7 +66,8 @@ struct SectionHeaderView: View {
   let isCurrent: Bool
   var isSelected: Bool = false
   var isEmpty: Bool = false
-  var showCurrentBadge: Bool = true
+  var showOrdinalBadge: Bool = true
+  var ordinalLabel: String = ""
   var displayName: String = ""
   var textSize: CGFloat = 13
   var isRenaming: Bool = false
@@ -90,8 +91,8 @@ struct SectionHeaderView: View {
           .font(.system(size: headerSize, weight: .semibold))
           .foregroundStyle(isSelected ? .primary : .secondary)
 
-        if isCurrent && showCurrentBadge {
-          Text("(current)")
+        if showOrdinalBadge && !ordinalLabel.isEmpty && ordinalLabel != label {
+          Text("(\(ordinalLabel))")
             .font(.system(size: badgeSize))
             .foregroundStyle(isSelected ? .secondary : .tertiary)
         }

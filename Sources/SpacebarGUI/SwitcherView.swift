@@ -100,7 +100,8 @@ struct SwitcherView: View {
         isCurrent: section.isCurrent,
         isSelected: viewModel.selectedItem == .spaceHeader(section.id),
         isEmpty: section.windows.isEmpty,
-        showCurrentBadge: appSettings.showCurrentBadge,
+        showOrdinalBadge: appSettings.showCurrentBadge,
+        ordinalLabel: section.ordinalLabel,
         displayName: appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
           ? section.displayName : "",
         textSize: CGFloat(appSettings.textSize),

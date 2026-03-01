@@ -10,11 +10,15 @@ public struct SwitcherSection: Identifiable {
   public let displayName: String
   public let label: String
   public let isCurrent: Bool
+  /// The macOS ordinal label for this space (e.g. "Desktop 3"), used as a badge
+  /// so users can correlate custom names with macOS Mission Control names.
+  public let ordinalLabel: String
   public var windows: [SwitcherRow]
 
   public init(
     id: UInt64, spaceUUID: String = "", displayUUID: String = "",
-    displayName: String = "", label: String, isCurrent: Bool, windows: [SwitcherRow]
+    displayName: String = "", label: String, isCurrent: Bool, ordinalLabel: String = "",
+    windows: [SwitcherRow]
   ) {
     self.id = id
     self.spaceUUID = spaceUUID
@@ -22,6 +26,7 @@ public struct SwitcherSection: Identifiable {
     self.displayName = displayName
     self.label = label
     self.isCurrent = isCurrent
+    self.ordinalLabel = ordinalLabel
     self.windows = windows
   }
 }
@@ -232,21 +237,26 @@ public final class SwitcherViewModel: ObservableObject {
 
       let spaceUUID = spaceInfo?.uuid ?? ""
       let label: String
+      let ordinalLabel: String
       if let info = spaceInfo {
         let ordinal = desktopOrdinal[info.id] ?? 1
         switch info.type {
         case .fullscreen:
           let appName = windows.first?.ownerName ?? "App"
           label = "Fullscreen — \(appName)"
+          ordinalLabel = ""
         case .desktop:
+          let defaultLabel = "Desktop \(ordinal)"
+          ordinalLabel = defaultLabel
           if let customName = spaceNameStore.customName(forSpaceUUID: info.uuid) {
             label = customName
           } else {
-            label = "Desktop \(ordinal)"
+            label = defaultLabel
           }
         }
       } else {
         label = "Space \(spaceID)"
+        ordinalLabel = ""
       }
 
       let isCurrent = spaceID == activeSpaceID
@@ -266,6 +276,7 @@ public final class SwitcherViewModel: ObservableObject {
           displayName: displayNames[dispUUID] ?? "",
           label: label,
           isCurrent: isCurrent,
+          ordinalLabel: ordinalLabel,
           windows: rows
         ))
     }
@@ -295,6 +306,7 @@ public final class SwitcherViewModel: ObservableObject {
         displayUUID: section.displayUUID,
         label: section.label,
         isCurrent: section.isCurrent,
+        ordinalLabel: section.ordinalLabel,
         windows: filtered
       )
     }
@@ -608,6 +620,7 @@ public final class SwitcherViewModel: ObservableObject {
         displayName: section.displayName,
         label: section.label,
         isCurrent: section.isCurrent,
+        ordinalLabel: section.ordinalLabel,
         windows: filtered
       )
     }
