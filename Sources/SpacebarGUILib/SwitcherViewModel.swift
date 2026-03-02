@@ -87,6 +87,9 @@ public final class SwitcherViewModel: ObservableObject {
   /// Override the focused display UUID (used for display cycling via Cmd+Left/Right and for testing).
   public var overrideDisplayUUID: String?
 
+  /// In mode 3, tracks which display group the user was navigating when .settings was selected.
+  private var settingsDisplayIndex: Int = 0
+
   /// Persistent MRU history of space IDs, most recent first.
   /// Updated on each refresh() when the current space changes.
   private var spaceMRUHistory: [UInt64] = []
@@ -371,10 +374,59 @@ public final class SwitcherViewModel: ObservableObject {
 
   // MARK: - Selection
 
+  /// Display group boundary indices within `flatSelectableItems` (excluding the trailing `.settings`).
+  /// Returns (startIndex, endIndex) pairs, one per display in `displayOrder`.
+  private func displayGroupRanges() -> [(start: Int, end: Int)] {
+    guard !displayOrder.isEmpty else { return [] }
+    let sections = filteredSections
+    var ranges: [(start: Int, end: Int)] = []
+    var idx = 0
+    for uuid in displayOrder {
+      let start = idx
+      for section in sections where section.displayUUID == uuid {
+        idx += 1 + section.windows.count  // header + windows
+      }
+      if idx > start {
+        ranges.append((start: start, end: idx - 1))
+      }
+    }
+    return ranges
+  }
+
   public func moveSelectionDown() {
     let items = flatSelectableItems
-    guard items.count > 1 else { return }  // only settings → no-op
+    guard items.count > 1 else { return }
 
+    // Mode 3: .settings acts as a stop between each display group
+    if !displayOrder.isEmpty {
+      let ranges = displayGroupRanges()
+      guard !ranges.isEmpty else { return }
+
+      if selectedItem == .settings {
+        // From .settings, continue to the next display's first item (wrapping)
+        let nextGroup = (settingsDisplayIndex + 1) % ranges.count
+        selectedItem = items[ranges[nextGroup].start]
+        return
+      }
+
+      guard let current = selectedItem, let idx = items.firstIndex(of: current) else {
+        selectedItem = items.first
+        return
+      }
+
+      // At end of a display group → go to .settings
+      if let groupIdx = ranges.firstIndex(where: { $0.end == idx }) {
+        settingsDisplayIndex = groupIdx
+        selectedItem = .settings
+        return
+      }
+
+      // Normal: next item within the group
+      selectedItem = items[idx + 1]
+      return
+    }
+
+    // Modes 1 & 2: flat navigation
     guard let current = selectedItem,
       let idx = items.firstIndex(of: current)
     else {
@@ -390,6 +442,35 @@ public final class SwitcherViewModel: ObservableObject {
     let items = flatSelectableItems
     guard items.count > 1 else { return }
 
+    // Mode 3: .settings acts as a stop between each display group
+    if !displayOrder.isEmpty {
+      let ranges = displayGroupRanges()
+      guard !ranges.isEmpty else { return }
+
+      if selectedItem == .settings {
+        // From .settings, go back to the last item of the source display group
+        selectedItem = items[ranges[settingsDisplayIndex].end]
+        return
+      }
+
+      guard let current = selectedItem, let idx = items.firstIndex(of: current) else {
+        selectedItem = items.last
+        return
+      }
+
+      // At start of a display group → go to .settings (source = previous group, wrapping)
+      if let groupIdx = ranges.firstIndex(where: { $0.start == idx }) {
+        settingsDisplayIndex = (groupIdx - 1 + ranges.count) % ranges.count
+        selectedItem = .settings
+        return
+      }
+
+      // Normal: previous item within the group
+      selectedItem = items[idx - 1]
+      return
+    }
+
+    // Modes 1 & 2: flat navigation
     guard let current = selectedItem,
       let idx = items.firstIndex(of: current)
     else {
