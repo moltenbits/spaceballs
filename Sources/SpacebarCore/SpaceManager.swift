@@ -166,6 +166,43 @@ public class SpaceManager {
     return windows
   }
 
+  /// Returns the CGWindowID of the frontmost normal window on the given space,
+  /// using the on-screen window list which guarantees front-to-back Z-order.
+  /// Returns `nil` if no qualifying window is found.
+  public func frontmostWindowID(onSpace spaceID: UInt64) -> Int? {
+    let onScreen = dataSource.fetchOnScreenWindowList()
+    var policyCache: [pid_t: NSApplication.ActivationPolicy] = [:]
+
+    for entry in onScreen {
+      guard let windowID = entry[kCGWindowNumber as String] as? Int,
+        let pid = entry[kCGWindowOwnerPID as String] as? Int,
+        let layer = entry[kCGWindowLayer as String] as? Int,
+        layer == 0
+      else { continue }
+
+      let name = entry[kCGWindowName as String] as? String
+      guard let name, !name.isEmpty else { continue }
+
+      let pidT = pid_t(pid)
+      let policy: NSApplication.ActivationPolicy
+      if let cached = policyCache[pidT] {
+        policy = cached
+      } else if let app = NSRunningApplication(processIdentifier: pidT) {
+        policy = app.activationPolicy
+        policyCache[pidT] = policy
+      } else {
+        policy = .regular
+      }
+      guard policy == .regular else { continue }
+
+      let spaces = dataSource.fetchSpacesForWindow(windowID)
+      if spaces.contains(spaceID) {
+        return windowID
+      }
+    }
+    return nil
+  }
+
   /// Returns all spaces and windows grouped by space ID.
   public func windowsBySpace() -> (spaces: [SpaceInfo], windowMap: [UInt64: [WindowInfo]]) {
     let spaces = getAllSpaces()

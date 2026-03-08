@@ -19,6 +19,13 @@ public struct CGSDataSource: SystemDataSource {
     ) as? [[String: Any]] ?? []
   }
 
+  public func fetchOnScreenWindowList() -> [[String: Any]] {
+    CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements],
+      kCGNullWindowID
+    ) as? [[String: Any]] ?? []
+  }
+
   public func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] {
     let windowArray = [windowID as CFNumber] as CFArray
     guard

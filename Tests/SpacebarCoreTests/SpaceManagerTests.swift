@@ -8,6 +8,7 @@ import Testing
 struct MockDataSource: SystemDataSource {
   var displaySpaces: [[String: Any]] = []
   var windowList: [[String: Any]] = []
+  var onScreenWindowList: [[String: Any]]?
   var windowSpaces: [Int: [UInt64]] = [:]
 
   func fetchManagedDisplaySpaces() -> [[String: Any]] {
@@ -16,6 +17,10 @@ struct MockDataSource: SystemDataSource {
 
   func fetchWindowList() -> [[String: Any]] {
     windowList
+  }
+
+  func fetchOnScreenWindowList() -> [[String: Any]] {
+    onScreenWindowList ?? windowList
   }
 
   func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] {

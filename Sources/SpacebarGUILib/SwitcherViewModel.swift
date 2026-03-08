@@ -141,11 +141,6 @@ public final class SwitcherViewModel: ObservableObject {
       }
     }
 
-    // Reorder windows within each space by MRU history.
-    for (spaceID, windows) in windowMap {
-      windowMap[spaceID] = reorderByMRU(windows)
-    }
-
     // Determine the current space on the focused display.
     // With multiple displays, each has its own current space (from CGS isCurrent).
     // NSScreen.main identifies which display has keyboard focus.
@@ -156,6 +151,22 @@ public final class SwitcherViewModel: ObservableObject {
       }
       return spaces.first(where: \.isCurrent)?.id
     }()
+
+    // Sync the frontmost window on the focused space into windowMRUHistory.
+    // Uses .optionOnScreenOnly which guarantees front-to-back Z-order, unlike
+    // .optionAll which has unspecified ordering. This ensures the actually-focused
+    // window appears first even when activated outside Spacebar (clicking, Cmd+Tab, etc.).
+    if let focusedSpace = focusedCurrentSpace,
+      let frontWindowID = spaceManager.frontmostWindowID(onSpace: focusedSpace)
+    {
+      windowMRUHistory.removeAll { $0 == frontWindowID }
+      windowMRUHistory.insert(frontWindowID, at: 0)
+    }
+
+    // Reorder windows within each space by MRU history.
+    for (spaceID, windows) in windowMap {
+      windowMap[spaceID] = reorderByMRU(windows)
+    }
 
     // Update the persistent MRU history: move the current space to the front.
     // This preserves ordering across space switches — e.g., switching from
