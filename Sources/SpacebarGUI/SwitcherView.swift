@@ -104,9 +104,8 @@ struct SwitcherView: View {
     .fixedSize(horizontal: true, vertical: false)
     .background(
       ZStack {
-        VibrancyBackground(opacity: appSettings.backgroundOpacity)
+        VibrancyBackground()
         Color(nsColor: .controlBackgroundColor)
-          .opacity(appSettings.backgroundOpacity)
       }
     )
     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -217,18 +216,13 @@ struct SwitcherView: View {
 // MARK: - Vibrancy Background
 
 struct VibrancyBackground: NSViewRepresentable {
-  var opacity: Double = 1.0
-
   func makeNSView(context: Context) -> NSVisualEffectView {
     let view = NSVisualEffectView()
     view.material = .hudWindow
     view.blendingMode = .behindWindow
     view.state = .active
-    view.alphaValue = CGFloat(opacity)
     return view
   }
 
-  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-    nsView.alphaValue = CGFloat(opacity)
-  }
+  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }

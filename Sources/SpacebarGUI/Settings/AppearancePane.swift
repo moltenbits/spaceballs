@@ -25,15 +25,6 @@ struct AppearancePane: View {
           }
         }
         .pickerStyle(.segmented)
-
-        LabeledContent("Background opacity") {
-          HStack {
-            Slider(value: $settings.backgroundOpacity, in: 0.2...1.0)
-            Text("\(Int(settings.backgroundOpacity * 100))%")
-              .monospacedDigit()
-              .frame(width: 36, alignment: .trailing)
-          }
-        }
       }
 
       Section("Text") {

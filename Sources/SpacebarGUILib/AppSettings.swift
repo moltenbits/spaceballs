@@ -63,10 +63,6 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(textSize, forKey: "textSize") }
   }
 
-  @Published public var backgroundOpacity: Double {
-    didSet { defaults.set(backgroundOpacity, forKey: "backgroundOpacity") }
-  }
-
   @Published public var panelDisplay: PanelDisplay {
     didSet { defaults.set(panelDisplay.rawValue, forKey: "panelDisplay") }
   }
@@ -106,7 +102,6 @@ public final class AppSettings: ObservableObject {
       "showCurrentBadge": true,
       "colorScheme": AppColorScheme.auto.rawValue,
       "textSize": 13.0,
-      "backgroundOpacity": 1.0,
       "panelDisplay": PanelDisplay.active.rawValue,
       "filterSpacesByDisplay": false,
       "showDisplayBadge": true,
@@ -118,7 +113,6 @@ public final class AppSettings: ObservableObject {
     self.colorScheme =
       AppColorScheme(rawValue: defaults.string(forKey: "colorScheme") ?? "") ?? .auto
     self.textSize = defaults.double(forKey: "textSize")
-    self.backgroundOpacity = defaults.double(forKey: "backgroundOpacity")
     self.panelDisplay =
       PanelDisplay(rawValue: defaults.string(forKey: "panelDisplay") ?? "") ?? .active
     self.filterSpacesByDisplay = defaults.bool(forKey: "filterSpacesByDisplay")
