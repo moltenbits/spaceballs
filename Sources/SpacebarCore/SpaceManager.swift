@@ -54,8 +54,41 @@ public class SpaceManager {
   private let dataSource: SystemDataSource
   private let selfPID = ProcessInfo.processInfo.processIdentifier
 
+  /// Bundle IDs of `.regular` apps the user wants hidden from Spacebar.
+  public var excludedBundleIDs: Set<String> = []
+
   public init(dataSource: SystemDataSource = CGSDataSource()) {
     self.dataSource = dataSource
+  }
+
+  /// Returns whether a window from the given PID should be included in results.
+  private func shouldIncludeWindow(
+    pid: pid_t, policyCache: inout [pid_t: NSApplication.ActivationPolicy]
+  ) -> Bool {
+    if pid == selfPID { return true }
+
+    let app = NSRunningApplication(processIdentifier: pid)
+    let policy: NSApplication.ActivationPolicy
+    if let cached = policyCache[pid] {
+      policy = cached
+    } else {
+      policy = app?.activationPolicy ?? .regular
+      policyCache[pid] = policy
+    }
+
+    let bundleID = app?.bundleIdentifier
+
+    switch policy {
+    case .regular:
+      if let bid = bundleID, excludedBundleIDs.contains(bid) { return false }
+      return true
+    case .accessory:
+      return false
+    case .prohibited:
+      return false
+    @unknown default:
+      return false
+    }
   }
 
   /// Enumerates all Spaces across all displays.
@@ -126,23 +159,9 @@ public class SpaceManager {
       // containers, web inspector panels, etc.)
       guard let name, !name.isEmpty else { continue }
 
-      // Skip windows from menu bar / background apps (accessory or prohibited
-      // activation policy). These never appear as normal user-facing windows.
-      // Exception: our own process — the Settings window should be listed even
-      // though we run as an accessory app.
+      // Filter by activation policy, included/excluded bundle IDs, and self-PID.
       let pidT = pid_t(pid)
-      if pidT != selfPID {
-        let policy: NSApplication.ActivationPolicy
-        if let cached = policyCache[pidT] {
-          policy = cached
-        } else if let app = NSRunningApplication(processIdentifier: pidT) {
-          policy = app.activationPolicy
-          policyCache[pidT] = policy
-        } else {
-          policy = .regular
-        }
-        guard policy == .regular else { continue }
-      }
+      guard shouldIncludeWindow(pid: pidT, policyCache: &policyCache) else { continue }
 
       var bounds = CGRect.zero
       if let boundsRef = entry[kCGWindowBounds as String] {
@@ -189,18 +208,7 @@ public class SpaceManager {
       guard let name, !name.isEmpty else { continue }
 
       let pidT = pid_t(pid)
-      if pidT != selfPID {
-        let policy: NSApplication.ActivationPolicy
-        if let cached = policyCache[pidT] {
-          policy = cached
-        } else if let app = NSRunningApplication(processIdentifier: pidT) {
-          policy = app.activationPolicy
-          policyCache[pidT] = policy
-        } else {
-          policy = .regular
-        }
-        guard policy == .regular else { continue }
-      }
+      guard shouldIncludeWindow(pid: pidT, policyCache: &policyCache) else { continue }
 
       let spaces = dataSource.fetchSpacesForWindow(windowID)
       if spaces.contains(spaceID) {

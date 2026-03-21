@@ -49,6 +49,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
       .store(in: &cancellables)
 
+    viewModel.spaceManager.excludedBundleIDs = appSettings.excludedBundleIDs
+
+    appSettings.$excludedBundleIDs
+      .dropFirst()
+      .sink { [weak self] ids in
+        self?.viewModel.spaceManager.excludedBundleIDs = ids
+      }
+      .store(in: &cancellables)
+
     // Dismiss on click outside any panel
     clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
       [weak self] event in
@@ -181,9 +190,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displayUUID: multiPanel ? panelUUID : nil
       )
       panel.setRootView(rootView)
-
       applyPanelAppearance(panel)
-      resizePanelToFit(panel, on: screen)
+
+      // Initial size — will be corrected after the first layout settles.
+      _ = resizePanelToFit(panel, on: screen)
       centerPanel(panel, on: screen)
 
       if panelUUID == activeUUID {
@@ -201,6 +211,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     currentPanelDisplayUUID = activeUUID
     keyInterceptor.setPanelVisible(true)
+
+    // Deferred re-size: NSHostingView needs a run loop cycle to settle SwiftUI
+    // layout on the first render. Re-measure and apply overflow indicators.
+    DispatchQueue.main.async { [self] in
+      for (i, screen) in screens.enumerated() {
+        let panel = panels[i]
+        let (overflows, panelHeight) = resizePanelToFit(panel, on: screen)
+        if overflows {
+          let rowHeight = max(appSettings.textSize + 8, 20)
+          let capacity = Int(panelHeight / rowHeight)
+          let updatedView = SwitcherView(
+            viewModel: viewModel,
+            appSettings: appSettings,
+            displayUUID: multiPanel ? panel.displayUUID : nil,
+            contentOverflows: true,
+            visibleCapacity: capacity
+          )
+          panel.setRootView(updatedView)
+        }
+        centerPanel(panel, on: screen)
+      }
+    }
   }
 
   func hidePanel() {
@@ -296,7 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       viewModel.resetSelection()
 
       let panel = panels[0]
-      resizePanelToFit(panel, on: targetScreen)
+      _ = resizePanelToFit(panel, on: targetScreen)
       centerPanel(panel, on: targetScreen)
       currentPanelDisplayUUID = targetUUID
     }
@@ -315,21 +347,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   // MARK: - Positioning
 
-  private func resizePanelToFit(_ panel: SwitcherPanel, on screen: NSScreen) {
-    guard let hostingView = panel.contentView else { return }
-    // Force layout so the first show gets an accurate measurement
+  /// Returns (overflows, panelHeight).
+  private func resizePanelToFit(_ panel: SwitcherPanel, on screen: NSScreen) -> (Bool, CGFloat) {
+    guard let hostingView = panel.contentView else { return (false, 0) }
+    // Force two layout passes — NSHostingView.fittingSize can return a stale
+    // value on the very first render before SwiftUI settles its layout.
+    hostingView.layoutSubtreeIfNeeded()
     hostingView.layoutSubtreeIfNeeded()
     let fittingSize = hostingView.fittingSize
     let maxHeight = screen.visibleFrame.height * 0.8
+    let overflows = fittingSize.height > maxHeight
     let height = min(fittingSize.height, maxHeight)
     panel.setContentSize(NSSize(width: fittingSize.width, height: height))
+    return (overflows, height)
   }
 
   private func centerPanel(_ panel: SwitcherPanel, on screen: NSScreen) {
     let screenFrame = screen.visibleFrame
     let panelSize = panel.frame.size
     let x = screenFrame.midX - panelSize.width / 2
-    let y = screenFrame.midY - panelSize.height / 2 + screenFrame.height * 0.1
+    // Slight upward bias that fades as the panel fills the screen.
+    let fillRatio = panelSize.height / screenFrame.height
+    let upwardBias = screenFrame.height * 0.1 * max(1 - fillRatio, 0)
+    let y = screenFrame.midY - panelSize.height / 2 + upwardBias
     panel.setFrameOrigin(NSPoint(x: x, y: y))
   }
 }

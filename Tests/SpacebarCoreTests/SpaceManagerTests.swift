@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 
 @testable import SpacebarCore
@@ -476,5 +477,64 @@ struct DataModelTests {
   func spaceTypeDescriptions() {
     #expect(CGSSpaceType.desktop.description == "Desktop")
     #expect(CGSSpaceType.fullscreen.description == "Fullscreen")
+  }
+}
+
+// MARK: - App Filtering Tests
+
+@Suite("App Filtering")
+struct AppFilteringTests {
+
+  @Test("Include/exclude sets default to empty")
+  func defaultSets() {
+    let manager = SpaceManager(dataSource: MockDataSource())
+    #expect(manager.excludedBundleIDs.isEmpty)
+  }
+
+  @Test("Empty include/exclude sets preserve normal window listing")
+  func emptyFilterSets() {
+    var ds = MockDataSource()
+    ds.windowList = [
+      makeWindowDict(id: 1, ownerName: "Safari", name: "Google"),
+      makeWindowDict(id: 2, ownerName: "Terminal", name: "bash"),
+    ]
+    ds.windowSpaces = [1: [100], 2: [100]]
+
+    let manager = SpaceManager(dataSource: ds)
+    let windows = manager.getAllWindows()
+
+    // With fake PIDs, NSRunningApplication returns nil → defaults to .regular → shown
+    #expect(windows.count == 2)
+  }
+
+  @Test("Self-PID windows are always included")
+  func selfPIDAlwaysIncluded() {
+    let selfPID = Int(ProcessInfo.processInfo.processIdentifier)
+    var ds = MockDataSource()
+    ds.windowList = [
+      makeWindowDict(id: 1, ownerName: "Spacebar", name: "Settings", pid: selfPID)
+    ]
+    ds.windowSpaces = [1: [100]]
+
+    let manager = SpaceManager(dataSource: ds)
+    // Even though Spacebar is an accessory app, self-PID is exempt
+    let windows = manager.getAllWindows()
+    #expect(windows.count == 1)
+    #expect(windows[0].ownerName == "Spacebar")
+  }
+
+  @Test("Self-PID windows are included even with exclude set")
+  func selfPIDIgnoresExclusion() {
+    let selfPID = Int(ProcessInfo.processInfo.processIdentifier)
+    var ds = MockDataSource()
+    ds.windowList = [
+      makeWindowDict(id: 1, ownerName: "Spacebar", name: "Settings", pid: selfPID)
+    ]
+    ds.windowSpaces = [1: [100]]
+
+    let manager = SpaceManager(dataSource: ds)
+    manager.excludedBundleIDs = ["com.moltenbits.spacebar"]
+    let windows = manager.getAllWindows()
+    #expect(windows.count == 1)
   }
 }

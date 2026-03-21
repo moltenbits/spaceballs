@@ -83,6 +83,10 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(showEmptySpaces, forKey: "showEmptySpaces") }
   }
 
+  @Published public var excludedBundleIDs: Set<String> {
+    didSet { defaults.set(Array(excludedBundleIDs), forKey: "excludedBundleIDs") }
+  }
+
   @Published public var keyBindings: KeyBindings {
     didSet {
       if let data = try? JSONEncoder().encode(keyBindings) {
@@ -120,6 +124,8 @@ public final class AppSettings: ObservableObject {
     self.filterSpacesByDisplay = defaults.bool(forKey: "filterSpacesByDisplay")
     self.showDisplayBadge = defaults.bool(forKey: "showDisplayBadge")
     self.showEmptySpaces = defaults.bool(forKey: "showEmptySpaces")
+
+    self.excludedBundleIDs = Set(defaults.stringArray(forKey: "excludedBundleIDs") ?? [])
 
     if let data = defaults.data(forKey: "keyBindings"),
       let decoded = try? JSONDecoder().decode(KeyBindings.self, from: data)

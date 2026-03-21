@@ -7,6 +7,7 @@ import SwiftUI
 enum SettingsPane: String, CaseIterable, Identifiable {
   case general
   case shortcuts
+  case excluded
   case appearance
   case about
 
@@ -16,6 +17,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: "General"
     case .shortcuts: "Shortcuts"
+    case .excluded: "Excluded"
     case .appearance: "Appearance"
     case .about: "About"
     }
@@ -25,6 +27,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: "gearshape"
     case .shortcuts: "keyboard"
+    case .excluded: "eye.slash"
     case .appearance: "paintbrush"
     case .about: "info.circle"
     }
@@ -70,6 +73,8 @@ struct SettingsView: View {
       GeneralPane()
     case .shortcuts:
       ShortcutsPane(settings: appSettings)
+    case .excluded:
+      ExcludedAppsPane(settings: appSettings)
     case .appearance:
       AppearancePane(settings: appSettings)
     case .about:
