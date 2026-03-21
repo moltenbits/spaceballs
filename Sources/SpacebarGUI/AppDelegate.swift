@@ -214,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Deferred re-size: NSHostingView needs a run loop cycle to settle SwiftUI
     // layout on the first render. Re-measure and apply overflow indicators.
-    DispatchQueue.main.async { [self] in
+    DispatchQueue.main.async { [self, screens, multiPanel] in
       for (i, screen) in screens.enumerated() {
         let panel = panels[i]
         let (overflows, panelHeight) = resizePanelToFit(panel, on: screen)
@@ -350,9 +350,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// Returns (overflows, panelHeight).
   private func resizePanelToFit(_ panel: SwitcherPanel, on screen: NSScreen) -> (Bool, CGFloat) {
     guard let hostingView = panel.contentView else { return (false, 0) }
-    // Force two layout passes — NSHostingView.fittingSize can return a stale
-    // value on the very first render before SwiftUI settles its layout.
-    hostingView.layoutSubtreeIfNeeded()
     hostingView.layoutSubtreeIfNeeded()
     let fittingSize = hostingView.fittingSize
     let maxHeight = screen.visibleFrame.height * 0.8
