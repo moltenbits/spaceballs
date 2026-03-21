@@ -655,6 +655,22 @@ public final class SwitcherViewModel: ObservableObject {
   /// Closes the currently selected window and refreshes the list.
   public func closeSelectedWindow() {
     guard case .windowRow(let windowID) = selectedItem else { return }
+    let rows = flatFilteredRows
+    guard let row = rows.first(where: { $0.id == windowID }) else { return }
+
+    // Closing our own window (e.g. Settings) via AX kills the app.
+    // Use NSApp to close it safely instead.
+    let pid = pid_t(row.pid)
+    if pid == ProcessInfo.processInfo.processIdentifier {
+      for window in NSApp.windows where window.windowNumber == windowID {
+        window.close()
+      }
+      windowMRUHistory.removeAll { $0 == windowID }
+      pendingCloseWindowIDs.insert(windowID)
+      removeWindowFromSections(windowID)
+      return
+    }
+
     do {
       try spaceManager.closeWindow(id: windowID)
     } catch {
@@ -673,8 +689,12 @@ public final class SwitcherViewModel: ObservableObject {
     let rows = flatFilteredRows
     guard let row = rows.first(where: { $0.id == windowID }) else { return }
 
-    // Finder auto-relaunches on terminate — close just this window instead
     let pid = pid_t(row.pid)
+
+    // Don't quit ourselves through the switcher
+    if pid == ProcessInfo.processInfo.processIdentifier { return }
+
+    // Finder auto-relaunches on terminate — close just this window instead
     if NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.finder" {
       closeSelectedWindow()
       return
