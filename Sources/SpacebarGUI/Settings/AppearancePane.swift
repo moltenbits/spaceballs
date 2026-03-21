@@ -30,7 +30,7 @@ struct AppearancePane: View {
       Section("Text") {
         LabeledContent("Text size") {
           HStack {
-            Slider(value: $settings.textSize, in: 11...17, step: 1)
+            Slider(value: $settings.textSize, in: 10...17, step: 1)
             Text("\(Int(settings.textSize))pt")
               .monospacedDigit()
               .frame(width: 32, alignment: .trailing)
