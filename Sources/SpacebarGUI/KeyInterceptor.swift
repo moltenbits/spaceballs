@@ -1,4 +1,5 @@
 import Cocoa
+import SpacebarGUILib
 
 protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorShowPanel()
@@ -40,6 +41,8 @@ final class KeyInterceptor {
   private var runLoopSource: CFRunLoopSource?
   private(set) var panelVisible = false
   private(set) var renameMode = false
+  private(set) var recordingMode = false
+  var keyBindings = KeyBindings()
 
   func setPanelVisible(_ visible: Bool) {
     panelVisible = visible
@@ -47,6 +50,10 @@ final class KeyInterceptor {
 
   func setRenameMode(_ active: Bool) {
     renameMode = active
+  }
+
+  func setRecordingMode(_ active: Bool) {
+    recordingMode = active
   }
 
   private var pollTimer: Timer?
@@ -157,8 +164,14 @@ private func keyInterceptorCallback(
     return Unmanaged.passUnretained(event)
   }
 
+  // Recording mode — pass through all events so the key recorder can capture them
+  if interceptor.recordingMode {
+    return Unmanaged.passUnretained(event)
+  }
+
   let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
   let flags = event.flags
+  let bindings = interceptor.keyBindings
 
   switch type {
   case .keyDown:
@@ -180,32 +193,36 @@ private func keyInterceptorCallback(
         }
         return nil  // consume
       }
-      // Cmd+Tab (48) — commit rename, then move down
-      if cmdHeld && keyCode == 48 {
+      // Activate key — commit rename, then move down
+      if cmdHeld && keyCode == Int64(bindings.activateAndNext) {
         DispatchQueue.main.async {
           interceptor.delegate?.keyInterceptorCommitRename()
           interceptor.delegate?.keyInterceptorMoveDown()
         }
         return nil  // consume
       }
-      // Cmd+` (50) — commit rename, then move up
-      if cmdHeld && keyCode == 50 {
+      // Previous item key — commit rename, then move up
+      if cmdHeld && keyCode == Int64(bindings.previousItem) {
         DispatchQueue.main.async {
           interceptor.delegate?.keyInterceptorCommitRename()
           interceptor.delegate?.keyInterceptorMoveUp()
         }
         return nil  // consume
       }
-      // Cmd+W (13) / Cmd+Q (12) / Cmd+Down (125) / Cmd+Up (126) — no-op during rename
-      if cmdHeld && (keyCode == 13 || keyCode == 12 || keyCode == 125 || keyCode == 126) {
+      // Close / Quit / next-space / prev-space — no-op during rename
+      if cmdHeld
+        && (keyCode == Int64(bindings.closeWindow) || keyCode == Int64(bindings.quitApp)
+          || keyCode == Int64(bindings.nextSpace)
+          || keyCode == Int64(bindings.previousSpace))
+      {
         return nil  // consume
       }
       // Everything else — pass through to TextField
       return Unmanaged.passUnretained(event)
     }
 
-    // Cmd+Tab (keyCode 48)
-    if cmdHeld && keyCode == 48 {
+    // Activate / Next item
+    if cmdHeld && keyCode == Int64(bindings.activateAndNext) {
       DispatchQueue.main.async {
         if !interceptor.panelVisible {
           interceptor.delegate?.keyInterceptorShowPanel()
@@ -215,8 +232,8 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Cmd+` (keyCode 50)
-    if cmdHeld && keyCode == 50 {
+    // Previous item
+    if cmdHeld && keyCode == Int64(bindings.previousItem) {
       DispatchQueue.main.async {
         if interceptor.panelVisible {
           interceptor.delegate?.keyInterceptorMoveUp()
@@ -225,23 +242,23 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Cmd+Down arrow (keyCode 125) — jump to next space
-    if cmdHeld && keyCode == 125 && interceptor.panelVisible {
+    // Next space (Cmd held)
+    if cmdHeld && keyCode == Int64(bindings.nextSpace) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorJumpToNextSpace()
       }
       return nil  // consume
     }
 
-    // Cmd+Up arrow (keyCode 126) — jump to previous space
-    if cmdHeld && keyCode == 126 && interceptor.panelVisible {
+    // Previous space (Cmd held)
+    if cmdHeld && keyCode == Int64(bindings.previousSpace) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorJumpToPreviousSpace()
       }
       return nil  // consume
     }
 
-    // Down arrow (keyCode 125) — move selection down
+    // Down arrow (no Cmd) — move selection down
     if !cmdHeld && keyCode == 125 && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorMoveDown()
@@ -249,7 +266,7 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Up arrow (keyCode 126) — move selection up
+    // Up arrow (no Cmd) — move selection up
     if !cmdHeld && keyCode == 126 && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorMoveUp()
@@ -257,24 +274,24 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Cmd+N (keyCode 45) — start inline rename
-    if cmdHeld && keyCode == 45 && interceptor.panelVisible {
+    // Rename space
+    if cmdHeld && keyCode == Int64(bindings.renameSpace) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorStartRename()
       }
       return nil  // consume
     }
 
-    // Cmd+W (keyCode 13) — close selected window
-    if cmdHeld && keyCode == 13 && interceptor.panelVisible {
+    // Close window
+    if cmdHeld && keyCode == Int64(bindings.closeWindow) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorCloseWindow()
       }
       return nil  // consume
     }
 
-    // Cmd+Q (keyCode 12) — quit selected app
-    if cmdHeld && keyCode == 12 && interceptor.panelVisible {
+    // Quit app
+    if cmdHeld && keyCode == Int64(bindings.quitApp) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorQuitApp()
       }
@@ -289,24 +306,24 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Cmd+Left (keyCode 123) — cycle display left
-    if cmdHeld && keyCode == 123 && interceptor.panelVisible {
-      DispatchQueue.main.async {
-        interceptor.delegate?.keyInterceptorCycleDisplayLeft()
-      }
-      return nil  // consume
-    }
-
-    // Cmd+Right (keyCode 124) — cycle display right
-    if cmdHeld && keyCode == 124 && interceptor.panelVisible {
+    // Next display
+    if cmdHeld && keyCode == Int64(bindings.nextDisplay) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorCycleDisplayRight()
       }
       return nil  // consume
     }
 
-    // Escape (keyCode 53)
-    if keyCode == 53 && interceptor.panelVisible {
+    // Previous display
+    if cmdHeld && keyCode == Int64(bindings.previousDisplay) && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorCycleDisplayLeft()
+      }
+      return nil  // consume
+    }
+
+    // Cancel
+    if keyCode == Int64(bindings.cancel) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorCancel()
       }

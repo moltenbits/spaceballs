@@ -1,4 +1,5 @@
 import Cocoa
+import Combine
 import SpacebarCore
 import SpacebarGUILib
 import SwiftUI
@@ -12,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var appSettings: AppSettings!
   private var settingsController: SettingsWindowController!
   private var currentPanelDisplayUUID: String?
+  private var cancellables = Set<AnyCancellable>()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     spaceNameStore = SpaceNameStore()
@@ -30,7 +32,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     keyInterceptor = KeyInterceptor()
     keyInterceptor.delegate = self
+    keyInterceptor.keyBindings = appSettings.keyBindings
     keyInterceptor.start()
+
+    appSettings.$keyBindings
+      .dropFirst()
+      .sink { [weak self] newBindings in
+        self?.keyInterceptor.keyBindings = newBindings
+      }
+      .store(in: &cancellables)
+
+    appSettings.$isRecordingShortcut
+      .dropFirst()
+      .sink { [weak self] recording in
+        self?.keyInterceptor.setRecordingMode(recording)
+      }
+      .store(in: &cancellables)
 
     // Dismiss on click outside any panel
     clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {

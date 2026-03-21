@@ -29,14 +29,25 @@ final class SettingsWindowController {
     )
     let hostingView = NSHostingView(rootView: settingsView)
 
-    // Measure the tallest pane (Appearance) to size the window correctly.
+    // Measure the tallest panes to size the window correctly.
     // Other panes fill the available space with top-aligned content.
-    let measureRoot = AppearancePane(settings: appSettings)
-      .formStyle(.grouped)
-      .fixedSize(horizontal: false, vertical: true)
-      .frame(width: 430)  // content area: 600 - 170 sidebar
-    let measureView = NSHostingView(rootView: measureRoot)
-    let paneHeight = measureView.fittingSize.height
+    let contentWidth: CGFloat = 430  // 600 - 170 sidebar
+    let measureAppearance = NSHostingView(
+      rootView: AppearancePane(settings: appSettings)
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: contentWidth)
+    )
+    let measureShortcuts = NSHostingView(
+      rootView: ShortcutsPane(settings: appSettings)
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: contentWidth)
+    )
+    let paneHeight = max(
+      measureAppearance.fittingSize.height,
+      measureShortcuts.fittingSize.height
+    )
     let screenHeight = NSScreen.main?.visibleFrame.height ?? 800
     let maxHeight = screenHeight * 0.8
     let initialHeight = min(max(paneHeight, 400), maxHeight)

@@ -83,6 +83,17 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(showEmptySpaces, forKey: "showEmptySpaces") }
   }
 
+  @Published public var keyBindings: KeyBindings {
+    didSet {
+      if let data = try? JSONEncoder().encode(keyBindings) {
+        defaults.set(data, forKey: "keyBindings")
+      }
+    }
+  }
+
+  /// Transient flag — not persisted. Disables the event tap while recording a shortcut.
+  @Published public var isRecordingShortcut = false
+
   public init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
 
@@ -109,6 +120,14 @@ public final class AppSettings: ObservableObject {
     self.filterSpacesByDisplay = defaults.bool(forKey: "filterSpacesByDisplay")
     self.showDisplayBadge = defaults.bool(forKey: "showDisplayBadge")
     self.showEmptySpaces = defaults.bool(forKey: "showEmptySpaces")
+
+    if let data = defaults.data(forKey: "keyBindings"),
+      let decoded = try? JSONDecoder().decode(KeyBindings.self, from: data)
+    {
+      self.keyBindings = decoded
+    } else {
+      self.keyBindings = KeyBindings()
+    }
   }
 
   /// Icon size proportional to text size (20px at 13pt text).
