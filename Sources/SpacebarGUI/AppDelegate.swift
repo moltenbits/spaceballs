@@ -436,7 +436,7 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorStartRename() {
-    guard case .spaceHeader = viewModel.selectedItem else { return }
+    guard viewModel.canRenameFromCurrentSelection else { return }
     viewModel.startRenaming()
     guard viewModel.isRenaming else { return }
     keyInterceptor.setRenameMode(true)

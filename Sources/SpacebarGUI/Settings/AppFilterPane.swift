@@ -120,7 +120,8 @@ struct AppFilterPane: View {
       .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
     let runningBundleIDs = Set(running.map(\.bundleID))
-    let savedNotRunning = selectedBundleIDs
+    let savedNotRunning =
+      selectedBundleIDs
       .filter { !runningBundleIDs.contains($0) }
       .map { bid in
         DiscoveredApp(

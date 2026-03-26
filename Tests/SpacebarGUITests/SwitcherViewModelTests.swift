@@ -519,9 +519,10 @@ struct SearchFilteringTests {
 struct SelectionNavigationTests {
 
   // Tab-cycle order for makeTwoSpaceDataSource():
-  // [Space 1 header] → [10] → [11] → [Space 2 header] → [20] → [Settings]
+  // [10] → [11] → [20] → [Settings]
+  // Space headers are no longer separate selectable items for non-empty sections.
 
-  @Test("moveSelectionDown selects first item (space header) when nothing selected")
+  @Test("moveSelectionDown selects first window row when nothing selected")
   func moveDownFromNone() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
@@ -530,29 +531,25 @@ struct SelectionNavigationTests {
     vm.selectedItem = nil
     vm.moveSelectionDown()
 
-    // First selectable item is Space 1's header
-    #expect(vm.selectedItem == .spaceHeader(1))
+    // First selectable item is Space 1's first window
+    #expect(vm.selectedItem == .windowRow(10))
   }
 
-  @Test("moveSelectionDown advances through headers and rows")
+  @Test("moveSelectionDown advances through rows across sections")
   func moveDownSequential() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    // Start at Space 1 header
-    vm.selectedItem = .spaceHeader(1)
-    vm.moveSelectionDown()
-    #expect(vm.selectedItem == .windowRow(10))  // first window in Space 1
-
+    vm.selectedItem = .windowRow(10)
     vm.moveSelectionDown()
     #expect(vm.selectedItem == .windowRow(11))  // second window in Space 1
 
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == .spaceHeader(2))  // Space 2 header
+    #expect(vm.selectedItem == .windowRow(20))  // first window in Space 2
 
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == .windowRow(20))  // Space 2's window
+    #expect(vm.selectedItem == .settings)
   }
 
   @Test("moveSelectionDown past last row selects settings")
@@ -566,7 +563,7 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .settings)
   }
 
-  @Test("moveSelectionDown from settings wraps to first header")
+  @Test("moveSelectionDown from settings wraps to first window row")
   func moveDownFromSettings() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
@@ -574,7 +571,7 @@ struct SelectionNavigationTests {
 
     vm.selectedItem = .settings
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == .spaceHeader(1))  // wraps to first
+    #expect(vm.selectedItem == .windowRow(10))  // wraps to first window
   }
 
   @Test("moveSelectionUp selects settings when nothing selected")
@@ -590,13 +587,13 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .settings)
   }
 
-  @Test("moveSelectionUp from first header wraps to settings")
-  func moveUpFromFirstHeader() {
+  @Test("moveSelectionUp from first window row wraps to settings")
+  func moveUpFromFirstRow() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)  // first item
+    vm.selectedItem = .windowRow(10)  // first item
     vm.moveSelectionUp()
     #expect(vm.selectedItem == .settings)
   }
@@ -612,18 +609,18 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .windowRow(20))  // last row
   }
 
-  @Test("moveSelectionUp from first window in section goes to that section's header")
-  func moveUpToSectionHeader() {
+  @Test("moveSelectionUp from first window in section goes to last window of previous section")
+  func moveUpAcrossSections() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
     vm.selectedItem = .windowRow(20)  // first (only) window in Space 2
     vm.moveSelectionUp()
-    #expect(vm.selectedItem == .spaceHeader(2))  // Space 2's header
+    #expect(vm.selectedItem == .windowRow(11))  // last window in Space 1
   }
 
-  @Test("resetSelection selects first window row, not header")
+  @Test("resetSelection selects first window row")
   func resetSelection() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
@@ -631,7 +628,7 @@ struct SelectionNavigationTests {
 
     vm.selectedItem = .settings
     vm.resetSelection()
-    #expect(vm.selectedItem == .windowRow(10))  // first window row, skipping header
+    #expect(vm.selectedItem == .windowRow(10))  // first window row
   }
 
   @Test("Navigation works with filtered results")
@@ -644,9 +641,6 @@ struct SelectionNavigationTests {
     // Filtered: Space 1 [10, 11] only
     vm.selectedItem = nil
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == .spaceHeader(1))  // Space 1 header
-
-    vm.moveSelectionDown()
     #expect(vm.selectedItem == .windowRow(10))  // first Safari window
 
     vm.moveSelectionDown()
@@ -656,7 +650,7 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .settings)  // past last → settings
 
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == .spaceHeader(1))  // wraps back to header
+    #expect(vm.selectedItem == .windowRow(10))  // wraps back to first window
   }
 
   @Test("Selection on empty results is a no-op")
@@ -672,16 +666,16 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == nil)
   }
 
-  @Test("Confirming on a space header activates first window in that space")
-  func activateSpaceHeader() {
+  @Test("Activating first window row of a space activates that window")
+  func activateFirstWindowRow() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(2)  // Space 2 header
+    vm.selectedItem = .windowRow(20)  // first window in Space 2
     vm.activateSelected()
 
-    // Should have added Space 2's first window (20) to MRU
+    // Should have added window 20 to MRU
     vm.refresh()
     let space2 = vm.sections.first(where: { $0.id == 2 })!
     #expect(space2.windows[0].id == 20)
@@ -698,16 +692,16 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .spaceHeader(1))
   }
 
-  @Test("Full tab cycle visits all headers, rows, and settings")
+  @Test("Full tab cycle visits all rows and settings")
   func fullTabCycle() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    // Expected cycle: header1 → 10 → 11 → header2 → 20 → settings → header1
+    // Expected cycle: 10 → 11 → 20 → settings → 10
     let expected: [SelectedItem] = [
-      .spaceHeader(1), .windowRow(10), .windowRow(11),
-      .spaceHeader(2), .windowRow(20), .settings,
+      .windowRow(10), .windowRow(11),
+      .windowRow(20), .settings,
     ]
 
     vm.selectedItem = nil
@@ -718,7 +712,65 @@ struct SelectionNavigationTests {
 
     // One more wraps back
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == .spaceHeader(1))
+    #expect(vm.selectedItem == .windowRow(10))
+  }
+
+  @Test("moveToNextSpace works after commitRename")
+  func moveToNextSpaceAfterRename() {
+    let ds = makeTwoSpaceDataSource()
+    let store = MockSpaceNameStore()
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.refresh()
+
+    // Rename from first window of Space 1
+    vm.selectedItem = .windowRow(10)
+    vm.startRenaming()
+    vm.renameText = "Work"
+    vm.commitRename()
+
+    // Cmd+Tab to move down
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .windowRow(11))
+
+    // Cmd+Arrow should jump to Space 2, not move one-by-one
+    vm.moveToNextSpace()
+    #expect(vm.selectedItem == .windowRow(20))
+  }
+
+  @Test("moveToNextSpace jumps to first window of next section")
+  func moveToNextSpaceJumpsToFirstWindow() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedItem = .windowRow(11)  // second window in Space 1
+    vm.moveToNextSpace()
+    #expect(vm.selectedItem == .windowRow(20))  // first window in Space 2
+  }
+
+  @Test("moveToPreviousSpace jumps to first window of previous section")
+  func moveToPreviousSpaceJumpsBack() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedItem = .windowRow(20)  // Space 2
+    vm.moveToPreviousSpace()
+    #expect(vm.selectedItem == .windowRow(10))  // first window in Space 1
+  }
+
+  @Test("moveToNextSpace wraps around")
+  func moveToNextSpaceWraps() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    vm.selectedItem = .windowRow(20)  // Space 2 (last section)
+    vm.moveToNextSpace()
+    #expect(vm.selectedItem == .windowRow(10))  // wraps to Space 1
   }
 }
 
@@ -1038,7 +1090,7 @@ struct DisplayCyclingTests {
 @Suite("Inline Rename")
 struct InlineRenameTests {
 
-  @Test("startRenaming sets state when space header selected")
+  @Test("startRenaming sets state when first window row selected")
   func startRenamingSetsState() {
     let ds = makeTwoSpaceDataSource()
     let store = MockSpaceNameStore()
@@ -1048,7 +1100,7 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)
+    vm.selectedItem = .windowRow(10)  // first window in Space 1
     vm.startRenaming()
 
     #expect(vm.renamingSpaceID == 1)
@@ -1067,14 +1119,14 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)
+    vm.selectedItem = .windowRow(10)  // first window in Space 1
     vm.startRenaming()
 
     #expect(vm.renameText == "Work")
   }
 
-  @Test("startRenaming is no-op when window row selected")
-  func startRenamingNoOpOnWindowRow() {
+  @Test("startRenaming is no-op on non-first window row")
+  func startRenamingNoOpOnNonFirstWindowRow() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(
       spaceManager: SpaceManager(dataSource: ds),
@@ -1082,7 +1134,7 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .windowRow(10)
+    vm.selectedItem = .windowRow(11)  // second window in Space 1
     vm.startRenaming()
 
     #expect(vm.renamingSpaceID == nil)
@@ -1126,7 +1178,7 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)
+    vm.selectedItem = .windowRow(10)  // first window of fullscreen space
     vm.startRenaming()
 
     #expect(vm.renamingSpaceID == nil)
@@ -1142,7 +1194,7 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)
+    vm.selectedItem = .windowRow(10)  // first window in Space 1
     vm.startRenaming()
     vm.renameText = "Work"
     vm.commitRename()
@@ -1165,7 +1217,7 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)
+    vm.selectedItem = .windowRow(10)  // first window in Space 1
     vm.startRenaming()
     vm.renameText = ""
     vm.commitRename()
@@ -1185,7 +1237,7 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)
+    vm.selectedItem = .windowRow(10)  // first window in Space 1
     vm.startRenaming()
     vm.renameText = "New Name"
     vm.cancelRename()
@@ -1198,7 +1250,7 @@ struct InlineRenameTests {
     #expect(space1?.label == "Desktop 1")
   }
 
-  @Test("commitRename preserves selection on renamed space header")
+  @Test("commitRename preserves selection on first window row")
   func commitRenamePreservesSelection() {
     let ds = makeTwoSpaceDataSource()
     let store = MockSpaceNameStore()
@@ -1208,12 +1260,12 @@ struct InlineRenameTests {
     )
     vm.refresh()
 
-    vm.selectedItem = .spaceHeader(1)
+    vm.selectedItem = .windowRow(10)  // first window in Space 1
     vm.startRenaming()
     vm.renameText = "Work"
     vm.commitRename()
 
-    #expect(vm.selectedItem == .spaceHeader(1))
+    #expect(vm.selectedItem == .windowRow(10))
   }
 }
 

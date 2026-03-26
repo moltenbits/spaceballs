@@ -341,25 +341,34 @@ public final class SwitcherViewModel: ObservableObject {
       // Mode 3: group sections by display in displayOrder
       for uuid in displayOrder {
         for section in sections where section.displayUUID == uuid {
-          items.append(.spaceHeader(section.id))
-          for window in section.windows {
-            items.append(.windowRow(window.id))
+          if section.windows.isEmpty {
+            items.append(.spaceHeader(section.id))
+          } else {
+            for window in section.windows {
+              items.append(.windowRow(window.id))
+            }
           }
         }
       }
       // Include any sections whose display isn't in displayOrder (shouldn't happen, but safe)
       let ordered = Set(displayOrder)
       for section in sections where !ordered.contains(section.displayUUID) {
-        items.append(.spaceHeader(section.id))
-        for window in section.windows {
-          items.append(.windowRow(window.id))
+        if section.windows.isEmpty {
+          items.append(.spaceHeader(section.id))
+        } else {
+          for window in section.windows {
+            items.append(.windowRow(window.id))
+          }
         }
       }
     } else {
       for section in sections {
-        items.append(.spaceHeader(section.id))
-        for window in section.windows {
-          items.append(.windowRow(window.id))
+        if section.windows.isEmpty {
+          items.append(.spaceHeader(section.id))
+        } else {
+          for window in section.windows {
+            items.append(.windowRow(window.id))
+          }
         }
       }
     }
@@ -395,7 +404,7 @@ public final class SwitcherViewModel: ObservableObject {
     for uuid in displayOrder {
       let start = idx
       for section in sections where section.displayUUID == uuid {
-        idx += 1 + section.windows.count  // header + windows
+        idx += section.windows.isEmpty ? 1 : section.windows.count
       }
       if idx > start {
         ranges.append((start: start, end: idx - 1))
@@ -501,48 +510,59 @@ public final class SwitcherViewModel: ObservableObject {
     })
   }
 
-  public func moveToNextSpace() {
-    let items = flatSelectableItems
-    let headers = items.enumerated().filter {
-      if case .spaceHeader = $0.element { return true }
-      return false
-    }
-    guard !headers.isEmpty else { return }
-
-    guard let current = selectedItem, let currentIdx = items.firstIndex(of: current) else {
-      selectedItem = headers.first?.element
-      return
-    }
-
-    // Find the next space header after the current position
-    if let next = headers.first(where: { $0.offset > currentIdx }) {
-      selectedItem = next.element
-    } else {
-      // Wrap to the first space header
-      selectedItem = headers.first?.element
+  /// Returns the first selectable item for each section.
+  private func sectionStartItems() -> [SelectedItem] {
+    filteredSections.map { section in
+      if let first = section.windows.first {
+        return .windowRow(first.id)
+      } else {
+        return .spaceHeader(section.id)
+      }
     }
   }
 
-  public func moveToPreviousSpace() {
-    let items = flatSelectableItems
-    let headers = items.enumerated().filter {
-      if case .spaceHeader = $0.element { return true }
-      return false
+  /// Returns the section containing the given selected item, if any.
+  private func sectionFor(_ item: SelectedItem) -> SwitcherSection? {
+    switch item {
+    case .spaceHeader(let id):
+      return filteredSections.first(where: { $0.id == id })
+    case .windowRow(let id):
+      return filteredSections.first(where: { $0.windows.contains(where: { $0.id == id }) })
+    case .settings:
+      return nil
     }
-    guard !headers.isEmpty else { return }
+  }
 
-    guard let current = selectedItem, let currentIdx = items.firstIndex(of: current) else {
-      selectedItem = headers.last?.element
+  public func moveToNextSpace() {
+    let starts = sectionStartItems()
+    guard !starts.isEmpty else { return }
+
+    guard let current = selectedItem,
+      let currentSection = sectionFor(current),
+      let currentIdx = filteredSections.firstIndex(where: { $0.id == currentSection.id })
+    else {
+      selectedItem = starts.first
       return
     }
 
-    // Find the previous space header before the current position
-    if let prev = headers.last(where: { $0.offset < currentIdx }) {
-      selectedItem = prev.element
-    } else {
-      // Wrap to the last space header
-      selectedItem = headers.last?.element
+    let nextIdx = (currentIdx + 1) % starts.count
+    selectedItem = starts[nextIdx]
+  }
+
+  public func moveToPreviousSpace() {
+    let starts = sectionStartItems()
+    guard !starts.isEmpty else { return }
+
+    guard let current = selectedItem,
+      let currentSection = sectionFor(current),
+      let currentIdx = filteredSections.firstIndex(where: { $0.id == currentSection.id })
+    else {
+      selectedItem = starts.last
+      return
     }
+
+    let prevIdx = (currentIdx - 1 + starts.count) % starts.count
+    selectedItem = starts[prevIdx]
   }
 
   // MARK: - Multi-Panel Display Navigation
@@ -577,8 +597,30 @@ public final class SwitcherViewModel: ObservableObject {
 
   // MARK: - Inline Rename
 
+  /// Whether the current selection supports space renaming (space header or first window row).
+  public var canRenameFromCurrentSelection: Bool {
+    switch selectedItem {
+    case .spaceHeader:
+      return true
+    case .windowRow(let id):
+      return filteredSections.contains(where: { $0.windows.first?.id == id })
+    default:
+      return false
+    }
+  }
+
   public func startRenaming() {
-    guard case .spaceHeader(let spaceID) = selectedItem else { return }
+    let spaceID: UInt64
+    switch selectedItem {
+    case .spaceHeader(let id):
+      spaceID = id
+    case .windowRow(let windowID):
+      guard let section = filteredSections.first(where: { $0.windows.first?.id == windowID })
+      else { return }
+      spaceID = section.id
+    default:
+      return
+    }
     guard let section = sections.first(where: { $0.id == spaceID }) else { return }
     // Don't rename fullscreen spaces (auto-generated labels)
     if section.label.hasPrefix("Fullscreen") { return }

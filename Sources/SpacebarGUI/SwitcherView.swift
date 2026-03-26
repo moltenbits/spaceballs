@@ -36,9 +36,12 @@ struct SwitcherView: View {
   private var localSelectableItems: [SelectedItem] {
     var items: [SelectedItem] = []
     for section in visibleSections {
-      items.append(.spaceHeader(section.id))
-      for row in section.windows {
-        items.append(.windowRow(row.id))
+      if section.windows.isEmpty {
+        items.append(.spaceHeader(section.id))
+      } else {
+        for row in section.windows {
+          items.append(.windowRow(row.id))
+        }
       }
     }
     items.append(.settings)
@@ -65,6 +68,20 @@ struct SwitcherView: View {
     let items = localSelectableItems
     guard let idx = items.firstIndex(of: item) else { return true }
     return idx <= items.count - 1 - scrollThreshold
+  }
+
+  /// Computed width for the space label column — just wide enough for the
+  /// longest label across all visible sections so every row aligns.
+  private var spaceLabelWidth: CGFloat {
+    let fontSize = round(CGFloat(appSettings.textSize) * 11.0 / 13.0)
+    let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+    var maxWidth: CGFloat = 0
+    for section in visibleSections where !section.windows.isEmpty {
+      let label = buildSpaceLabel(section)
+      let size = (label as NSString).size(withAttributes: [.font: font])
+      maxWidth = max(maxWidth, size.width)
+    }
+    return max(ceil(maxWidth) + 4, 80)
   }
 
   var body: some View {
@@ -146,6 +163,8 @@ struct SwitcherView: View {
       Spacer().frame(height: 6)
       HStack(spacing: 8) {
         Text("")
+          .frame(width: spaceLabelWidth, alignment: .leading)
+        Text("")
           .frame(width: 110, alignment: .trailing)
         Image(systemName: "gearshape")
           .resizable()
@@ -171,30 +190,32 @@ struct SwitcherView: View {
 
   // MARK: - Section Content
 
+  private func buildSpaceLabel(_ section: SwitcherSection) -> String {
+    var label = section.label
+    if appSettings.showCurrentBadge && !section.ordinalLabel.isEmpty
+      && section.ordinalLabel != section.label
+    {
+      label += " (\(section.ordinalLabel))"
+    }
+    if appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
+      && !section.displayName.isEmpty
+    {
+      label += " — \(section.displayName)"
+    }
+    return label
+  }
+
+  @ViewBuilder
   private func sectionContent(_ section: SwitcherSection) -> some View {
     let isRenamingThisSection = viewModel.renamingSpaceID == section.id
-    return Section {
-      ForEach(section.windows) { row in
-        SwitcherRowView(
-          row: row,
-          isSelected: viewModel.selectedItem == .windowRow(row.id),
-          showAppIcon: appSettings.showAppIcons,
-          textSize: CGFloat(appSettings.textSize),
-          iconSize: appSettings.iconSize
-        )
-        .id(row.id)
-        .onTapGesture {
-          guard !viewModel.isRenaming else { return }
-          viewModel.selectedItem = .windowRow(row.id)
-          viewModel.activateSelected()
-        }
-      }
-    } header: {
+
+    if section.windows.isEmpty {
+      // Empty space — standalone header
       SectionHeaderView(
         label: section.label,
         isCurrent: section.isCurrent,
         isSelected: viewModel.selectedItem == .spaceHeader(section.id),
-        isEmpty: section.windows.isEmpty,
+        isEmpty: true,
         showOrdinalBadge: appSettings.showCurrentBadge,
         ordinalLabel: section.ordinalLabel,
         displayName: appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
@@ -208,6 +229,30 @@ struct SwitcherView: View {
         guard !viewModel.isRenaming else { return }
         viewModel.selectedItem = .spaceHeader(section.id)
         viewModel.activateSelected()
+      }
+    } else {
+      // Non-empty space — first row gets the space label
+      ForEach(Array(section.windows.enumerated()), id: \.element.id) { index, row in
+        let isFirstRow = index == 0
+        SwitcherRowView(
+          row: row,
+          isSelected: viewModel.selectedItem == .windowRow(row.id),
+          showAppIcon: appSettings.showAppIcons,
+          textSize: CGFloat(appSettings.textSize),
+          iconSize: appSettings.iconSize,
+          spaceLabel: isFirstRow ? buildSpaceLabel(section) : nil,
+          spaceLabelWidth: spaceLabelWidth,
+          isRenaming: isFirstRow && isRenamingThisSection,
+          renameText: (isFirstRow && isRenamingThisSection)
+            ? $viewModel.renameText : .constant("")
+        )
+        .id(row.id)
+        .padding(.top, isFirstRow ? 4 : 0)
+        .onTapGesture {
+          guard !viewModel.isRenaming else { return }
+          viewModel.selectedItem = .windowRow(row.id)
+          viewModel.activateSelected()
+        }
       }
     }
   }

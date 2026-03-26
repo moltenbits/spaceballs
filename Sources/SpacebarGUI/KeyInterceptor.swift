@@ -258,18 +258,18 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Down arrow (no Cmd) — move selection down
+    // Down arrow (no Cmd) — jump to next space
     if !cmdHeld && keyCode == 125 && interceptor.panelVisible {
       DispatchQueue.main.async {
-        interceptor.delegate?.keyInterceptorMoveDown()
+        interceptor.delegate?.keyInterceptorJumpToNextSpace()
       }
       return nil  // consume
     }
 
-    // Up arrow (no Cmd) — move selection up
+    // Up arrow (no Cmd) — jump to previous space
     if !cmdHeld && keyCode == 126 && interceptor.panelVisible {
       DispatchQueue.main.async {
-        interceptor.delegate?.keyInterceptorMoveUp()
+        interceptor.delegate?.keyInterceptorJumpToPreviousSpace()
       }
       return nil  // consume
     }

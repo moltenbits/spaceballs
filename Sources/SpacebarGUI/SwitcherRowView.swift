@@ -7,11 +7,22 @@ struct SwitcherRowView: View {
   var showAppIcon: Bool = true
   var textSize: CGFloat = 13
   var iconSize: CGFloat = 20
+  var spaceLabel: String? = nil
+  var spaceLabelWidth: CGFloat = 80
+  var isRenaming: Bool = false
+  var renameText: Binding<String> = .constant("")
+
+  @FocusState private var isTextFieldFocused: Bool
 
   private var pinSize: CGFloat { round(textSize * 9.0 / 13.0) }
+  private var headerSize: CGFloat { round(textSize * 11.0 / 13.0) }
 
   var body: some View {
     HStack(spacing: 8) {
+      // Space label — left-aligned, width computed to fit longest label
+      spaceLabelView
+        .frame(width: spaceLabelWidth, alignment: .leading)
+
       // App name — right-aligned in a fixed-width column
       Text(row.appName)
         .font(.system(size: textSize))
@@ -56,6 +67,24 @@ struct SwitcherRowView: View {
         : nil
     )
     .contentShape(Rectangle())
+  }
+
+  @ViewBuilder
+  private var spaceLabelView: some View {
+    if isRenaming, spaceLabel != nil {
+      TextField("Space name", text: renameText)
+        .font(.system(size: headerSize, weight: .semibold))
+        .textFieldStyle(.plain)
+        .focused($isTextFieldFocused)
+        .onAppear { isTextFieldFocused = true }
+    } else if let label = spaceLabel {
+      Text(label)
+        .font(.system(size: headerSize, weight: .semibold))
+        .foregroundStyle(isSelected ? .primary : .secondary)
+        .lineLimit(1)
+    } else {
+      Text("")
+    }
   }
 }
 
