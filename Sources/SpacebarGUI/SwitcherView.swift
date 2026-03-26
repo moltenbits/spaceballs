@@ -210,26 +210,15 @@ struct SwitcherView: View {
     let isRenamingThisSection = viewModel.renamingSpaceID == section.id
 
     if section.windows.isEmpty {
-      // Empty space — standalone header
-      SectionHeaderView(
-        label: section.label,
-        isCurrent: section.isCurrent,
-        isSelected: viewModel.selectedItem == .spaceHeader(section.id),
-        isEmpty: true,
-        showOrdinalBadge: appSettings.showCurrentBadge,
-        ordinalLabel: section.ordinalLabel,
-        displayName: appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
-          ? section.displayName : "",
-        textSize: CGFloat(appSettings.textSize),
-        isRenaming: isRenamingThisSection,
-        renameText: isRenamingThisSection ? $viewModel.renameText : .constant("")
-      )
-      .id("header-\(section.id)")
-      .onTapGesture {
-        guard !viewModel.isRenaming else { return }
-        viewModel.selectedItem = .spaceHeader(section.id)
-        viewModel.activateSelected()
-      }
+      // Empty space — same row layout as combined rows, with "no windows" placeholder
+      emptySpaceRow(section, isRenaming: isRenamingThisSection)
+        .id("header-\(section.id)")
+        .padding(.top, 4)
+        .onTapGesture {
+          guard !viewModel.isRenaming else { return }
+          viewModel.selectedItem = .spaceHeader(section.id)
+          viewModel.activateSelected()
+        }
     } else {
       // Non-empty space — first row gets the space label
       ForEach(Array(section.windows.enumerated()), id: \.element.id) { index, row in
@@ -255,6 +244,64 @@ struct SwitcherView: View {
         }
       }
     }
+  }
+  // MARK: - Empty Space Row
+
+  private func emptySpaceRow(
+    _ section: SwitcherSection, isRenaming: Bool
+  ) -> some View {
+    let isSelected = viewModel.selectedItem == .spaceHeader(section.id)
+    let headerSize = round(CGFloat(appSettings.textSize) * 11.0 / 13.0)
+    let noWindowsSize = round(CGFloat(appSettings.textSize) * 12.0 / 13.0)
+    return HStack(spacing: 8) {
+      // Space label column — matches SwitcherRowView layout
+      Group {
+        if isRenaming {
+          EmptySpaceRenameField(
+            text: $viewModel.renameText,
+            font: .system(size: headerSize, weight: .semibold)
+          )
+        } else {
+          Text(buildSpaceLabel(section))
+            .font(.system(size: headerSize, weight: .semibold))
+            .foregroundStyle(isSelected ? .primary : .secondary)
+            .lineLimit(1)
+        }
+      }
+      .frame(width: spaceLabelWidth, alignment: .leading)
+
+      // "no windows" in the app content area
+      Text("")
+        .frame(width: 110, alignment: .trailing)
+      Text("Empty")
+        .font(.system(size: noWindowsSize))
+        .foregroundStyle(.tertiary)
+    }
+    .padding(.vertical, 1)
+    .padding(.horizontal, 10)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      isSelected
+        ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
+        : nil
+    )
+    .contentShape(Rectangle())
+  }
+}
+
+/// Separate view to hold @FocusState for the empty-space rename TextField.
+private struct EmptySpaceRenameField: View {
+  @Binding var text: String
+  var font: Font
+
+  @FocusState private var isFocused: Bool
+
+  var body: some View {
+    TextField("Space name", text: $text)
+      .font(font)
+      .textFieldStyle(.plain)
+      .focused($isFocused)
+      .onAppear { isFocused = true }
   }
 }
 
