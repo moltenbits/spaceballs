@@ -510,59 +510,89 @@ public final class SwitcherViewModel: ObservableObject {
     })
   }
 
-  /// Returns the first selectable item for each section.
-  private func sectionStartItems() -> [SelectedItem] {
-    filteredSections.map { section in
-      if let first = section.windows.first {
-        return .windowRow(first.id)
-      } else {
-        return .spaceHeader(section.id)
+  /// Builds a window-ID → space-ID lookup from the current sections.
+  private func windowSpaceMap() -> [Int: UInt64] {
+    var map: [Int: UInt64] = [:]
+    for section in sections {
+      for window in section.windows {
+        map[window.id] = section.id
       }
     }
+    return map
   }
 
-  /// Returns the section containing the given selected item, if any.
-  private func sectionFor(_ item: SelectedItem) -> SwitcherSection? {
+  /// Returns the space ID for the given selectable item using the supplied lookup.
+  private func spaceID(for item: SelectedItem, using map: [Int: UInt64]) -> UInt64? {
     switch item {
-    case .spaceHeader(let id):
-      return filteredSections.first(where: { $0.id == id })
-    case .windowRow(let id):
-      return filteredSections.first(where: { $0.windows.contains(where: { $0.id == id }) })
-    case .settings:
-      return nil
+    case .spaceHeader(let id): return id
+    case .windowRow(let id): return map[id]
+    case .settings: return nil
     }
   }
 
   public func moveToNextSpace() {
-    let starts = sectionStartItems()
-    guard !starts.isEmpty else { return }
+    let items = flatSelectableItems
+    guard !items.isEmpty else { return }
+    let map = windowSpaceMap()
 
-    guard let current = selectedItem,
-      let currentSection = sectionFor(current),
-      let currentIdx = filteredSections.firstIndex(where: { $0.id == currentSection.id })
-    else {
-      selectedItem = starts.first
+    guard let current = selectedItem, let currentPos = items.firstIndex(of: current) else {
+      selectedItem = items.first(where: { spaceID(for: $0, using: map) != nil })
       return
     }
 
-    let nextIdx = (currentIdx + 1) % starts.count
-    selectedItem = starts[nextIdx]
+    let currentSpace = spaceID(for: current, using: map)
+
+    // Scan forward (with wrap) for the first item in a different section
+    for offset in 1..<items.count {
+      let pos = (currentPos + offset) % items.count
+      let item = items[pos]
+      let itemSpace = spaceID(for: item, using: map)
+      guard itemSpace != nil else { continue }  // skip .settings
+      if itemSpace != currentSpace {
+        selectedItem = item
+        return
+      }
+    }
   }
 
   public func moveToPreviousSpace() {
-    let starts = sectionStartItems()
-    guard !starts.isEmpty else { return }
+    let items = flatSelectableItems
+    guard !items.isEmpty else { return }
+    let map = windowSpaceMap()
 
-    guard let current = selectedItem,
-      let currentSection = sectionFor(current),
-      let currentIdx = filteredSections.firstIndex(where: { $0.id == currentSection.id })
-    else {
-      selectedItem = starts.last
+    guard let current = selectedItem, let currentPos = items.firstIndex(of: current) else {
+      selectedItem = items.last(where: { spaceID(for: $0, using: map) != nil })
       return
     }
 
-    let prevIdx = (currentIdx - 1 + starts.count) % starts.count
-    selectedItem = starts[prevIdx]
+    let currentSpace = spaceID(for: current, using: map)
+
+    // Scan backward (with wrap) for the first item in a different section,
+    // then continue to find the FIRST item of that section.
+    var targetSpace: UInt64?
+    var targetPos: Int?
+    for offset in 1..<items.count {
+      let pos = (currentPos - offset + items.count) % items.count
+      let item = items[pos]
+      let itemSpace = spaceID(for: item, using: map)
+      guard let space = itemSpace else { continue }  // skip .settings
+      if space != currentSpace {
+        if targetSpace == nil {
+          targetSpace = space
+          targetPos = pos
+        } else if space == targetSpace {
+          targetPos = pos
+        } else {
+          break
+        }
+      } else if targetSpace != nil {
+        break
+      }
+    }
+
+    if let pos = targetPos {
+      selectedItem = items[pos]
+    }
   }
 
   // MARK: - Multi-Panel Display Navigation
