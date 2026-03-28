@@ -18,6 +18,7 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorStartRename()
   func keyInterceptorCommitRename()
   func keyInterceptorCancelRename()
+  func keyInterceptorCycleSortOrder()
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -294,6 +295,14 @@ private func keyInterceptorCallback(
     if cmdHeld && keyCode == Int64(bindings.quitApp) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorQuitApp()
+      }
+      return nil  // consume
+    }
+
+    // Cycle sort order
+    if cmdHeld && keyCode == Int64(bindings.cycleSortOrder) && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorCycleSortOrder()
       }
       return nil  // consume
     }

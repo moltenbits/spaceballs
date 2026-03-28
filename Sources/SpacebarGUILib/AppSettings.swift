@@ -51,9 +51,9 @@ public enum SpaceSortOrder: String, CaseIterable, Identifiable {
 
   public var label: String {
     switch self {
-    case .mru: "Most recent"
-    case .desktopNumber: "Desktop number"
-    case .alphabetical: "Alphabetical"
+    case .mru: "Most Recently Active"
+    case .desktopNumber: "Desktop Ordinal"
+    case .alphabetical: "Desktop Name"
     }
   }
 }

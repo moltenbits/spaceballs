@@ -443,6 +443,18 @@ extension AppDelegate: KeyInterceptorDelegate {
     keyInterceptor.setRenameMode(true)
   }
 
+  func keyInterceptorCycleSortOrder() {
+    viewModel.cycleSortOrder()
+    appSettings.spaceSortOrder = viewModel.spaceSortOrder
+
+    // Resize panels after sort may change content
+    let screens = targetScreens()
+    for (i, screen) in screens.enumerated() where i < panels.count {
+      _ = resizePanelToFit(panels[i], on: screen)
+      centerPanel(panels[i], on: screen)
+    }
+  }
+
   func keyInterceptorCommitRename() {
     viewModel.commitRename()
     keyInterceptor.setRenameMode(false)

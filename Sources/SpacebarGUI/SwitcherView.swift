@@ -117,6 +117,11 @@ struct SwitcherView: View {
           scrollArrow(direction: .down)
         }
       }
+
+      // Sort order toast overlay
+      SortOrderToast(text: viewModel.sortOverlayText ?? "")
+        .opacity(viewModel.sortOverlayText != nil ? 1 : 0)
+        .animation(.easeOut(duration: viewModel.sortOverlayText != nil ? 0.15 : 0.4), value: viewModel.sortOverlayText)
     }
     .fixedSize(horizontal: true, vertical: false)
     .background(
@@ -127,6 +132,16 @@ struct SwitcherView: View {
     )
     .clipShape(RoundedRectangle(cornerRadius: 12))
     .preferredColorScheme(preferredColorScheme)
+    .onChange(of: viewModel.sortOverlayGeneration) { _, gen in
+      if viewModel.sortOverlayText != nil {
+        let captured = gen
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+          if viewModel.sortOverlayGeneration == captured {
+            viewModel.sortOverlayText = nil
+          }
+        }
+      }
+    }
   }
 
   // MARK: - Scroll Arrow
@@ -302,6 +317,25 @@ private struct EmptySpaceRenameField: View {
       .textFieldStyle(.plain)
       .focused($isFocused)
       .onAppear { isFocused = true }
+  }
+}
+
+// MARK: - Sort Order Toast
+
+private struct SortOrderToast: View {
+  let text: String
+
+  var body: some View {
+    Text(text)
+      .font(.system(size: 14, weight: .semibold))
+      .foregroundColor(.white)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 10)
+      .background(
+        RoundedRectangle(cornerRadius: 8)
+          .fill(Color.black.opacity(0.75))
+      )
+      .allowsHitTesting(false)
   }
 }
 

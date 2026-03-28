@@ -69,6 +69,13 @@ public final class SwitcherViewModel: ObservableObject {
   @Published public var renamingSpaceID: UInt64? = nil
   @Published public var renameText: String = ""
 
+  /// Brief toast text shown when the sort order changes.
+  /// Cleared automatically after a delay.
+  @Published public var sortOverlayText: String?
+
+  /// Incremented each time the overlay is shown, so stale dismiss timers are ignored.
+  @Published public var sortOverlayGeneration: Int = 0
+
   public var isRenaming: Bool { renamingSpaceID != nil }
 
   public let spaceManager: SpaceManager
@@ -638,6 +645,23 @@ public final class SwitcherViewModel: ObservableObject {
     if let pos = targetPos {
       selectedItem = items[pos]
     }
+  }
+
+  // MARK: - Sort Order Cycling
+
+  /// Cycles to the next sort order and refreshes sections.
+  public func cycleSortOrder() {
+    let all = SpaceSortOrder.allCases
+    guard let idx = all.firstIndex(of: spaceSortOrder) else { return }
+    let nextIdx = (idx + 1) % all.count
+    spaceSortOrder = all[nextIdx]
+
+    let savedSelection = selectedItem
+    refresh()
+    selectedItem = savedSelection
+
+    sortOverlayText = "Sorting: \(spaceSortOrder.label)"
+    sortOverlayGeneration += 1
   }
 
   // MARK: - Multi-Panel Display Navigation

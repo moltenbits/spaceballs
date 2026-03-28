@@ -10,6 +10,7 @@ public struct KeyBindings: Codable, Equatable {
   public var nextDisplay: UInt16
   public var previousDisplay: UInt16
   public var renameSpace: UInt16
+  public var cycleSortOrder: UInt16
   public var closeWindow: UInt16
   public var quitApp: UInt16
   public var cancel: UInt16
@@ -22,6 +23,7 @@ public struct KeyBindings: Codable, Equatable {
     nextDisplay: UInt16 = 124,
     previousDisplay: UInt16 = 123,
     renameSpace: UInt16 = 45,
+    cycleSortOrder: UInt16 = 1,
     closeWindow: UInt16 = 13,
     quitApp: UInt16 = 12,
     cancel: UInt16 = 53
@@ -33,6 +35,7 @@ public struct KeyBindings: Codable, Equatable {
     self.nextDisplay = nextDisplay
     self.previousDisplay = previousDisplay
     self.renameSpace = renameSpace
+    self.cycleSortOrder = cycleSortOrder
     self.closeWindow = closeWindow
     self.quitApp = quitApp
     self.cancel = cancel
@@ -48,6 +51,7 @@ public struct KeyBindings: Codable, Equatable {
       case .nextDisplay: nextDisplay
       case .previousDisplay: previousDisplay
       case .renameSpace: renameSpace
+      case .cycleSortOrder: cycleSortOrder
       case .closeWindow: closeWindow
       case .quitApp: quitApp
       case .cancel: cancel
@@ -62,6 +66,7 @@ public struct KeyBindings: Codable, Equatable {
       case .nextDisplay: nextDisplay = newValue
       case .previousDisplay: previousDisplay = newValue
       case .renameSpace: renameSpace = newValue
+      case .cycleSortOrder: cycleSortOrder = newValue
       case .closeWindow: closeWindow = newValue
       case .quitApp: quitApp = newValue
       case .cancel: cancel = newValue
@@ -95,6 +100,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
   case nextDisplay
   case previousDisplay
   case renameSpace
+  case cycleSortOrder
   case closeWindow
   case quitApp
   case cancel
@@ -114,6 +120,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .nextDisplay: "Next display"
     case .previousDisplay: "Previous display"
     case .renameSpace: "Rename space"
+    case .cycleSortOrder: "Cycle sort order"
     case .closeWindow: "Close window"
     case .quitApp: "Quit app"
     case .cancel: "Cancel"
@@ -129,6 +136,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .nextDisplay: "Cycles to the next display"
     case .previousDisplay: "Cycles to the previous display"
     case .renameSpace: "Starts renaming the selected space"
+    case .cycleSortOrder: "Cycles through space sort orders"
     case .closeWindow: "Closes the selected window"
     case .quitApp: "Quits the app owning the selected window"
     case .cancel: "Dismisses the panel"
