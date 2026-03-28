@@ -155,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Mode 2: ViewModel filters to the focused display.
     // Mode 1: no filter.
     viewModel.filterByDisplay = appSettings.filterSpacesByDisplay && !multiPanel
+    viewModel.spaceSortOrder = appSettings.spaceSortOrder
 
     if multiPanel {
       // Build display order: active display first, then the rest in screen order

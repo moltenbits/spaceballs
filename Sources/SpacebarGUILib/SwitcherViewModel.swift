@@ -84,6 +84,9 @@ public final class SwitcherViewModel: ObservableObject {
   /// When true, spaces with no windows are included in the switcher.
   public var showEmptySpaces: Bool = true
 
+  /// How to order sections: MRU, desktop number, or alphabetical.
+  public var spaceSortOrder: SpaceSortOrder = .mru
+
   /// Override the focused display UUID (used for display cycling via Cmd+Left/Right and for testing).
   public var overrideDisplayUUID: String?
 
@@ -233,6 +236,30 @@ public final class SwitcherViewModel: ObservableObject {
       desktopOrdinal[space.id] = globalCounter
     }
 
+    // Apply configured sort order.
+    switch spaceSortOrder {
+    case .mru:
+      break  // already in MRU order
+    case .desktopNumber:
+      // Use the system ordinal order (Desktop 1, 2, 3, ...).
+      // Fullscreen spaces (no ordinal) sort after desktops.
+      spaceMRUOrder.sort { a, b in
+        let oa = desktopOrdinal[a] ?? Int.max
+        let ob = desktopOrdinal[b] ?? Int.max
+        return oa < ob
+      }
+    case .alphabetical:
+      spaceMRUOrder.sort { a, b in
+        let labelA = self.spaceLabel(
+          for: a, info: spaceInfoMap[a], ordinal: desktopOrdinal[a],
+          windowsBySpace: windowMap)
+        let labelB = self.spaceLabel(
+          for: b, info: spaceInfoMap[b], ordinal: desktopOrdinal[b],
+          windowsBySpace: windowMap)
+        return labelA.localizedCaseInsensitiveCompare(labelB) == .orderedAscending
+      }
+    }
+
     // Mark only the FIRST current space as "active" for the (current) label.
     // With multiple displays, this is the current space with the frontmost window.
     let activeSpaceID = spaceMRUOrder.first
@@ -301,6 +328,24 @@ public final class SwitcherViewModel: ObservableObject {
 
     // Prune window MRU entries for windows that no longer exist.
     windowMRUHistory.removeAll { !activeWindowIDs.contains($0) }
+  }
+
+  /// Computes the display label for a space (used for alphabetical sorting).
+  private func spaceLabel(
+    for spaceID: UInt64, info: SpaceInfo?, ordinal: Int?,
+    windowsBySpace: [UInt64: [WindowInfo]]
+  ) -> String {
+    guard let info else { return "Space \(spaceID)" }
+    switch info.type {
+    case .fullscreen:
+      let appName = windowsBySpace[spaceID]?.first?.ownerName ?? "App"
+      return "Fullscreen — \(appName)"
+    case .desktop:
+      if let customName = spaceNameStore.customName(forSpaceUUID: info.uuid) {
+        return customName
+      }
+      return "Desktop \(ordinal ?? 1)"
+    }
   }
 
   // MARK: - Filtering

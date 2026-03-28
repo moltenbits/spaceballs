@@ -1415,3 +1415,88 @@ struct RefreshKeepingSelectionTests {
     #expect(vm.selectedItem == .windowRow(12))
   }
 }
+
+// MARK: - Space Sort Order Tests
+
+@Suite("Space Sort Order")
+struct SpaceSortOrderTests {
+
+  @Test("Default MRU order — current space first, then Z-order")
+  func mruOrder() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.spaceSortOrder = .mru
+    vm.refresh()
+
+    // Space 1 is current, Space 2 has frontmost window but current wins
+    #expect(vm.sections[0].id == 1)
+    #expect(vm.sections[1].id == 2)
+  }
+
+  @Test("Desktop number order sorts by system ordinal")
+  func desktopNumberOrder() {
+    // Build data source where MRU would put Space 2 first
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 1, uuid: "uuid-1"),
+          makeSpaceDict(id: 2, uuid: "uuid-2"),
+          makeSpaceDict(id: 3, uuid: "uuid-3"),
+        ],
+        currentSpaceID: 2
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 20, ownerName: "Terminal", pid: 200),
+      makeWindowDict(id: 30, ownerName: "Xcode", pid: 300),
+      makeWindowDict(id: 10, ownerName: "Safari", pid: 100),
+    ]
+    ds.windowSpaces = [20: [2], 30: [3], 10: [1]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.spaceSortOrder = .desktopNumber
+    vm.refresh()
+
+    // Should be in Desktop 1, 2, 3 order regardless of MRU
+    #expect(vm.sections.map(\.id) == [1, 2, 3])
+  }
+
+  @Test("Alphabetical order sorts by space label")
+  func alphabeticalOrder() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 1, uuid: "uuid-1"),
+          makeSpaceDict(id: 2, uuid: "uuid-2"),
+          makeSpaceDict(id: 3, uuid: "uuid-3"),
+        ],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 10, ownerName: "Safari", pid: 100),
+      makeWindowDict(id: 20, ownerName: "Terminal", pid: 200),
+      makeWindowDict(id: 30, ownerName: "Xcode", pid: 300),
+    ]
+    ds.windowSpaces = [10: [1], 20: [2], 30: [3]]
+
+    let store = MockSpaceNameStore()
+    store.setCustomName("Zebra", forSpaceUUID: "uuid-1")
+    store.setCustomName("Alpha", forSpaceUUID: "uuid-2")
+    // Space 3 keeps default "Desktop 3"
+
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: ds),
+      spaceNameStore: store
+    )
+    vm.spaceSortOrder = .alphabetical
+    vm.refresh()
+
+    // Alpha (space 2) < Desktop 3 (space 3) < Zebra (space 1)
+    #expect(vm.sections.map(\.id) == [2, 3, 1])
+  }
+}

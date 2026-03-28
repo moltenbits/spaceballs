@@ -49,6 +49,15 @@ struct AppearancePane: View {
         Toggle("Show empty spaces", isOn: $settings.showEmptySpaces)
       }
 
+      Section("Sorting") {
+        Picker("Sort spaces by", selection: $settings.spaceSortOrder) {
+          ForEach(SpaceSortOrder.allCases) { order in
+            Text(order.label).tag(order)
+          }
+        }
+        .pickerStyle(.radioGroup)
+      }
+
       Section("Display") {
         Picker("Show panel on", selection: $settings.panelDisplay) {
           ForEach(PanelDisplay.allCases) { display in

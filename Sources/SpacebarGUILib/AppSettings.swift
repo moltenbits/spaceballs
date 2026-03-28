@@ -42,6 +42,22 @@ public enum PanelDisplay: String, CaseIterable, Identifiable {
   }
 }
 
+public enum SpaceSortOrder: String, CaseIterable, Identifiable {
+  case mru
+  case desktopNumber
+  case alphabetical
+
+  public var id: String { rawValue }
+
+  public var label: String {
+    switch self {
+    case .mru: "Most recent"
+    case .desktopNumber: "Desktop number"
+    case .alphabetical: "Alphabetical"
+    }
+  }
+}
+
 // MARK: - Settings Store
 
 public final class AppSettings: ObservableObject {
@@ -79,6 +95,10 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(showEmptySpaces, forKey: "showEmptySpaces") }
   }
 
+  @Published public var spaceSortOrder: SpaceSortOrder {
+    didSet { defaults.set(spaceSortOrder.rawValue, forKey: "spaceSortOrder") }
+  }
+
   @Published public var excludedBundleIDs: Set<String> {
     didSet { defaults.set(Array(excludedBundleIDs), forKey: "excludedBundleIDs") }
   }
@@ -106,6 +126,7 @@ public final class AppSettings: ObservableObject {
       "filterSpacesByDisplay": false,
       "showDisplayBadge": true,
       "showEmptySpaces": true,
+      "spaceSortOrder": SpaceSortOrder.mru.rawValue,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -118,6 +139,8 @@ public final class AppSettings: ObservableObject {
     self.filterSpacesByDisplay = defaults.bool(forKey: "filterSpacesByDisplay")
     self.showDisplayBadge = defaults.bool(forKey: "showDisplayBadge")
     self.showEmptySpaces = defaults.bool(forKey: "showEmptySpaces")
+    self.spaceSortOrder =
+      SpaceSortOrder(rawValue: defaults.string(forKey: "spaceSortOrder") ?? "") ?? .mru
 
     self.excludedBundleIDs = Set(defaults.stringArray(forKey: "excludedBundleIDs") ?? [])
 
