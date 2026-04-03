@@ -76,7 +76,7 @@ struct SwitcherView: View {
     let fontSize = round(CGFloat(appSettings.textSize) * 11.0 / 13.0)
     let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
     var maxWidth: CGFloat = 0
-    for section in visibleSections where !section.windows.isEmpty {
+    for section in visibleSections {
       let label = buildSpaceLabel(section)
       let size = (label as NSString).size(withAttributes: [.font: font])
       maxWidth = max(maxWidth, size.width)

@@ -329,6 +329,158 @@ public class SpaceManager {
     switchToSpace(spaceIndex: spaceIndex, screenNumber: screenNumber)
   }
 
+  // MARK: - Space Creation
+
+  /// Creates a new desktop Space on the focused display via the Dock's
+  /// accessibility interface. Opens Mission Control, finds the "Add Desktop"
+  /// button in the Spaces Bar, and clicks it.
+  ///
+  /// - Parameter count: Number of spaces to create (default 1).
+  /// - Parameter completion: Called on the main queue when done, with success/failure.
+  public func createSpace(count: Int = 1, completion: ((Result<Int, SpaceCreateError>) -> Void)? = nil) {
+    guard AXIsProcessTrusted() else {
+      completion?(.failure(.accessibilityNotTrusted))
+      return
+    }
+
+    guard
+      let dockApp = NSRunningApplication.runningApplications(
+        withBundleIdentifier: "com.apple.dock"
+      ).first
+    else {
+      completion?(.failure(.dockNotRunning))
+      return
+    }
+
+    let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
+
+    CoreDockSendNotification("com.apple.expose.awake" as CFString)
+
+    DispatchQueue.global(qos: .userInteractive).async {
+      // Poll for Mission Control AX group
+      let mcGroup: AXUIElement? = {
+        let deadline = DispatchTime.now() + .milliseconds(1000)
+        while DispatchTime.now() < deadline {
+          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") {
+            return mc
+          }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+        return nil
+      }()
+
+      guard let mcGroup else {
+        completion?(.failure(.missionControlNotFound))
+        return
+      }
+
+      Thread.sleep(forTimeInterval: 0.3)
+
+      // Find the add button in the Spaces Bar.
+      // Navigate: mc → mc.display → mc.spaces, then find a button whose
+      // AXIdentifier is "mc.spaces.add" or whose description contains "add".
+      let addButton: AXUIElement? = {
+        for displayChild in Self.axChildren(mcGroup) {
+          guard Self.axStringAttribute(displayChild, name: "AXIdentifier") == "mc.display" else {
+            continue
+          }
+          if let mcSpaces = Self.axChildWithIdentifier(displayChild, identifier: "mc.spaces") {
+            // Try by identifier first
+            if let add = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.add") {
+              return add
+            }
+            // Fallback: search for a button with "add" in name or description
+            if let add = Self.findAddButton(in: mcSpaces) {
+              return add
+            }
+          }
+        }
+        return nil
+      }()
+
+      guard let addButton else {
+        // Dismiss Mission Control before reporting error
+        Self.dismissMissionControl()
+        completion?(.failure(.addButtonNotFound))
+        return
+      }
+
+      var created = 0
+      for i in 0..<count {
+        let result = AXUIElementPerformAction(addButton, kAXPressAction as CFString)
+        guard result == .success else { break }
+        created += 1
+        if i < count - 1 {
+          Thread.sleep(forTimeInterval: 0.5)
+        }
+      }
+
+      Thread.sleep(forTimeInterval: 0.3)
+      Self.dismissMissionControl()
+
+      completion?(.success(created))
+    }
+  }
+
+  /// Synchronous version for CLI usage.
+  public func createSpaceSync(count: Int = 1) throws {
+    guard Self.ensureAccessibilityTrusted() else {
+      throw SpaceCreateError.accessibilityNotTrusted
+    }
+
+    let semaphore = DispatchSemaphore(value: 0)
+    var result: Result<Int, SpaceCreateError>?
+
+    createSpace(count: count) { r in
+      result = r
+      semaphore.signal()
+    }
+
+    semaphore.wait()
+
+    switch result {
+    case .success(let created):
+      if created < count {
+        print("Warning: only created \(created) of \(count) requested spaces")
+      }
+    case .failure(let error):
+      throw error
+    case nil:
+      throw SpaceCreateError.missionControlNotFound
+    }
+  }
+
+  private static func dismissMissionControl() {
+    CoreDockSendNotification("com.apple.expose.awake" as CFString)
+  }
+
+  /// Searches for a button whose name or description contains "add" (case-insensitive).
+  private static func findAddButton(in element: AXUIElement) -> AXUIElement? {
+    for child in axChildren(element) {
+      var roleRef: CFTypeRef?
+      guard
+        AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleRef) == .success,
+        let role = roleRef as? String
+      else { continue }
+
+      if role == "AXButton" {
+        let name = axStringAttribute(child, name: "AXTitle") ?? ""
+        let desc = axStringAttribute(child, name: "AXDescription") ?? ""
+        if name.localizedCaseInsensitiveContains("add")
+          || desc.localizedCaseInsensitiveContains("add")
+        {
+          return child
+        }
+      }
+
+      // Recurse into groups
+      if let found = findAddButton(in: child) {
+        return found
+      }
+    }
+    return nil
+  }
+
   // MARK: - Space Switching (by index)
 
   /// Switches to the specified Space via the Dock's accessibility interface.
