@@ -455,6 +455,54 @@ extension AppDelegate: KeyInterceptorDelegate {
     }
   }
 
+  func keyInterceptorCreateDefaultSpaces() {
+    let names = appSettings.customSpaceNames
+    guard !names.isEmpty else {
+      viewModel.sortOverlayText = "No default spaces defined"
+      viewModel.sortOverlayGeneration += 1
+      return
+    }
+
+    // Prune stale name mappings for deleted spaces
+    let currentUUIDs = Set(viewModel.spaceManager.getAllSpaces().map(\.uuid))
+    for (uuid, _) in viewModel.spaceNameStore.allCustomNames() where !currentUUIDs.contains(uuid) {
+      viewModel.spaceNameStore.setCustomName(nil, forSpaceUUID: uuid)
+    }
+
+    let existingNames = Set(viewModel.spaceNameStore.allCustomNames().values)
+    let missingNames = names.filter { !existingNames.contains($0) }
+
+    guard !missingNames.isEmpty else {
+      viewModel.sortOverlayText = "All default spaces already exist"
+      viewModel.sortOverlayGeneration += 1
+      return
+    }
+
+    viewModel.sortOverlayText = "Creating \(missingNames.count) space\(missingNames.count == 1 ? "" : "s")..."
+    viewModel.sortOverlayGeneration += 1
+
+    viewModel.createDefaultSpaces(defaultNames: names) { [weak self] created in
+      guard let self else { return }
+      if created > 0 {
+        self.viewModel.sortOverlayText = "Created \(created) space\(created == 1 ? "" : "s")"
+      } else {
+        self.viewModel.sortOverlayText = "All default spaces already exist"
+      }
+      self.viewModel.sortOverlayGeneration += 1
+      self.viewModel.refresh()
+      self.viewModel.resetSelection()
+
+      // Resize panels to fit new content
+      DispatchQueue.main.async {
+        let screens = self.targetScreens()
+        for (i, screen) in screens.enumerated() where i < self.panels.count {
+          _ = self.resizePanelToFit(self.panels[i], on: screen)
+          self.centerPanel(self.panels[i], on: screen)
+        }
+      }
+    }
+  }
+
   func keyInterceptorCommitRename() {
     viewModel.commitRename()
     keyInterceptor.setRenameMode(false)

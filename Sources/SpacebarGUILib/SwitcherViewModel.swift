@@ -664,6 +664,51 @@ public final class SwitcherViewModel: ObservableObject {
     sortOverlayGeneration += 1
   }
 
+  // MARK: - Create Default Spaces
+
+  /// Creates any spaces from `defaultNames` that don't already exist,
+  /// and assigns the names to the new spaces.
+  public func createDefaultSpaces(
+    defaultNames: [String], completion: @escaping (Int) -> Void
+  ) {
+    // Prune stale name mappings for deleted spaces
+    let currentUUIDs = Set(spaceManager.getAllSpaces().map(\.uuid))
+    for (uuid, _) in spaceNameStore.allCustomNames() where !currentUUIDs.contains(uuid) {
+      spaceNameStore.setCustomName(nil, forSpaceUUID: uuid)
+    }
+
+    let existingNames = Set(spaceNameStore.allCustomNames().values)
+    let missingNames = defaultNames.filter { !existingNames.contains($0) }
+
+    guard !missingNames.isEmpty else {
+      completion(0)
+      return
+    }
+
+    spaceManager.createSpace(count: missingNames.count) { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .success(let created):
+        // Wait for macOS to settle, then assign names to the new unnamed spaces
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+          let allSpaces = self.spaceManager.getAllSpaces()
+            .filter { $0.type == .desktop }
+          let alreadyNamed = Set(self.spaceNameStore.allCustomNames().keys)
+          let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
+
+          // Assign missing names to unnamed spaces (in order)
+          for (name, space) in zip(missingNames, unnamedSpaces.suffix(created)) {
+            self.spaceNameStore.setCustomName(name, forSpaceUUID: space.uuid)
+          }
+
+          completion(created)
+        }
+      case .failure:
+        completion(0)
+      }
+    }
+  }
+
   // MARK: - Multi-Panel Display Navigation
 
   /// Returns the display UUID of the section containing the currently selected item.
