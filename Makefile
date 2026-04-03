@@ -49,7 +49,7 @@ release: ## Release build (GUI + CLI) + bundle .app
 
 everything: ## Kill + release build + install CLI + open the .app
 everything: kill install
-	open -n --stdout `tty` --stderr `tty` $(APP_BUNDLE)
+	@open -n $(APP_BUNDLE)
 
 run: ## Build + run CLI (text output)
 	swift build $(DEBUG_FLAGS) --product spacebar
