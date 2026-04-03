@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 
 @testable import SpacebarCore
@@ -24,6 +25,7 @@ final class MockSpaceNameStore: SpaceNameStoring {
   func allCustomNames() -> [String: String] {
     names
   }
+
 }
 
 // MARK: - Mock Data Source
@@ -1498,5 +1500,44 @@ struct SpaceSortOrderTests {
 
     // Alpha (space 2) < Desktop 3 (space 3) < Zebra (space 1)
     #expect(vm.sections.map(\.id) == [2, 3, 1])
+  }
+}
+
+// MARK: - Settings Export/Import Tests
+
+@Suite("Settings Export/Import")
+struct SettingsExportTests {
+
+  @Test("Round-trip export then import preserves all settings")
+  func roundTrip() throws {
+    let defaults1 = UserDefaults(suiteName: "test.export.\(UUID().uuidString)")!
+    let settings1 = AppSettings(defaults: defaults1)
+    settings1.showAppIcons = false
+    settings1.textSize = 15
+    settings1.colorScheme = .dark
+    settings1.panelDisplay = .all
+    settings1.spaceSortOrder = .alphabetical
+    settings1.filterSpacesByDisplay = true
+    settings1.excludedBundleIDs = ["com.example.app"]
+    settings1.keyBindings = KeyBindings(activateAndNext: 99)
+    settings1.customSpaceNames = ["Work", "Play"]
+
+    let data = try SettingsExport.exportJSON(settings: settings1)
+
+    // Import into fresh settings
+    let defaults2 = UserDefaults(suiteName: "test.import.\(UUID().uuidString)")!
+    let settings2 = AppSettings(defaults: defaults2)
+
+    try SettingsExport.importJSON(data, settings: settings2)
+
+    #expect(settings2.showAppIcons == false)
+    #expect(settings2.textSize == 15)
+    #expect(settings2.colorScheme == .dark)
+    #expect(settings2.panelDisplay == .all)
+    #expect(settings2.spaceSortOrder == .alphabetical)
+    #expect(settings2.filterSpacesByDisplay == true)
+    #expect(settings2.excludedBundleIDs == ["com.example.app"])
+    #expect(settings2.keyBindings.activateAndNext == 99)
+    #expect(settings2.customSpaceNames == ["Work", "Play"])
   }
 }

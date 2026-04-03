@@ -121,7 +121,9 @@ struct SwitcherView: View {
       // Sort order toast overlay
       SortOrderToast(text: viewModel.sortOverlayText ?? "")
         .opacity(viewModel.sortOverlayText != nil ? 1 : 0)
-        .animation(.easeOut(duration: viewModel.sortOverlayText != nil ? 0.15 : 0.4), value: viewModel.sortOverlayText)
+        .animation(
+          .easeOut(duration: viewModel.sortOverlayText != nil ? 0.15 : 0.4),
+          value: viewModel.sortOverlayText)
     }
     .fixedSize(horizontal: true, vertical: false)
     .background(

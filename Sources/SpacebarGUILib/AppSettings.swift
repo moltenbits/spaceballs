@@ -99,6 +99,10 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(spaceSortOrder.rawValue, forKey: "spaceSortOrder") }
   }
 
+  @Published public var customSpaceNames: [String] {
+    didSet { defaults.set(customSpaceNames, forKey: "customSpaceNames") }
+  }
+
   @Published public var excludedBundleIDs: Set<String> {
     didSet { defaults.set(Array(excludedBundleIDs), forKey: "excludedBundleIDs") }
   }
@@ -142,6 +146,7 @@ public final class AppSettings: ObservableObject {
     self.spaceSortOrder =
       SpaceSortOrder(rawValue: defaults.string(forKey: "spaceSortOrder") ?? "") ?? .mru
 
+    self.customSpaceNames = defaults.stringArray(forKey: "customSpaceNames") ?? []
     self.excludedBundleIDs = Set(defaults.stringArray(forKey: "excludedBundleIDs") ?? [])
 
     if let data = defaults.data(forKey: "keyBindings"),

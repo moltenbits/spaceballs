@@ -29,6 +29,7 @@ let package = Package(
             name: "spacebar",
             dependencies: [
                 "SpacebarCore",
+                "SpacebarGUILib",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/Spacebar"

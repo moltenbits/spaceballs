@@ -337,7 +337,9 @@ public class SpaceManager {
   ///
   /// - Parameter count: Number of spaces to create (default 1).
   /// - Parameter completion: Called on the main queue when done, with success/failure.
-  public func createSpace(count: Int = 1, completion: ((Result<Int, SpaceCreateError>) -> Void)? = nil) {
+  public func createSpace(
+    count: Int = 1, completion: ((Result<Int, SpaceCreateError>) -> Void)? = nil
+  ) {
     guard AXIsProcessTrusted() else {
       completion?(.failure(.accessibilityNotTrusted))
       return
