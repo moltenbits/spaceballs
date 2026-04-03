@@ -43,6 +43,7 @@ build: ## Debug build + bundle .app
 
 release: ## Release build + bundle .app
 	swift build $(RELEASE_FLAGS) --product spacebar-gui
+	swift build $(RELEASE_FLAGS) --product spacebar
 	$(call bundle_app,.build/release/spacebar-gui,Resources/Info.plist,$(APP_BUNDLE),"Spacebar Dev")
 
 everything: ## Kill + build + open the .app

@@ -58,9 +58,17 @@ Once running, the app lives in the background (no Dock icon). Keyboard shortcuts
 spacebar                       # List all Spaces and windows (text output)
 spacebar list --json           # JSON output
 spacebar activate <window-id>  # Activate a window by ID (auto-launches .app bundle)
-spacebar switch <space-id>     # Switch to a Space by ID
+spacebar switch <space>        # Switch to a Space by ID or name
 spacebar rename <space-id> [name]  # Set or clear a custom Space name
 spacebar --version             # Version
+```
+
+The `switch` command accepts a numeric Space ID, a custom name, or a default label like "Desktop 2" (case-insensitive):
+
+```bash
+spacebar switch 42              # by Space ID
+spacebar switch "Desktop 2"     # by default label
+spacebar switch "Work"          # by custom name
 ```
 
 ```
