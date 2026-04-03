@@ -307,13 +307,15 @@ struct WindowFilteringTests {
     #expect(windows[0].id == 4)
   }
 
-  @Test("Filters out windows with no title")
+  @Test("Filters out nil-title windows and empty-title windows when app has titled ones")
   func windowWithoutTitle() {
     var ds = MockDataSource()
+    // Same app (pid 100) has nil-title, empty-title, and titled windows.
+    // The nil and empty ones should be filtered since a titled window exists.
     ds.windowList = [
-      makeWindowDict(id: 1, ownerName: "App", name: nil),
-      makeWindowDict(id: 2, ownerName: "App", name: ""),
-      makeWindowDict(id: 3, ownerName: "App", name: "Real Window"),
+      makeWindowDict(id: 1, ownerName: "Safari", name: nil, pid: 100),
+      makeWindowDict(id: 2, ownerName: "Safari", name: "", pid: 100),
+      makeWindowDict(id: 3, ownerName: "Safari", name: "Google", pid: 100),
     ]
     ds.windowSpaces = [3: [100]]
 
@@ -322,6 +324,22 @@ struct WindowFilteringTests {
 
     #expect(windows.count == 1)
     #expect(windows[0].id == 3)
+  }
+
+  @Test("Allows empty-title windows when app has no titled windows")
+  func emptyTitleOnlyApp() {
+    var ds = MockDataSource()
+    // App with only empty-title windows (e.g. Contacts) — keep them
+    ds.windowList = [
+      makeWindowDict(id: 1, ownerName: "Contacts", name: "", pid: 200),
+      makeWindowDict(id: 2, ownerName: "Contacts", name: "", pid: 200),
+    ]
+    ds.windowSpaces = [1: [100], 2: [100]]
+
+    let manager = SpaceManager(dataSource: ds)
+    let windows = manager.getAllWindows()
+
+    #expect(windows.count == 2)
   }
 
   @Test("Skips entries with missing required fields")

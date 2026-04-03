@@ -151,15 +151,14 @@ public class SpaceManager {
       // Higher layers are system chrome (menubar, dock, spotlight, etc.)
       guard layer == 0 else { continue }
 
-      let name = entry[kCGWindowName as String] as? String
-
-      // Skip windows with no title (auxiliary windows like Safari's toolbar
-      // containers, web inspector panels, etc.)
-      guard let name, !name.isEmpty else { continue }
-
       // Filter by activation policy, included/excluded bundle IDs, and self-PID.
       let pidT = pid_t(pid)
       guard shouldIncludeWindow(pid: pidT, appInfoCache: &appInfoCache) else { continue }
+
+      let name = entry[kCGWindowName as String] as? String
+
+      // Skip windows where the name key is entirely absent (auxiliary chrome).
+      if name == nil { continue }
 
       var bounds = CGRect.zero
       if let boundsRef = entry[kCGWindowBounds as String] {
@@ -185,6 +184,19 @@ public class SpaceManager {
         ))
     }
 
+    // Some apps (e.g. Contacts) report empty kCGWindowName for their main
+    // window. Keep those so the app still appears. But apps like Safari also
+    // have auxiliary empty-name windows (toolbar containers, etc.) alongside
+    // real titled windows. Remove empty-name windows from any app that also
+    // has at least one titled window.
+    var pidsWithTitledWindows = Set<Int>()
+    for window in windows where window.name != nil && !window.name!.isEmpty {
+      pidsWithTitledWindows.insert(window.pid)
+    }
+    windows.removeAll { window in
+      (window.name == nil || window.name!.isEmpty) && pidsWithTitledWindows.contains(window.pid)
+    }
+
     return windows
   }
 
@@ -202,8 +214,10 @@ public class SpaceManager {
         layer == 0
       else { continue }
 
+      // Skip windows with no name key (auxiliary chrome), but allow empty
+      // names (e.g. Contacts) so the frontmost window is detected correctly.
       let name = entry[kCGWindowName as String] as? String
-      guard let name, !name.isEmpty else { continue }
+      if name == nil { continue }
 
       let pidT = pid_t(pid)
       guard shouldIncludeWindow(pid: pidT, appInfoCache: &appInfoCache) else { continue }
