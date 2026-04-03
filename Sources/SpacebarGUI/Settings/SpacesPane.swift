@@ -20,6 +20,11 @@ struct SpacesPane: View {
       .foregroundStyle(.secondary)
       .padding(12)
       .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+      .onTapGesture {
+        if editingIndex != nil { commitEdit() }
+        selection = nil
+      }
 
       // Rows
       ForEach(0..<settings.customSpaceNames.count, id: \.self) { index in
@@ -31,13 +36,17 @@ struct SpacesPane: View {
           isSelected: selection == index,
           isEditing: editingIndex == index,
           editText: $editText,
-          onTap: {
+          onSingleClick: {
             if editingIndex != nil && editingIndex != index {
               commitEdit()
             }
-            if selection == index && editingIndex != index {
+            if editingIndex == index {
+              // Already editing this row — do nothing
+            } else if selection == index {
+              // Already selected — enter edit mode
               beginEdit(index: index)
             } else {
+              // Not selected — select it
               selection = index
             }
           },
@@ -95,6 +104,14 @@ struct SpacesPane: View {
     .clipShape(RoundedRectangle(cornerRadius: 10))
     .padding()
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .background {
+      Color.clear
+        .contentShape(Rectangle())
+        .onTapGesture {
+          if editingIndex != nil { commitEdit() }
+          selection = nil
+        }
+    }
     .onAppear {
       settings.customSpaceNames.removeAll { $0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
@@ -177,35 +194,38 @@ private struct SpaceNameRow: View {
   let isSelected: Bool
   let isEditing: Bool
   @Binding var editText: String
-  let onTap: () -> Void
+  let onSingleClick: () -> Void
   let onCommit: () -> Void
   let onCancel: () -> Void
 
   @FocusState private var isFocused: Bool
 
   var body: some View {
-    Group {
-      if isEditing {
-        TextField("", text: $editText)
-          .textFieldStyle(.roundedBorder)
-          .labelsHidden()
-          .focused($isFocused)
-          .onSubmit { onCommit() }
-          .onExitCommand { onCancel() }
-          .onChange(of: isFocused) { _, focused in
-            if !focused { onCommit() }
-          }
-          .onAppear { isFocused = true }
-      } else {
-        Text(name)
-      }
+    if isEditing {
+      TextField("", text: $editText)
+        .textFieldStyle(.roundedBorder)
+        .labelsHidden()
+        .focused($isFocused)
+        .onSubmit { onCommit() }
+        .onExitCommand { onCancel() }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .task {
+          // Small delay to ensure the TextField is in the view hierarchy
+          try? await Task.sleep(for: .milliseconds(50))
+          isFocused = true
+          try? await Task.sleep(for: .milliseconds(50))
+          NSApp.sendAction(#selector(NSResponder.selectAll(_:)), to: nil, from: nil)
+        }
+    } else {
+      Text(name)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(isSelected ? Color.accentColor : Color.clear)
+        .foregroundStyle(isSelected ? .white : .primary)
+        .contentShape(Rectangle())
+        .onTapGesture { onSingleClick() }
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.horizontal, isEditing ? 6 : 12)
-    .padding(.vertical, isEditing ? 4 : 8)
-    .background(isSelected && !isEditing ? Color.accentColor : Color.clear)
-    .foregroundStyle(isSelected && !isEditing ? .white : .primary)
-    .contentShape(Rectangle())
-    .onTapGesture { onTap() }
   }
 }
