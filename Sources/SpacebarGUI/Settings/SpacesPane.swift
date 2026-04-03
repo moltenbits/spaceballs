@@ -65,6 +65,24 @@ struct SpacesPane: View {
         .buttonStyle(.borderless)
         .disabled(selection == nil)
 
+        Divider().frame(height: 14)
+
+        Button(action: moveUp) {
+          Image(systemName: "chevron.up")
+            .frame(width: 30, height: 28)
+        }
+        .buttonStyle(.borderless)
+        .disabled(selection == nil || selection == 0)
+
+        Divider().frame(height: 14)
+
+        Button(action: moveDown) {
+          Image(systemName: "chevron.down")
+            .frame(width: 30, height: 28)
+        }
+        .buttonStyle(.borderless)
+        .disabled(selection == nil || selection == settings.customSpaceNames.count - 1)
+
         Spacer()
       }
       .contentShape(Rectangle())
@@ -88,6 +106,20 @@ struct SpacesPane: View {
     let newIndex = settings.customSpaceNames.count - 1
     selection = newIndex
     beginEdit(index: newIndex)
+  }
+
+  private func moveUp() {
+    guard let index = selection, index > 0 else { return }
+    if editingIndex != nil { commitEdit() }
+    settings.customSpaceNames.swapAt(index, index - 1)
+    selection = index - 1
+  }
+
+  private func moveDown() {
+    guard let index = selection, index < settings.customSpaceNames.count - 1 else { return }
+    if editingIndex != nil { commitEdit() }
+    settings.customSpaceNames.swapAt(index, index + 1)
+    selection = index + 1
   }
 
   private func removeSelected() {
