@@ -37,17 +37,18 @@ bootstrap: brewfile
 brewfile:
 	@brew bundle install
 
-build: ## Debug build + bundle .app
+build: ## Debug build (GUI + CLI) + bundle .app
 	swift build $(DEBUG_FLAGS) --product spacebar-gui
+	swift build $(DEBUG_FLAGS) --product spacebar
 	$(call bundle_app,.build/debug/spacebar-gui,Resources/Info.plist,$(APP_BUNDLE),"Spacebar Dev")
 
-release: ## Release build + bundle .app
+release: ## Release build (GUI + CLI) + bundle .app
 	swift build $(RELEASE_FLAGS) --product spacebar-gui
 	swift build $(RELEASE_FLAGS) --product spacebar
 	$(call bundle_app,.build/release/spacebar-gui,Resources/Info.plist,$(APP_BUNDLE),"Spacebar Dev")
 
-everything: ## Kill + build + open the .app
-everything: kill build
+everything: ## Kill + release build + install CLI + open the .app
+everything: kill install
 	open -n --stdout `tty` --stderr `tty` $(APP_BUNDLE)
 
 run: ## Build + run CLI (text output)
