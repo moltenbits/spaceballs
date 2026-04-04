@@ -483,6 +483,148 @@ public class SpaceManager {
     return nil
   }
 
+  // MARK: - Space Closing
+
+  /// Closes a Space by its index on the given display via the Dock's
+  /// accessibility interface. Opens Mission Control, moves the mouse into
+  /// the spaces bar to trigger the expanded view, holds Option to reveal
+  /// close buttons, then clicks the target space's close button.
+  public func closeSpace(
+    spaceIndex: Int, screenNumber: CGDirectDisplayID,
+    completion: ((Result<Void, SpaceCloseError>) -> Void)? = nil
+  ) {
+    guard AXIsProcessTrusted() else {
+      completion?(.failure(.accessibilityNotTrusted))
+      return
+    }
+
+    guard
+      let dockApp = NSRunningApplication.runningApplications(
+        withBundleIdentifier: "com.apple.dock"
+      ).first
+    else {
+      completion?(.failure(.dockNotRunning))
+      return
+    }
+
+    let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
+
+    CoreDockSendNotification("com.apple.expose.awake" as CFString)
+
+    DispatchQueue.global(qos: .userInteractive).async {
+      // Poll for Mission Control
+      let mcGroup: AXUIElement? = {
+        let deadline = DispatchTime.now() + .milliseconds(1000)
+        while DispatchTime.now() < deadline {
+          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") {
+            return mc
+          }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+        return nil
+      }()
+
+      guard let mcGroup else {
+        completion?(.failure(.missionControlNotFound))
+        return
+      }
+
+      Thread.sleep(forTimeInterval: 0.3)
+
+      // Navigate to the spaces list
+      guard let mcDisplay = Self.axChildMatchingDisplay(mcGroup, screenNumber: screenNumber) else {
+        Self.dismissMissionControl()
+        completion?(.failure(.spaceNotFound))
+        return
+      }
+
+      guard let mcSpaces = Self.axChildWithIdentifier(mcDisplay, identifier: "mc.spaces"),
+        let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
+      else {
+        Self.dismissMissionControl()
+        completion?(.failure(.spaceNotFound))
+        return
+      }
+
+      let children = Self.axChildren(mcSpacesList)
+      guard spaceIndex >= 0 && spaceIndex < children.count else {
+        Self.dismissMissionControl()
+        completion?(.failure(.spaceNotFound))
+        return
+      }
+
+      let spaceButton = children[spaceIndex]
+      let result = AXUIElementPerformAction(spaceButton, "AXRemoveDesktop" as CFString)
+
+      guard result == .success else {
+        Self.dismissMissionControl()
+        completion?(.failure(.removeActionFailed))
+        return
+      }
+
+      Thread.sleep(forTimeInterval: 0.3)
+      Self.dismissMissionControl()
+
+      completion?(.success(()))
+    }
+  }
+
+  /// Closes a Space by its ManagedSpaceID.
+  public func closeSpace(
+    id spaceID: UInt64,
+    completion: ((Result<Void, SpaceCloseError>) -> Void)? = nil
+  ) {
+    let allSpaces = getAllSpaces()
+
+    let desktopSpaces = allSpaces.filter { $0.type == .desktop }
+    guard desktopSpaces.count > 1 else {
+      completion?(.failure(.cannotCloseLastSpace))
+      return
+    }
+
+    guard let targetSpace = allSpaces.first(where: { $0.id == spaceID }) else {
+      completion?(.failure(.spaceNotFound))
+      return
+    }
+
+    let displaySpaces = allSpaces
+      .filter { $0.displayUUID == targetSpace.displayUUID && $0.type == .desktop }
+
+    guard let spaceIndex = displaySpaces.firstIndex(where: { $0.id == spaceID }) else {
+      completion?(.failure(.spaceNotFound))
+      return
+    }
+
+    guard let screenNumber = Self.displayIDForUUID(targetSpace.displayUUID) else {
+      completion?(.failure(.spaceNotFound))
+      return
+    }
+
+    closeSpace(spaceIndex: spaceIndex, screenNumber: screenNumber, completion: completion)
+  }
+
+  /// Synchronous version for CLI usage.
+  public func closeSpaceSync(id spaceID: UInt64) throws {
+    guard Self.ensureAccessibilityTrusted() else {
+      throw SpaceCloseError.accessibilityNotTrusted
+    }
+
+    let semaphore = DispatchSemaphore(value: 0)
+    var result: Result<Void, SpaceCloseError>?
+
+    closeSpace(id: spaceID) { r in
+      result = r
+      semaphore.signal()
+    }
+
+    semaphore.wait()
+
+    if case .failure(let error) = result {
+      throw error
+    }
+  }
+
+
   // MARK: - Space Switching (by index)
 
   /// Switches to the specified Space via the Dock's accessibility interface.

@@ -8,7 +8,7 @@ struct SpacebarCommand: ParsableCommand {
     version: SpacebarVersion.version,
     subcommands: [
       ListCommand.self, ActivateCommand.self, RenameCommand.self, SwitchCommand.self,
-      CreateCommand.self, SettingsCommand.self,
+      CreateCommand.self, CloseSpaceCommand.self, SettingsCommand.self,
     ]
   )
 }

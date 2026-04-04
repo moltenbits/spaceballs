@@ -664,6 +664,14 @@ public final class SwitcherViewModel: ObservableObject {
     sortOverlayGeneration += 1
   }
 
+  // MARK: - Close Space
+
+  /// Returns the space ID for the currently selected item (header or window row).
+  public var selectedSpaceForClose: UInt64? {
+    let map = windowSpaceMap()
+    return spaceID(for: selectedItem ?? .settings, using: map)
+  }
+
   // MARK: - Create Default Spaces
 
   /// Creates any spaces from `defaultNames` that don't already exist,

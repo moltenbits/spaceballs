@@ -455,6 +455,46 @@ extension AppDelegate: KeyInterceptorDelegate {
     }
   }
 
+  func keyInterceptorCloseSpace() {
+    guard let spaceID = viewModel.selectedSpaceForClose else { return }
+
+    // Don't close the last space
+    let desktopCount = viewModel.spaceManager.getAllSpaces().filter({ $0.type == .desktop }).count
+    guard desktopCount > 1 else {
+      viewModel.sortOverlayText = "Cannot close the last space"
+      viewModel.sortOverlayGeneration += 1
+      return
+    }
+
+    let spaceName =
+      viewModel.filteredSections.first(where: { $0.id == spaceID })?.label ?? "Space \(spaceID)"
+
+    keyInterceptor.setSuppressConfirm(true)
+    viewModel.sortOverlayText = "Closing \(spaceName)..."
+    viewModel.sortOverlayGeneration += 1
+
+    viewModel.spaceManager.closeSpace(id: spaceID) { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .success:
+        self.viewModel.sortOverlayText = "Closed \(spaceName)"
+      case .failure(let error):
+        self.viewModel.sortOverlayText = error.localizedDescription
+      }
+      self.viewModel.sortOverlayGeneration += 1
+      self.viewModel.refresh()
+      self.viewModel.resetSelection()
+
+      DispatchQueue.main.async {
+        let screens = self.targetScreens()
+        for (i, screen) in screens.enumerated() where i < self.panels.count {
+          _ = self.resizePanelToFit(self.panels[i], on: screen)
+          self.centerPanel(self.panels[i], on: screen)
+        }
+      }
+    }
+  }
+
   func keyInterceptorCreateDefaultSpaces() {
     let names = appSettings.customSpaceNames
     guard !names.isEmpty else {
@@ -478,6 +518,7 @@ extension AppDelegate: KeyInterceptorDelegate {
       return
     }
 
+    keyInterceptor.setSuppressConfirm(true)
     viewModel.sortOverlayText = "Creating \(missingNames.count) space\(missingNames.count == 1 ? "" : "s")..."
     viewModel.sortOverlayGeneration += 1
 

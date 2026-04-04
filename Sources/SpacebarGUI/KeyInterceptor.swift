@@ -20,6 +20,7 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorCancelRename()
   func keyInterceptorCycleSortOrder()
   func keyInterceptorCreateDefaultSpaces()
+  func keyInterceptorCloseSpace()
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -44,6 +45,7 @@ final class KeyInterceptor {
   private(set) var panelVisible = false
   private(set) var renameMode = false
   private(set) var recordingMode = false
+  var suppressConfirm = false
   var keyBindings = KeyBindings()
 
   func setPanelVisible(_ visible: Bool) {
@@ -52,6 +54,10 @@ final class KeyInterceptor {
 
   func setRenameMode(_ active: Bool) {
     renameMode = active
+  }
+
+  func setSuppressConfirm(_ suppress: Bool) {
+    suppressConfirm = suppress
   }
 
   func setRecordingMode(_ active: Bool) {
@@ -284,8 +290,14 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Close window
+    // Close window (Cmd+W) or close space (Cmd+Shift+W)
     if cmdHeld && keyCode == Int64(bindings.closeWindow) && interceptor.panelVisible {
+      if flags.contains(.maskShift) {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorCloseSpace()
+        }
+        return nil  // consume
+      }
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorCloseWindow()
       }
@@ -308,8 +320,8 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Cmd+D (keyCode 2) — create default spaces
-    if cmdHeld && keyCode == 2 && interceptor.panelVisible {
+    // Create default spaces
+    if cmdHeld && keyCode == Int64(bindings.createDefaultSpaces) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorCreateDefaultSpaces()
       }
@@ -355,7 +367,12 @@ private func keyInterceptorCallback(
     }
 
     // Cmd released — if panel is visible, confirm selection
+    // (suppressed during space create/close operations)
     if interceptor.panelVisible && !flags.contains(.maskCommand) {
+      if interceptor.suppressConfirm {
+        interceptor.suppressConfirm = false
+        return Unmanaged.passUnretained(event)
+      }
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorConfirm()
       }

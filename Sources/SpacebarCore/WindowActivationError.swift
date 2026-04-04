@@ -40,6 +40,34 @@ public enum SpaceCreateError: Error, Equatable, LocalizedError {
   }
 }
 
+public enum SpaceCloseError: Error, Equatable, LocalizedError {
+  case accessibilityNotTrusted
+  case dockNotRunning
+  case missionControlNotFound
+  case spaceNotFound
+  case removeActionFailed
+  case cannotCloseLastSpace
+
+  public var errorDescription: String? {
+    switch self {
+    case .accessibilityNotTrusted:
+      return
+        "Accessibility permission required. Grant access in System Settings > Privacy & Security > Accessibility."
+    case .dockNotRunning:
+      return "The Dock process is not running."
+    case .missionControlNotFound:
+      return "Mission Control did not appear. Ensure it is not disabled."
+    case .spaceNotFound:
+      return "Could not find the target space in Mission Control."
+    case .removeActionFailed:
+      return
+        "Failed to remove the space. The AXRemoveDesktop action was not accepted."
+    case .cannotCloseLastSpace:
+      return "Cannot close the last remaining space."
+    }
+  }
+}
+
 public enum SpaceSwitchError: Error, Equatable, LocalizedError {
   case spaceNotFound(spaceID: UInt64)
   case displayNotFound(displayUUID: String)
