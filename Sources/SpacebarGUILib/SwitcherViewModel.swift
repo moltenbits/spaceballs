@@ -594,12 +594,16 @@ public final class SwitcherViewModel: ObservableObject {
 
     let currentSpace = spaceID(for: current, using: map)
 
-    // Scan forward (with wrap) for the first item in a different section
+    // Scan forward (with wrap) for the first item in a different section or .settings
     for offset in 1..<items.count {
       let pos = (currentPos + offset) % items.count
       let item = items[pos]
+      if case .settings = item {
+        selectedItem = item
+        return
+      }
       let itemSpace = spaceID(for: item, using: map)
-      guard itemSpace != nil else { continue }  // skip .settings
+      guard itemSpace != nil else { continue }
       if itemSpace != currentSpace {
         selectedItem = item
         return
@@ -613,21 +617,44 @@ public final class SwitcherViewModel: ObservableObject {
     let map = windowSpaceMap()
 
     guard let current = selectedItem, let currentPos = items.firstIndex(of: current) else {
-      selectedItem = items.last(where: { spaceID(for: $0, using: map) != nil })
+      selectedItem = items.last
+      return
+    }
+
+    // If on .settings, jump to the first item of the last section
+    if case .settings = current {
+      // Find the last section's first item
+      var lastSpace: UInt64?
+      var lastPos: Int?
+      for i in stride(from: items.count - 1, through: 0, by: -1) {
+        let item = items[i]
+        if let space = spaceID(for: item, using: map) {
+          if lastSpace == nil { lastSpace = space }
+          if space == lastSpace { lastPos = i } else { break }
+        }
+      }
+      if let pos = lastPos { selectedItem = items[pos] }
       return
     }
 
     let currentSpace = spaceID(for: current, using: map)
 
-    // Scan backward (with wrap) for the first item in a different section,
-    // then continue to find the FIRST item of that section.
+    // Scan backward for the first item in a different section or .settings
     var targetSpace: UInt64?
     var targetPos: Int?
     for offset in 1..<items.count {
       let pos = (currentPos - offset + items.count) % items.count
       let item = items[pos]
+      if case .settings = item {
+        if targetSpace != nil {
+          // Already found a previous space — stop here
+          break
+        }
+        selectedItem = item
+        return
+      }
       let itemSpace = spaceID(for: item, using: map)
-      guard let space = itemSpace else { continue }  // skip .settings
+      guard let space = itemSpace else { continue }
       if space != currentSpace {
         if targetSpace == nil {
           targetSpace = space
