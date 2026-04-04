@@ -6,6 +6,8 @@ public protocol SpaceNameStoring {
   func customName(forSpaceUUID uuid: String) -> String?
   func setCustomName(_ name: String?, forSpaceUUID uuid: String)
   func allCustomNames() -> [String: String]
+  func pruneStaleNames(currentSpaces: [SpaceInfo])
+  func resolveSpaceID(_ input: String, spaces: [SpaceInfo]) -> UInt64?
 }
 
 // MARK: - UserDefaults Implementation
@@ -35,6 +37,36 @@ public final class SpaceNameStore: SpaceNameStoring {
 
   public func allCustomNames() -> [String: String] {
     defaults.dictionary(forKey: Self.key) as? [String: String] ?? [:]
+  }
+
+  /// Removes name mappings for space UUIDs that no longer exist.
+  public func pruneStaleNames(currentSpaces: [SpaceInfo]) {
+    let currentUUIDs = Set(currentSpaces.map(\.uuid))
+    for (uuid, _) in allCustomNames() where !currentUUIDs.contains(uuid) {
+      setCustomName(nil, forSpaceUUID: uuid)
+    }
+  }
+
+  /// Resolves a space name or numeric ID string to a space ID.
+  /// Matches against custom names and default "Desktop N" labels (case-insensitive).
+  public func resolveSpaceID(_ input: String, spaces: [SpaceInfo]) -> UInt64? {
+    if let id = UInt64(input) {
+      return id
+    }
+
+    var desktopOrdinal = 0
+    for space in spaces where space.type == .desktop {
+      desktopOrdinal += 1
+      let defaultLabel = "Desktop \(desktopOrdinal)"
+      let label = customName(forSpaceUUID: space.uuid) ?? defaultLabel
+
+      if label.localizedCaseInsensitiveCompare(input) == .orderedSame
+        || defaultLabel.localizedCaseInsensitiveCompare(input) == .orderedSame
+      {
+        return space.id
+      }
+    }
+    return nil
   }
 
   // MARK: - Migration

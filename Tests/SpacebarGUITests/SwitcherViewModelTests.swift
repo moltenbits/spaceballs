@@ -26,6 +26,22 @@ final class MockSpaceNameStore: SpaceNameStoring {
     names
   }
 
+  func pruneStaleNames(currentSpaces: [SpaceInfo]) {
+    let currentUUIDs = Set(currentSpaces.map(\.uuid))
+    names = names.filter { currentUUIDs.contains($0.key) }
+  }
+
+  func resolveSpaceID(_ input: String, spaces: [SpaceInfo]) -> UInt64? {
+    if let id = UInt64(input) { return id }
+    var ordinal = 0
+    for space in spaces where space.type == .desktop {
+      ordinal += 1
+      let label = customName(forSpaceUUID: space.uuid) ?? "Desktop \(ordinal)"
+      if label.localizedCaseInsensitiveCompare(input) == .orderedSame { return space.id }
+    }
+    return nil
+  }
+
 }
 
 // MARK: - Mock Data Source

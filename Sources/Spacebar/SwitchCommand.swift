@@ -16,40 +16,16 @@ struct SwitchCommand: ParsableCommand {
 
   func run() throws {
     let manager = SpaceManager()
-    let spaceID = try resolveSpaceID(space, manager: manager)
-    try manager.switchToSpace(id: spaceID)
-
-    // switchToSpace dispatches async work via Dock AX:
-    // ~1s poll for Mission Control + 0.3s animation wait + button press.
-    Thread.sleep(forTimeInterval: 2.0)
-  }
-
-  private func resolveSpaceID(_ input: String, manager: SpaceManager) throws -> UInt64 {
-    // Try as numeric ID first
-    if let id = UInt64(input) {
-      return id
-    }
-
-    // Otherwise match by name (custom name or default "Desktop N" label)
-    let spaces = manager.getAllSpaces()
     let store = SpaceNameStore()
+    let spaces = manager.getAllSpaces()
 
-    var desktopOrdinal = 0
-    for space in spaces where space.type == .desktop {
-      desktopOrdinal += 1
-      let defaultLabel = "Desktop \(desktopOrdinal)"
-      let customName = store.customName(forSpaceUUID: space.uuid)
-      let label = customName ?? defaultLabel
-
-      if label.localizedCaseInsensitiveCompare(input) == .orderedSame
-        || defaultLabel.localizedCaseInsensitiveCompare(input) == .orderedSame
-      {
-        return space.id
-      }
+    guard let spaceID = store.resolveSpaceID(space, spaces: spaces) else {
+      throw ValidationError(
+        "No space found matching \"\(space)\". Use 'spacebar list' to see available spaces."
+      )
     }
 
-    throw ValidationError(
-      "No space found matching \"\(input)\". Use 'spacebar list' to see available spaces."
-    )
+    try manager.switchToSpace(id: spaceID)
+    Thread.sleep(forTimeInterval: 2.0)
   }
 }

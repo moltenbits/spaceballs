@@ -1,7 +1,6 @@
 import ArgumentParser
 import Foundation
 import SpacebarCore
-import SpacebarGUILib
 
 struct CloseSpaceCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -18,45 +17,16 @@ struct CloseSpaceCommand: ParsableCommand {
   func run() throws {
     let manager = SpaceManager()
     let store = SpaceNameStore()
-    let spaceID = try resolveSpaceID(space, manager: manager)
-
-    // Capture UUID before closing so we can remove the name mapping
-    let spaceUUID = manager.getAllSpaces().first(where: { $0.id == spaceID })?.uuid
-
-    try manager.closeSpaceSync(id: spaceID)
-    Thread.sleep(forTimeInterval: 1.0)
-
-    if let uuid = spaceUUID {
-      store.setCustomName(nil, forSpaceUUID: uuid)
-    }
-
-    print("Closed space \(space)")
-  }
-
-  private func resolveSpaceID(_ input: String, manager: SpaceManager) throws -> UInt64 {
-    if let id = UInt64(input) {
-      return id
-    }
-
     let spaces = manager.getAllSpaces()
-    let store = SpaceNameStore()
 
-    var desktopOrdinal = 0
-    for space in spaces where space.type == .desktop {
-      desktopOrdinal += 1
-      let defaultLabel = "Desktop \(desktopOrdinal)"
-      let customName = store.customName(forSpaceUUID: space.uuid)
-      let label = customName ?? defaultLabel
-
-      if label.localizedCaseInsensitiveCompare(input) == .orderedSame
-        || defaultLabel.localizedCaseInsensitiveCompare(input) == .orderedSame
-      {
-        return space.id
-      }
+    guard let spaceID = store.resolveSpaceID(space, spaces: spaces) else {
+      throw ValidationError(
+        "No space found matching \"\(space)\". Use 'spacebar list' to see available spaces."
+      )
     }
 
-    throw ValidationError(
-      "No space found matching \"\(input)\". Use 'spacebar list' to see available spaces."
-    )
+    try manager.closeSpaceAndRemoveNameSync(id: spaceID, spaceNameStore: store)
+    Thread.sleep(forTimeInterval: 1.0)
+    print("Closed space \(space)")
   }
 }

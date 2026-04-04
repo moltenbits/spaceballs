@@ -329,6 +329,115 @@ public class SpaceManager {
     switchToSpace(spaceIndex: spaceIndex, screenNumber: screenNumber)
   }
 
+  // MARK: - High-Level Space Operations
+
+  /// Creates missing spaces from a list of default names, pruning stale
+  /// name mappings first. Returns the number of spaces created.
+  public func createDefaultSpaces(
+    defaultNames: [String], spaceNameStore: SpaceNameStoring,
+    completion: @escaping (Int) -> Void
+  ) {
+    spaceNameStore.pruneStaleNames(currentSpaces: getAllSpaces())
+
+    let existingNames = Set(spaceNameStore.allCustomNames().values)
+    let missingNames = defaultNames.filter { !existingNames.contains($0) }
+
+    guard !missingNames.isEmpty else {
+      completion(0)
+      return
+    }
+
+    createSpace(count: missingNames.count) { [weak self] result in
+      guard let self else { completion(0); return }
+      let created: Int
+      switch result {
+      case .success(let n): created = n
+      case .failure: completion(0); return
+      }
+
+      // Wait for macOS to settle, then assign names to new unnamed spaces
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        let allSpaces = self.getAllSpaces().filter { $0.type == .desktop }
+        let alreadyNamed = Set(spaceNameStore.allCustomNames().keys)
+        let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
+
+        for (name, space) in zip(missingNames, unnamedSpaces.suffix(created)) {
+          spaceNameStore.setCustomName(name, forSpaceUUID: space.uuid)
+        }
+
+        completion(created)
+      }
+    }
+  }
+
+  /// Synchronous version for CLI usage.
+  public func createDefaultSpacesSync(
+    defaultNames: [String], spaceNameStore: SpaceNameStoring
+  ) throws -> Int {
+    guard Self.ensureAccessibilityTrusted() else {
+      throw SpaceCreateError.accessibilityNotTrusted
+    }
+
+    spaceNameStore.pruneStaleNames(currentSpaces: getAllSpaces())
+
+    let existingNames = Set(spaceNameStore.allCustomNames().values)
+    let missingNames = defaultNames.filter { !existingNames.contains($0) }
+    guard !missingNames.isEmpty else { return 0 }
+
+    try createSpaceSync(count: missingNames.count)
+    Thread.sleep(forTimeInterval: 1.0)
+
+    let allSpaces = getAllSpaces().filter { $0.type == .desktop }
+    let alreadyNamed = Set(spaceNameStore.allCustomNames().keys)
+    let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
+
+    for (name, space) in zip(missingNames, unnamedSpaces.suffix(missingNames.count)) {
+      spaceNameStore.setCustomName(name, forSpaceUUID: space.uuid)
+    }
+
+    return missingNames.count
+  }
+
+  /// Creates a single space and assigns a name to it.
+  public func createNamedSpaceSync(name: String, spaceNameStore: SpaceNameStoring) throws {
+    try createSpaceSync(count: 1)
+    Thread.sleep(forTimeInterval: 1.0)
+
+    let allSpaces = getAllSpaces().filter { $0.type == .desktop }
+    let alreadyNamed = Set(spaceNameStore.allCustomNames().keys)
+    let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
+
+    if let newSpace = unnamedSpaces.last {
+      spaceNameStore.setCustomName(name, forSpaceUUID: newSpace.uuid)
+    }
+  }
+
+  /// Closes a space by ID and removes its name mapping.
+  public func closeSpaceAndRemoveName(
+    id spaceID: UInt64, spaceNameStore: SpaceNameStoring,
+    completion: @escaping (Result<Void, SpaceCloseError>) -> Void
+  ) {
+    let spaceUUID = getAllSpaces().first(where: { $0.id == spaceID })?.uuid
+
+    closeSpace(id: spaceID) { result in
+      if case .success = result, let uuid = spaceUUID {
+        spaceNameStore.setCustomName(nil, forSpaceUUID: uuid)
+      }
+      completion(result)
+    }
+  }
+
+  /// Synchronous version for CLI usage.
+  public func closeSpaceAndRemoveNameSync(
+    id spaceID: UInt64, spaceNameStore: SpaceNameStoring
+  ) throws {
+    let spaceUUID = getAllSpaces().first(where: { $0.id == spaceID })?.uuid
+    try closeSpaceSync(id: spaceID)
+    if let uuid = spaceUUID {
+      spaceNameStore.setCustomName(nil, forSpaceUUID: uuid)
+    }
+  }
+
   // MARK: - Space Creation
 
   /// Creates a new desktop Space on the focused display via the Dock's

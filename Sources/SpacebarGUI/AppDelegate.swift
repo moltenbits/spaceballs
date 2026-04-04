@@ -466,21 +466,19 @@ extension AppDelegate: KeyInterceptorDelegate {
       return
     }
 
-    let section = viewModel.filteredSections.first(where: { $0.id == spaceID })
-    let spaceName = section?.label ?? "Space \(spaceID)"
-    let spaceUUID = section?.spaceUUID
+    let spaceName =
+      viewModel.filteredSections.first(where: { $0.id == spaceID })?.label ?? "Space \(spaceID)"
 
     keyInterceptor.setSuppressConfirm(true)
     viewModel.sortOverlayText = "Closing \(spaceName)..."
     viewModel.sortOverlayGeneration += 1
 
-    viewModel.spaceManager.closeSpace(id: spaceID) { [weak self] result in
+    viewModel.spaceManager.closeSpaceAndRemoveName(
+      id: spaceID, spaceNameStore: viewModel.spaceNameStore
+    ) { [weak self] result in
       guard let self else { return }
       switch result {
       case .success:
-        if let uuid = spaceUUID {
-          self.viewModel.spaceNameStore.setCustomName(nil, forSpaceUUID: uuid)
-        }
         self.viewModel.sortOverlayText = "Closed \(spaceName)"
       case .failure(let error):
         self.viewModel.sortOverlayText = error.localizedDescription
@@ -507,26 +505,24 @@ extension AppDelegate: KeyInterceptorDelegate {
       return
     }
 
-    // Prune stale name mappings for deleted spaces
-    let currentUUIDs = Set(viewModel.spaceManager.getAllSpaces().map(\.uuid))
-    for (uuid, _) in viewModel.spaceNameStore.allCustomNames() where !currentUUIDs.contains(uuid) {
-      viewModel.spaceNameStore.setCustomName(nil, forSpaceUUID: uuid)
-    }
-
+    // Check how many are missing (prunes stale names internally)
+    viewModel.spaceNameStore.pruneStaleNames(currentSpaces: viewModel.spaceManager.getAllSpaces())
     let existingNames = Set(viewModel.spaceNameStore.allCustomNames().values)
-    let missingNames = names.filter { !existingNames.contains($0) }
+    let missingCount = names.filter { !existingNames.contains($0) }.count
 
-    guard !missingNames.isEmpty else {
+    guard missingCount > 0 else {
       viewModel.sortOverlayText = "All default spaces already exist"
       viewModel.sortOverlayGeneration += 1
       return
     }
 
     keyInterceptor.setSuppressConfirm(true)
-    viewModel.sortOverlayText = "Creating \(missingNames.count) space\(missingNames.count == 1 ? "" : "s")..."
+    viewModel.sortOverlayText = "Creating \(missingCount) space\(missingCount == 1 ? "" : "s")..."
     viewModel.sortOverlayGeneration += 1
 
-    viewModel.createDefaultSpaces(defaultNames: names) { [weak self] created in
+    viewModel.spaceManager.createDefaultSpaces(
+      defaultNames: names, spaceNameStore: viewModel.spaceNameStore
+    ) { [weak self] created in
       guard let self else { return }
       if created > 0 {
         self.viewModel.sortOverlayText = "Created \(created) space\(created == 1 ? "" : "s")"
