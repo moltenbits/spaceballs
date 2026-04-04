@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>Spacebar</string>
+	<string>Spaceballs</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.moltenbits.spacebar</string>
+	<string>com.moltenbits.spaceballs</string>
 	<key>CFBundleExecutable</key>
-	<string>spacebar</string>
+	<string>spaceballs</string>
 	<key>CFBundleVersion</key>
 	<string>1.0</string>
 	<key>CFBundleShortVersionString</key>

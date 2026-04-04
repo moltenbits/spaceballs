@@ -4,19 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Spacebar is a macOS window switcher app inspired by [Contexts](https://contexts.co) — a fast, keyboard-driven way to navigate between windows across Spaces. It provides per-window (not per-app) listing, Space-aware organization with MRU ordering, cross-space window activation, and a configurable floating panel UI.
+Spaceballs is a macOS window switcher app inspired by [Contexts](https://contexts.co) — a fast, keyboard-driven way to navigate between windows across Spaces. It provides per-window (not per-app) listing, Space-aware organization with MRU ordering, cross-space window activation, and a configurable floating panel UI.
 
 ## Build & Run Commands
 
 All commands use `make`. The build requires `--disable-sandbox` for CGS access.
 
 ```bash
-make build        # Debug build + bundle .build/Spacebar.app
-make release      # Release build + bundle .build/Spacebar.app
+make build        # Debug build + bundle .build/Spaceballs.app
+make release      # Release build + bundle .build/Spaceballs.app
 make everything   # Kill + build + open the .app
 make run          # Build + run CLI (text output)
 make run.json     # Build + run CLI (JSON output)
-make kill         # Kill running Spacebar
+make kill         # Kill running Spaceballs
 make test         # Run tests
 make format       # Format with swift-format
 make lint         # Lint with swift-format
@@ -34,16 +34,16 @@ Four targets in `Package.swift`:
 
 | Target | Type | Purpose |
 |---|---|---|
-| `SpacebarCore` | Library | Space/window enumeration, activation, private API bindings |
-| `SpacebarGUILib` | Library | View model, settings store, space name store (testable) |
-| `spacebar` | Executable | CLI tool (ArgumentParser) |
-| `spacebar-gui` | Executable | GUI app (NSApplication accessory) |
+| `SpaceballsCore` | Library | Space/window enumeration, activation, private API bindings |
+| `SpaceballsGUILib` | Library | View model, settings store, space name store (testable) |
+| `spaceballs` | Executable | CLI tool (ArgumentParser) |
+| `spaceballs-gui` | Executable | GUI app (NSApplication accessory) |
 
 ### Source Layout
 
 ```
 Sources/
-├── SpacebarCore/          # Reusable library — no UI dependency
+├── SpaceballsCore/          # Reusable library — no UI dependency
 │   ├── PrivateCGS.swift         # CGS type definitions & @_silgen_name bindings
 │   ├── PrivateSkyLight.swift    # SkyLight process/window activation APIs
 │   ├── PrivateAX.swift          # Accessibility framework bindings
@@ -51,11 +51,11 @@ Sources/
 │   ├── SystemDataSource.swift   # Protocol for CGS data abstraction (testable)
 │   ├── CGSDataSource.swift      # Real CGS implementation
 │   └── WindowActivationError.swift
-├── SpacebarGUILib/        # Testable view model layer
+├── SpaceballsGUILib/        # Testable view model layer
 │   ├── SwitcherViewModel.swift  # ObservableObject: sections, selection, MRU, search
 │   ├── AppSettings.swift        # UserDefaults-backed settings (color, text, opacity)
 │   └── SpaceNameStore.swift     # Custom space name persistence (UUID → name)
-├── SpacebarGUI/           # GUI app — AppKit + SwiftUI
+├── SpaceballsGUI/           # GUI app — AppKit + SwiftUI
 │   ├── main.swift               # Entry point: NSApp.accessory + AppDelegate
 │   ├── AppDelegate.swift        # Panel lifecycle, multi-display, key interception
 │   ├── KeyInterceptor.swift     # CGEvent tap: Cmd+Tab/`/W/Q/,/Esc
@@ -68,8 +68,8 @@ Sources/
 │       ├── GeneralPane.swift    # Launch at login (SMAppService)
 │       ├── AppearancePane.swift # Color scheme, opacity, text size, display
 │       └── AboutPane.swift      # Version/build info
-└── Spacebar/              # CLI tool
-    ├── SpacebarCommand.swift    # @main ParsableCommand
+└── Spaceballs/              # CLI tool
+    ├── SpaceballsCommand.swift    # @main ParsableCommand
     ├── ListCommand.swift        # list subcommand (default)
     ├── ActivateCommand.swift    # activate <windowID> subcommand
     ├── Output.swift             # Text/JSON formatting
@@ -128,7 +128,7 @@ macOS does not store human-readable names for Spaces. The "Desktop 1", "Desktop 
 - `CGSSpaceCopyName` / `SLSSpaceCopyName` exist but return the space's UUID, not a display name. Confirmed by yabai's maintainer ([issue #119](https://github.com/koekeishiya/yabai/issues/119)).
 - No public Cocoa API (`NSWorkspace`, `NSScreen`) or AppleScript support exists for space names.
 
-**Spacebar's approach:** Store custom names locally in UserDefaults, keyed by space UUID. Users can rename spaces in Settings. Default labels use ordinal numbering ("Desktop 1", "Desktop 2").
+**Spaceballs's approach:** Store custom names locally in UserDefaults, keyed by space UUID. Users can rename spaces in Settings. Default labels use ordinal numbering ("Desktop 1", "Desktop 2").
 
 ### Moving Windows Between Spaces Requires SIP Disabled
 
@@ -140,7 +140,7 @@ Private CGS/SkyLight APIs exist for moving windows between spaces, but Apple has
 | 14.5+ (Sonoma) | No — `connection_holds_rights_on_window` checks |
 | 15.0+ (Sequoia) | No — workarounds also blocked |
 
-**Spacebar's approach:** Treat the app as read-only for space/window topology. Focus on enumeration and focus-switching only.
+**Spaceballs's approach:** Treat the app as read-only for space/window topology. Focus on enumeration and focus-switching only.
 
 ### Opening New Windows on a Specific Space
 
