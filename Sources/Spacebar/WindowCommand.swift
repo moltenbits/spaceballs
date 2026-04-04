@@ -2,9 +2,9 @@ import ArgumentParser
 import Cocoa
 import SpacebarCore
 
-struct ActivateCommand: ParsableCommand {
+struct WindowCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "activate",
+    commandName: "window",
     abstract: "Activate (bring to front) a window by its ID"
   )
 
