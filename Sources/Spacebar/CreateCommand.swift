@@ -12,15 +12,13 @@ struct CreateCommand: ParsableCommand {
   @Flag(name: .long, help: "Create missing spaces from your default space names list")
   var defaults = false
 
-  @Argument(help: "Number of spaces to create (ignored with --defaults)")
-  var count: Int?
+  @Argument(
+    help: "Number of spaces to create, or a name for the new space (ignored with --defaults)")
+  var argument: String?
 
   func validate() throws {
-    if !defaults {
-      let c = count ?? 1
-      guard c >= 1 else {
-        throw ValidationError("Count must be at least 1.")
-      }
+    if !defaults, let arg = argument, let n = Int(arg), n < 1 {
+      throw ValidationError("Count must be at least 1.")
     }
   }
 
@@ -29,11 +27,33 @@ struct CreateCommand: ParsableCommand {
 
     if defaults {
       try createDefaults(manager: manager)
+    } else if let arg = argument, Int(arg) == nil {
+      // It's a name, not a number
+      try createNamed(name: arg, manager: manager)
     } else {
-      let c = count ?? 1
-      try manager.createSpaceSync(count: c)
+      let count = argument.flatMap(Int.init) ?? 1
+      try manager.createSpaceSync(count: count)
       Thread.sleep(forTimeInterval: 1.0)
-      print("Created \(c) space\(c == 1 ? "" : "s")")
+      print("Created \(count) space\(count == 1 ? "" : "s")")
+    }
+  }
+
+  private func createNamed(name: String, manager: SpaceManager) throws {
+    let store = SpaceNameStore()
+
+    try manager.createSpaceSync(count: 1)
+    Thread.sleep(forTimeInterval: 1.0)
+
+    // Find the newly created unnamed space and assign the name
+    let allSpaces = manager.getAllSpaces().filter { $0.type == .desktop }
+    let alreadyNamed = Set(store.allCustomNames().keys)
+    let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
+
+    if let newSpace = unnamedSpaces.last {
+      store.setCustomName(name, forSpaceUUID: newSpace.uuid)
+      print("Created space \"\(name)\"")
+    } else {
+      print("Created space but could not assign name \"\(name)\"")
     }
   }
 
@@ -61,7 +81,9 @@ struct CreateCommand: ParsableCommand {
       return
     }
 
-    print("Creating \(missingNames.count) space\(missingNames.count == 1 ? "" : "s"): \(missingNames.joined(separator: ", "))")
+    print(
+      "Creating \(missingNames.count) space\(missingNames.count == 1 ? "" : "s"): \(missingNames.joined(separator: ", "))"
+    )
 
     try manager.createSpaceSync(count: missingNames.count)
     Thread.sleep(forTimeInterval: 1.0)
