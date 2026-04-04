@@ -44,23 +44,38 @@ Once running, the app lives in the background (no Dock icon). Keyboard shortcuts
 |---|---|
 | Cmd+Tab | Show panel / move selection down |
 | Cmd+\` | Move selection up |
+| ↓ / ↑ | Jump to next / previous space |
+| Cmd+↓ / Cmd+↑ | Jump to next / previous space (with Cmd held) |
+| Cmd+← / Cmd+→ | Cycle between displays |
 | Release Cmd | Activate selected window or space |
 | Escape | Dismiss panel |
 | Cmd+W | Close selected window |
+| Cmd+Shift+W | Close selected space |
 | Cmd+Q | Quit selected app |
-| Cmd+N | Rename selected space (Enter to save, Escape to cancel) |
+| Cmd+R | Rename selected space (Enter to save, Escape to cancel) |
+| Cmd+N | Create a new space |
+| Cmd+D | Create all missing default spaces |
+| Cmd+S | Cycle sort order (MRU / Ordinal / Name) |
 | Cmd+, | Open Settings |
 | Type | Filter windows by app name or title |
 
 ### CLI
 
 ```bash
-spacebar                       # List all Spaces and windows (text output)
-spacebar list --json           # JSON output
-spacebar window <window-id>    # Activate a window by ID (auto-launches .app bundle)
-spacebar switch <space>        # Switch to a Space by ID or name
-spacebar rename <space-id> [name]  # Set or clear a custom Space name
-spacebar --version             # Version
+spacebar                          # Show help
+spacebar list                     # List all Spaces and windows (text output)
+spacebar list --json              # JSON output
+spacebar window <window-id>       # Activate a window by ID
+spacebar switch <space>           # Switch to a Space by ID or name
+spacebar create                   # Create a new unnamed space
+spacebar create "Work"            # Create a space and name it
+spacebar create 3                 # Create 3 unnamed spaces
+spacebar create --defaults        # Create all missing default spaces
+spacebar close <space>            # Close a Space by ID or name
+spacebar rename <space-id> [name] # Set or clear a custom Space name
+spacebar settings export [path]   # Export settings to JSON (stdout if no path)
+spacebar settings import <path>   # Import settings from JSON
+spacebar --version                # Version
 ```
 
 The `switch` command accepts a numeric Space ID, a custom name, or a default label like "Desktop 2" (case-insensitive):

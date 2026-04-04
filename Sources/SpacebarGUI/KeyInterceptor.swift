@@ -21,6 +21,7 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorCycleSortOrder()
   func keyInterceptorCreateDefaultSpaces()
   func keyInterceptorCloseSpace()
+  func keyInterceptorCreateSpace()
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -316,6 +317,14 @@ private func keyInterceptorCallback(
     if cmdHeld && keyCode == Int64(bindings.cycleSortOrder) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorCycleSortOrder()
+      }
+      return nil  // consume
+    }
+
+    // Create new space
+    if cmdHeld && keyCode == Int64(bindings.createSpace) && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorCreateSpace()
       }
       return nil  // consume
     }

@@ -497,6 +497,33 @@ extension AppDelegate: KeyInterceptorDelegate {
     }
   }
 
+  func keyInterceptorCreateSpace() {
+    keyInterceptor.setSuppressConfirm(true)
+    viewModel.sortOverlayText = "Creating space..."
+    viewModel.sortOverlayGeneration += 1
+
+    viewModel.spaceManager.createSpace(count: 1) { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .success:
+        self.viewModel.sortOverlayText = "Created new space"
+      case .failure(let error):
+        self.viewModel.sortOverlayText = error.localizedDescription
+      }
+      self.viewModel.sortOverlayGeneration += 1
+      self.viewModel.refresh()
+      self.viewModel.resetSelection()
+
+      DispatchQueue.main.async {
+        let screens = self.targetScreens()
+        for (i, screen) in screens.enumerated() where i < self.panels.count {
+          _ = self.resizePanelToFit(self.panels[i], on: screen)
+          self.centerPanel(self.panels[i], on: screen)
+        }
+      }
+    }
+  }
+
   func keyInterceptorCreateDefaultSpaces() {
     let names = appSettings.customSpaceNames
     guard !names.isEmpty else {
