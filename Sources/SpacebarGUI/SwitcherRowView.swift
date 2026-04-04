@@ -8,6 +8,7 @@ struct SwitcherRowView: View {
   var textSize: CGFloat = 13
   var iconSize: CGFloat = 20
   var spaceLabel: String? = nil
+  var spaceBadge: String? = nil
   var spaceLabelWidth: CGFloat = 80
   var isRenaming: Bool = false
   var renameText: Binding<String> = .constant("")
@@ -78,10 +79,17 @@ struct SwitcherRowView: View {
         .focused($isTextFieldFocused)
         .onAppear { isTextFieldFocused = true }
     } else if let label = spaceLabel {
-      Text(label)
-        .font(.system(size: headerSize, weight: .semibold))
-        .foregroundStyle(isSelected ? .primary : .secondary)
-        .lineLimit(1)
+      HStack(spacing: 4) {
+        Text(label)
+          .font(.system(size: headerSize, weight: .semibold))
+          .foregroundStyle(isSelected ? .primary : .secondary)
+        if let badge = spaceBadge {
+          Text(badge)
+            .font(.system(size: headerSize, weight: .regular))
+            .foregroundStyle(.tertiary)
+        }
+      }
+      .lineLimit(1)
     } else {
       Text("")
     }

@@ -74,12 +74,16 @@ struct SwitcherView: View {
   /// longest label across all visible sections so every row aligns.
   private var spaceLabelWidth: CGFloat {
     let fontSize = round(CGFloat(appSettings.textSize) * 11.0 / 13.0)
-    let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+    let boldFont = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+    let regularFont = NSFont.systemFont(ofSize: fontSize, weight: .regular)
     var maxWidth: CGFloat = 0
     for section in visibleSections {
       let label = buildSpaceLabel(section)
-      let size = (label as NSString).size(withAttributes: [.font: font])
-      maxWidth = max(maxWidth, size.width)
+      var width = (label as NSString).size(withAttributes: [.font: boldFont]).width
+      if let badge = buildSpaceBadge(section) {
+        width += 4 + (badge as NSString).size(withAttributes: [.font: regularFont]).width
+      }
+      maxWidth = max(maxWidth, width)
     }
     return max(ceil(maxWidth) + 4, 80)
   }
@@ -208,18 +212,23 @@ struct SwitcherView: View {
   // MARK: - Section Content
 
   private func buildSpaceLabel(_ section: SwitcherSection) -> String {
-    var label = section.label
+    section.label
+  }
+
+  private func buildSpaceBadge(_ section: SwitcherSection) -> String? {
+    var badge = ""
     if appSettings.showCurrentBadge && !section.ordinalLabel.isEmpty
       && section.ordinalLabel != section.label
     {
-      label += " (\(section.ordinalLabel))"
+      badge += "(\(section.ordinalLabel))"
     }
     if appSettings.showDisplayBadge && !appSettings.filterSpacesByDisplay
       && !section.displayName.isEmpty
     {
-      label += " — \(section.displayName)"
+      if !badge.isEmpty { badge += " " }
+      badge += "— \(section.displayName)"
     }
-    return label
+    return badge.isEmpty ? nil : badge
   }
 
   @ViewBuilder
@@ -247,6 +256,7 @@ struct SwitcherView: View {
           textSize: CGFloat(appSettings.textSize),
           iconSize: appSettings.iconSize,
           spaceLabel: isFirstRow ? buildSpaceLabel(section) : nil,
+          spaceBadge: isFirstRow ? buildSpaceBadge(section) : nil,
           spaceLabelWidth: spaceLabelWidth,
           isRenaming: isFirstRow && isRenamingThisSection,
           renameText: (isFirstRow && isRenamingThisSection)
@@ -279,10 +289,17 @@ struct SwitcherView: View {
             font: .system(size: headerSize, weight: .semibold)
           )
         } else {
-          Text(buildSpaceLabel(section))
-            .font(.system(size: headerSize, weight: .semibold))
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .lineLimit(1)
+          HStack(spacing: 4) {
+            Text(buildSpaceLabel(section))
+              .font(.system(size: headerSize, weight: .semibold))
+              .foregroundStyle(isSelected ? .primary : .secondary)
+            if let badge = buildSpaceBadge(section) {
+              Text(badge)
+                .font(.system(size: headerSize, weight: .regular))
+                .foregroundStyle(.tertiary)
+            }
+          }
+          .lineLimit(1)
         }
       }
       .frame(width: spaceLabelWidth, alignment: .leading)
