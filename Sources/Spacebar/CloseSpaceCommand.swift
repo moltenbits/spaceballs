@@ -17,10 +17,18 @@ struct CloseSpaceCommand: ParsableCommand {
 
   func run() throws {
     let manager = SpaceManager()
+    let store = SpaceNameStore()
     let spaceID = try resolveSpaceID(space, manager: manager)
-    try manager.closeSpaceSync(id: spaceID)
 
+    // Capture UUID before closing so we can remove the name mapping
+    let spaceUUID = manager.getAllSpaces().first(where: { $0.id == spaceID })?.uuid
+
+    try manager.closeSpaceSync(id: spaceID)
     Thread.sleep(forTimeInterval: 1.0)
+
+    if let uuid = spaceUUID {
+      store.setCustomName(nil, forSpaceUUID: uuid)
+    }
 
     print("Closed space \(space)")
   }

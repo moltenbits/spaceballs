@@ -466,8 +466,9 @@ extension AppDelegate: KeyInterceptorDelegate {
       return
     }
 
-    let spaceName =
-      viewModel.filteredSections.first(where: { $0.id == spaceID })?.label ?? "Space \(spaceID)"
+    let section = viewModel.filteredSections.first(where: { $0.id == spaceID })
+    let spaceName = section?.label ?? "Space \(spaceID)"
+    let spaceUUID = section?.spaceUUID
 
     keyInterceptor.setSuppressConfirm(true)
     viewModel.sortOverlayText = "Closing \(spaceName)..."
@@ -477,6 +478,9 @@ extension AppDelegate: KeyInterceptorDelegate {
       guard let self else { return }
       switch result {
       case .success:
+        if let uuid = spaceUUID {
+          self.viewModel.spaceNameStore.setCustomName(nil, forSpaceUUID: uuid)
+        }
         self.viewModel.sortOverlayText = "Closed \(spaceName)"
       case .failure(let error):
         self.viewModel.sortOverlayText = error.localizedDescription
