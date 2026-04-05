@@ -77,23 +77,22 @@ lint: ## Lint code
 
 install: ## Release build + install CLI binary + CLI .app bundle
 install: release
-	@echo "Installing spaceballs to $(PREFIX)/bin..."
-	@mkdir -p $(PREFIX)/bin
-	@if [ -w $(PREFIX)/bin ]; then \
+	@echo "Installing spaceballs to $(PREFIX)..."
+	@if [ -w $(PREFIX)/bin ] && [ -w $(PREFIX)/lib ]; then \
+		mkdir -p $(PREFIX)/bin; \
 		cp .build/release/spaceballs $(PREFIX)/bin/spaceballs; \
-	else \
-		sudo cp .build/release/spaceballs $(PREFIX)/bin/spaceballs; \
-	fi
-	@echo "Installing Spaceballs-CLI.app to $(PREFIX)/lib/spaceballs/..."
-	@if [ -w $(PREFIX) ]; then \
 		mkdir -p $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/MacOS; \
 		cp .build/release/spaceballs $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/MacOS/spaceballs; \
 		cp Resources/Info-CLI.plist $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/Info.plist; \
 		codesign --force --sign - $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app; \
 	else \
-		sudo mkdir -p $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/MacOS; \
-		sudo cp .build/release/spaceballs $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/MacOS/spaceballs; \
-		sudo cp Resources/Info-CLI.plist $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/Info.plist; \
-		sudo codesign --force --sign - $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app; \
+		sudo sh -c '\
+			mkdir -p $(PREFIX)/bin && \
+			cp .build/release/spaceballs $(PREFIX)/bin/spaceballs && \
+			mkdir -p $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/MacOS && \
+			cp .build/release/spaceballs $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/MacOS/spaceballs && \
+			cp Resources/Info-CLI.plist $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app/Contents/Info.plist && \
+			codesign --force --sign - $(PREFIX)/lib/spaceballs/Spaceballs-CLI.app \
+		'; \
 	fi
 	@echo "Installed! Run 'spaceballs --help' to get started."
