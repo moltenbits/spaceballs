@@ -8,7 +8,7 @@ struct SpaceballsCommand: ParsableCommand {
     version: SpaceballsVersion.version,
     subcommands: [
       ListCommand.self, WindowCommand.self, RenameCommand.self, SwitchCommand.self,
-      CreateCommand.self, CloseSpaceCommand.self, SettingsCommand.self,
+      CreateCommand.self, CloseSpaceCommand.self, WorkspaceCommand.self, SettingsCommand.self,
     ]
   )
 }

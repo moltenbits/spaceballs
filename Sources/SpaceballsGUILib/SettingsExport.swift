@@ -13,7 +13,28 @@ public struct SettingsExport: Codable {
   public var spaceSortOrder: String
   public var excludedBundleIDs: [String]
   public var keyBindings: KeyBindings
-  public var customSpaceNames: [String]
+  public var workspaces: [WorkspaceConfig]
+
+  public init(
+    showAppIcons: Bool, showCurrentBadge: Bool, showDisplayBadge: Bool,
+    showEmptySpaces: Bool, filterSpacesByDisplay: Bool, colorScheme: String,
+    textSize: Double, panelDisplay: String, spaceSortOrder: String,
+    excludedBundleIDs: [String], keyBindings: KeyBindings,
+    workspaces: [WorkspaceConfig]
+  ) {
+    self.showAppIcons = showAppIcons
+    self.showCurrentBadge = showCurrentBadge
+    self.showDisplayBadge = showDisplayBadge
+    self.showEmptySpaces = showEmptySpaces
+    self.filterSpacesByDisplay = filterSpacesByDisplay
+    self.colorScheme = colorScheme
+    self.textSize = textSize
+    self.panelDisplay = panelDisplay
+    self.spaceSortOrder = spaceSortOrder
+    self.excludedBundleIDs = excludedBundleIDs
+    self.keyBindings = keyBindings
+    self.workspaces = workspaces
+  }
 
   public static func from(settings: AppSettings) -> SettingsExport {
     SettingsExport(
@@ -28,7 +49,7 @@ public struct SettingsExport: Codable {
       spaceSortOrder: settings.spaceSortOrder.rawValue,
       excludedBundleIDs: Array(settings.excludedBundleIDs).sorted(),
       keyBindings: settings.keyBindings,
-      customSpaceNames: settings.customSpaceNames
+      workspaces: settings.workspaces
     )
   }
 
@@ -44,7 +65,54 @@ public struct SettingsExport: Codable {
     settings.spaceSortOrder = SpaceSortOrder(rawValue: spaceSortOrder) ?? .mru
     settings.excludedBundleIDs = Set(excludedBundleIDs)
     settings.keyBindings = keyBindings
-    settings.customSpaceNames = customSpaceNames
+    settings.workspaces = workspaces
+  }
+
+  // Support importing legacy exports that used customSpaceNames: [String]
+  private enum CodingKeys: String, CodingKey {
+    case showAppIcons, showCurrentBadge, showDisplayBadge, showEmptySpaces
+    case filterSpacesByDisplay, colorScheme, textSize, panelDisplay, spaceSortOrder
+    case excludedBundleIDs, keyBindings, workspaces, customSpaceNames
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(showAppIcons, forKey: .showAppIcons)
+    try c.encode(showCurrentBadge, forKey: .showCurrentBadge)
+    try c.encode(showDisplayBadge, forKey: .showDisplayBadge)
+    try c.encode(showEmptySpaces, forKey: .showEmptySpaces)
+    try c.encode(filterSpacesByDisplay, forKey: .filterSpacesByDisplay)
+    try c.encode(colorScheme, forKey: .colorScheme)
+    try c.encode(textSize, forKey: .textSize)
+    try c.encode(panelDisplay, forKey: .panelDisplay)
+    try c.encode(spaceSortOrder, forKey: .spaceSortOrder)
+    try c.encode(excludedBundleIDs, forKey: .excludedBundleIDs)
+    try c.encode(keyBindings, forKey: .keyBindings)
+    try c.encode(workspaces, forKey: .workspaces)
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    showAppIcons = try c.decode(Bool.self, forKey: .showAppIcons)
+    showCurrentBadge = try c.decode(Bool.self, forKey: .showCurrentBadge)
+    showDisplayBadge = try c.decode(Bool.self, forKey: .showDisplayBadge)
+    showEmptySpaces = try c.decode(Bool.self, forKey: .showEmptySpaces)
+    filterSpacesByDisplay = try c.decode(Bool.self, forKey: .filterSpacesByDisplay)
+    colorScheme = try c.decode(String.self, forKey: .colorScheme)
+    textSize = try c.decode(Double.self, forKey: .textSize)
+    panelDisplay = try c.decode(String.self, forKey: .panelDisplay)
+    spaceSortOrder = try c.decode(String.self, forKey: .spaceSortOrder)
+    excludedBundleIDs = try c.decode([String].self, forKey: .excludedBundleIDs)
+    keyBindings = try c.decode(KeyBindings.self, forKey: .keyBindings)
+
+    // Try new workspaces format, fall back to legacy customSpaceNames
+    if let ws = try? c.decode([WorkspaceConfig].self, forKey: .workspaces) {
+      workspaces = ws
+    } else if let names = try? c.decode([String].self, forKey: .customSpaceNames) {
+      workspaces = names.map { WorkspaceConfig(name: $0) }
+    } else {
+      workspaces = []
+    }
   }
 
   public static func exportJSON(settings: AppSettings) throws -> Data {

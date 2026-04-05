@@ -16,7 +16,8 @@ public final class SpaceNameStore: SpaceNameStoring {
   private static let key = "customSpaceNames"
   private let defaults: UserDefaults
 
-  public init(defaults: UserDefaults = UserDefaults(suiteName: "com.moltenbits.spaceballs.shared")!) {
+  public init(defaults: UserDefaults = UserDefaults(suiteName: "com.moltenbits.spaceballs.shared")!)
+  {
     self.defaults = defaults
     Self.migrateIfNeeded(to: defaults)
   }

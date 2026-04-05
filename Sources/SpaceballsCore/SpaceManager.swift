@@ -348,11 +348,16 @@ public class SpaceManager {
     }
 
     createSpace(count: missingNames.count) { [weak self] result in
-      guard let self else { completion(0); return }
+      guard let self else {
+        completion(0)
+        return
+      }
       let created: Int
       switch result {
       case .success(let n): created = n
-      case .failure: completion(0); return
+      case .failure:
+        completion(0)
+        return
       }
 
       // Wait for macOS to settle, then assign names to new unnamed spaces
@@ -696,7 +701,8 @@ public class SpaceManager {
       return
     }
 
-    let displaySpaces = allSpaces
+    let displaySpaces =
+      allSpaces
       .filter { $0.displayUUID == targetSpace.displayUUID && $0.type == .desktop }
 
     guard let spaceIndex = displaySpaces.firstIndex(where: { $0.id == spaceID }) else {
@@ -732,7 +738,6 @@ public class SpaceManager {
       throw error
     }
   }
-
 
   // MARK: - Space Switching (by index)
 

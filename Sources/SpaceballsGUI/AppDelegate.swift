@@ -525,48 +525,59 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorCreateDefaultSpaces() {
-    let names = appSettings.customSpaceNames
-    guard !names.isEmpty else {
-      viewModel.sortOverlayText = "No default spaces defined"
+    let workspaces = appSettings.workspaces
+    guard !workspaces.isEmpty else {
+      viewModel.sortOverlayText = "No workspaces defined"
       viewModel.sortOverlayGeneration += 1
       return
     }
 
-    // Check how many are missing (prunes stale names internally)
-    viewModel.spaceNameStore.pruneStaleNames(currentSpaces: viewModel.spaceManager.getAllSpaces())
-    let existingNames = Set(viewModel.spaceNameStore.allCustomNames().values)
-    let missingCount = names.filter { !existingNames.contains($0) }.count
-
-    guard missingCount > 0 else {
-      viewModel.sortOverlayText = "All default spaces already exist"
-      viewModel.sortOverlayGeneration += 1
-      return
-    }
-
+    hidePanel()
     keyInterceptor.setSuppressConfirm(true)
-    viewModel.sortOverlayText = "Creating \(missingCount) space\(missingCount == 1 ? "" : "s")..."
-    viewModel.sortOverlayGeneration += 1
 
-    viewModel.spaceManager.createDefaultSpaces(
-      defaultNames: names, spaceNameStore: viewModel.spaceNameStore
-    ) { [weak self] created in
+    DispatchQueue.global(qos: .userInteractive).async { [weak self] in
       guard let self else { return }
-      if created > 0 {
-        self.viewModel.sortOverlayText = "Created \(created) space\(created == 1 ? "" : "s")"
-      } else {
-        self.viewModel.sortOverlayText = "All default spaces already exist"
-      }
-      self.viewModel.sortOverlayGeneration += 1
-      self.viewModel.refresh()
-      self.viewModel.resetSelection()
 
-      // Resize panels to fit new content
+      let restorer = WorkspaceRestorer(
+        spaceManager: self.viewModel.spaceManager,
+        spaceNameStore: self.viewModel.spaceNameStore
+      )
+
+      let data = workspaces.map { ws in
+        WorkspaceConfigData(
+          name: ws.name,
+          path: ws.path,
+          launchers: ws.launchers.map { l in
+            LauncherData(label: l.label, type: l.type.rawValue, command: l.command, appName: l.appName)
+          }
+        )
+      }
+
+      let summary = try? restorer.restoreSync(
+        workspaces: data,
+        defaultNames: self.appSettings.customSpaceNames
+      )
+
       DispatchQueue.main.async {
-        let screens = self.targetScreens()
-        for (i, screen) in screens.enumerated() where i < self.panels.count {
-          _ = self.resizePanelToFit(self.panels[i], on: screen)
-          self.centerPanel(self.panels[i], on: screen)
+        if let summary {
+          var msg: [String] = []
+          if summary.spacesCreated > 0 {
+            msg.append(
+              "\(summary.spacesCreated) space\(summary.spacesCreated == 1 ? "" : "s") created")
+          }
+          if summary.appsLaunched > 0 {
+            msg.append(
+              "\(summary.appsLaunched) app\(summary.appsLaunched == 1 ? "" : "s") launched")
+          }
+          if msg.isEmpty {
+            msg.append("All workspaces up to date")
+          }
+          self.viewModel.sortOverlayText = msg.joined(separator: ", ")
+        } else {
+          self.viewModel.sortOverlayText = "Workspace restore failed"
         }
+        self.viewModel.sortOverlayGeneration += 1
+        self.showPanel()
       }
     }
   }

@@ -99,8 +99,31 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(spaceSortOrder.rawValue, forKey: "spaceSortOrder") }
   }
 
-  @Published public var customSpaceNames: [String] {
-    didSet { defaults.set(customSpaceNames, forKey: "customSpaceNames") }
+  @Published public var workspaces: [WorkspaceConfig] {
+    didSet {
+      if let data = try? JSONEncoder().encode(workspaces) {
+        defaults.set(data, forKey: "workspaces")
+      }
+    }
+  }
+
+  /// Backward-compatible accessor for space names only.
+  public var customSpaceNames: [String] {
+    get { workspaces.map(\.name) }
+    set {
+      // Update names in-place, preserving launchers; add/remove as needed
+      var updated = workspaces
+      while updated.count < newValue.count {
+        updated.append(WorkspaceConfig())
+      }
+      while updated.count > newValue.count {
+        updated.removeLast()
+      }
+      for i in newValue.indices {
+        updated[i].name = newValue[i]
+      }
+      workspaces = updated
+    }
   }
 
   @Published public var excludedBundleIDs: Set<String> {
@@ -146,7 +169,23 @@ public final class AppSettings: ObservableObject {
     self.spaceSortOrder =
       SpaceSortOrder(rawValue: defaults.string(forKey: "spaceSortOrder") ?? "") ?? .mru
 
-    self.customSpaceNames = defaults.stringArray(forKey: "customSpaceNames") ?? []
+    // Load workspaces (with migration from old customSpaceNames format)
+    if let data = defaults.data(forKey: "workspaces"),
+      let decoded = try? JSONDecoder().decode([WorkspaceConfig].self, from: data)
+    {
+      self.workspaces = decoded
+    } else if let oldNames = defaults.stringArray(forKey: "customSpaceNames"), !oldNames.isEmpty {
+      let migrated = oldNames.map { WorkspaceConfig(name: $0) }
+      self.workspaces = migrated
+      // didSet doesn't fire during init, so persist explicitly
+      if let data = try? JSONEncoder().encode(migrated) {
+        defaults.set(data, forKey: "workspaces")
+      }
+      defaults.removeObject(forKey: "customSpaceNames")
+    } else {
+      self.workspaces = []
+    }
+
     self.excludedBundleIDs = Set(defaults.stringArray(forKey: "excludedBundleIDs") ?? [])
 
     if let data = defaults.data(forKey: "keyBindings"),

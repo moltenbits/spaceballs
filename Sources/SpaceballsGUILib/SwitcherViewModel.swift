@@ -699,7 +699,6 @@ public final class SwitcherViewModel: ObservableObject {
     return spaceID(for: selectedItem ?? .settings, using: map)
   }
 
-
   // MARK: - Multi-Panel Display Navigation
 
   /// Returns the display UUID of the section containing the currently selected item.
