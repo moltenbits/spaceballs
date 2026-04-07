@@ -27,6 +27,7 @@ struct SwitcherView: View {
     switch viewModel.selectedItem {
     case .windowRow(let id): AnyHashable(id)
     case .spaceHeader(let id): AnyHashable("header-\(id)")
+    case .spaces: AnyHashable("spaces")
     case .settings: AnyHashable("settings")
     case nil: nil
     }
@@ -44,6 +45,7 @@ struct SwitcherView: View {
         }
       }
     }
+    items.append(.spaces)
     items.append(.settings)
     return items
   }
@@ -90,35 +92,22 @@ struct SwitcherView: View {
 
   var body: some View {
     ZStack {
-      ScrollViewReader { proxy in
-        ScrollView(.vertical, showsIndicators: false) {
-          VStack(alignment: .leading, spacing: 0) {
-            ForEach(visibleSections) { section in
-              sectionContent(section)
-            }
-            settingsRow
-          }
-          .padding(.top, contentOverflows ? 20 : 6)
-          .padding(.bottom, contentOverflows ? 20 : 10)
-          .padding(.horizontal, 6)
-        }
-        .onChange(of: scrollAnchor) { _, anchor in
-          if let anchor {
-            withAnimation(.easeOut(duration: 0.15)) {
-              proxy.scrollTo(anchor, anchor: .center)
-            }
-          }
-        }
+      if viewModel.panelMode == .createSpace {
+        createSpaceMenu
+      } else {
+        normalContent
       }
 
-      // Scroll indicators — fixed overlays at panel edges
-      VStack(spacing: 0) {
-        if showTopArrow {
-          scrollArrow(direction: .up)
-        }
-        Spacer()
-        if showBottomArrow {
-          scrollArrow(direction: .down)
+      // Scroll indicators — fixed overlays at panel edges (normal mode only)
+      if viewModel.panelMode == .normal {
+        VStack(spacing: 0) {
+          if showTopArrow {
+            scrollArrow(direction: .up)
+          }
+          Spacer()
+          if showBottomArrow {
+            scrollArrow(direction: .down)
+          }
         }
       }
 
@@ -129,7 +118,7 @@ struct SwitcherView: View {
           .easeOut(duration: viewModel.sortOverlayText != nil ? 0.15 : 0.4),
           value: viewModel.sortOverlayText)
     }
-    .fixedSize(horizontal: true, vertical: false)
+    .fixedSize(horizontal: viewModel.panelMode == .normal, vertical: false)
     .background(
       ZStack {
         VibrancyBackground()
@@ -147,6 +136,144 @@ struct SwitcherView: View {
           }
         }
       }
+    }
+  }
+
+  // MARK: - Normal Content
+
+  private var normalContent: some View {
+    Group {
+      ScrollViewReader { proxy in
+        ScrollView(.vertical, showsIndicators: false) {
+          VStack(alignment: .leading, spacing: 0) {
+            ForEach(visibleSections) { section in
+              sectionContent(section)
+            }
+            spacesRow
+            settingsRow
+          }
+          .padding(.top, contentOverflows ? 20 : 6)
+          .padding(.bottom, contentOverflows ? 20 : 10)
+          .padding(.horizontal, 6)
+        }
+        .onChange(of: scrollAnchor) { _, anchor in
+          if let anchor {
+            withAnimation(.easeOut(duration: 0.15)) {
+              proxy.scrollTo(anchor, anchor: .center)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // MARK: - Create Space Menu
+
+  private var createSpaceMenu: some View {
+    let textSize = CGFloat(appSettings.textSize)
+    let labelSize = round(textSize * 11.0 / 13.0)
+
+    return ScrollView(.vertical, showsIndicators: false) {
+      VStack(alignment: .leading, spacing: 0) {
+        ForEach(viewModel.createMenuItems) { item in
+          let isSelected = viewModel.createMenuSelection == item.id
+          let isBack = item.workspaceIndex == SwitcherViewModel.backWorkspaceIndex
+          let isNewSpace = item.workspaceIndex == nil
+          let isFirstRestore = item.id == 2
+          let isAllSpaces = item.workspaceIndex == SwitcherViewModel.allSpacesWorkspaceIndex
+
+          if isFirstRestore || isAllSpaces {
+            Spacer().frame(height: 4)
+          }
+
+          HStack(spacing: 8) {
+            // Left column — matches spaceLabelView position
+            Group {
+              if isBack {
+                Text("Back...")
+                  .font(.system(size: labelSize, weight: .semibold))
+                  .foregroundStyle(isSelected ? .primary : .secondary)
+              } else if isNewSpace {
+                Text("Create...")
+                  .font(.system(size: labelSize, weight: .semibold))
+                  .foregroundStyle(isSelected ? .primary : .secondary)
+              } else if isFirstRestore {
+                Text("Restore...")
+                  .font(.system(size: labelSize, weight: .semibold))
+                  .foregroundStyle(isSelected ? .primary : .secondary)
+              } else {
+                Text("")
+              }
+            }
+            .frame(width: spaceLabelWidth, alignment: .leading)
+
+          if isBack {
+            // Empty right side to match row height
+            Text("")
+              .frame(width: 110, alignment: .trailing)
+            Spacer()
+              .frame(width: appSettings.iconSize, height: appSettings.iconSize)
+          } else {
+
+            // Matches the 110pt app name column
+            Text(item.label)
+              .font(.system(size: textSize))
+              .foregroundStyle(isSelected ? .white : .secondary)
+              .frame(width: 110, alignment: .trailing)
+              .lineLimit(1)
+
+            // Matches the icon position
+            if isNewSpace {
+              Image(systemName: "plus.square")
+                .resizable()
+                .frame(width: appSettings.iconSize, height: appSettings.iconSize)
+                .foregroundStyle(isSelected ? .white : .secondary)
+            } else {
+              Image(systemName: "square.grid.2x2")
+                .resizable()
+                .frame(width: appSettings.iconSize, height: appSettings.iconSize)
+                .foregroundStyle(isSelected ? .white : .secondary)
+            }
+
+            // Right column — app summary or label
+            if let wsIdx = item.workspaceIndex, wsIdx >= 0,
+              wsIdx < appSettings.workspaces.count
+            {
+              let apps = appSettings.workspaces[wsIdx].launchers
+              let names = apps.prefix(4).compactMap { l in
+                l.appName.isEmpty ? nil : l.appName
+              }
+              Text(names.isEmpty ? item.label : names.joined(separator: ", "))
+                .font(.system(size: textSize))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 400, alignment: .leading)
+            } else {
+              Text(isNewSpace ? "Empty space" : item.label)
+                .font(.system(size: textSize))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 400, alignment: .leading)
+            }
+          } // end if isBack/else
+          }
+          .padding(.vertical, 1)
+          .padding(.horizontal, 10)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(
+            isSelected
+              ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
+              : nil
+          )
+          .contentShape(Rectangle())
+          .padding(.top, item.id == 0 ? 4 : 0)
+        }
+      }
+      .padding(.top, contentOverflows ? 20 : 6)
+      .padding(.bottom, contentOverflows ? 20 : 10)
+      .padding(.horizontal, 6)
     }
   }
 
@@ -177,6 +304,45 @@ struct SwitcherView: View {
 
   // MARK: - Settings Row
 
+  /// Whether this panel should show the highlight for .spaces/.settings
+  private var isGlobalRowSelectedOnThisPanel: Bool {
+    guard let uuid = displayUUID else { return true }  // single panel, always show
+    return viewModel.contextDisplayUUID == uuid
+  }
+
+  private var spacesRow: some View {
+    let iconSize = CGFloat(round(appSettings.textSize * 14.0 / 13.0))
+    let iconFrame = appSettings.iconSize
+    let isSelected = viewModel.selectedItem == .spaces && isGlobalRowSelectedOnThisPanel
+    return VStack(spacing: 0) {
+      Spacer().frame(height: 6)
+      HStack(spacing: 8) {
+        Text("")
+          .frame(width: spaceLabelWidth, alignment: .leading)
+        Text("")
+          .frame(width: 110, alignment: .trailing)
+        Image(systemName: "square.grid.2x2")
+          .resizable()
+          .frame(width: iconSize, height: iconSize)
+          .frame(width: iconFrame, height: iconFrame)
+          .foregroundStyle(isSelected ? .white : .secondary)
+        Text("Spaces")
+          .font(.system(size: CGFloat(appSettings.textSize)))
+          .foregroundStyle(isSelected ? .white : .secondary)
+      }
+      .padding(.vertical, 1)
+      .padding(.horizontal, 10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(
+        isSelected
+          ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
+          : nil
+      )
+    }
+    .id("spaces")
+    .contentShape(Rectangle())
+  }
+
   private var settingsRow: some View {
     let gearSize = CGFloat(round(appSettings.textSize * 14.0 / 13.0))
     let iconFrame = appSettings.iconSize
@@ -187,20 +353,22 @@ struct SwitcherView: View {
           .frame(width: spaceLabelWidth, alignment: .leading)
         Text("")
           .frame(width: 110, alignment: .trailing)
+        let isSettingsSelected =
+          viewModel.selectedItem == .settings && isGlobalRowSelectedOnThisPanel
         Image(systemName: "gearshape")
           .resizable()
           .frame(width: gearSize, height: gearSize)
           .frame(width: iconFrame, height: iconFrame)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(isSettingsSelected ? .white : .secondary)
         Text("Settings")
           .font(.system(size: CGFloat(appSettings.textSize)))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(isSettingsSelected ? .white : .secondary)
       }
       .padding(.vertical, 1)
       .padding(.horizontal, 10)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(
-        viewModel.selectedItem == .settings
+        viewModel.selectedItem == .settings && isGlobalRowSelectedOnThisPanel
           ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
           : nil
       )

@@ -237,6 +237,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func hidePanel() {
+    if viewModel.panelMode == .createSpace {
+      viewModel.exitCreateMode()
+    }
     if viewModel.isRenaming {
       viewModel.cancelRename()
       keyInterceptor.setRenameMode(false)
@@ -360,6 +363,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return (overflows, height)
   }
 
+  private func resizePanelsToFit() {
+    // Defer to next run loop so SwiftUI layout settles first
+    DispatchQueue.main.async { [self] in
+      let screens = targetScreens()
+      for (i, screen) in screens.enumerated() where i < panels.count {
+        _ = resizePanelToFit(panels[i], on: screen)
+        centerPanel(panels[i], on: screen)
+      }
+    }
+  }
+
   private func centerPanel(_ panel: SwitcherPanel, on screen: NSScreen) {
     let screenFrame = screen.visibleFrame
     let panelSize = panel.frame.size
@@ -386,15 +400,31 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorMoveDown() {
-    viewModel.moveSelectionDown()
+    if viewModel.panelMode == .createSpace {
+      viewModel.moveCreateSelectionDown()
+    } else {
+      viewModel.moveSelectionDown()
+    }
   }
 
   func keyInterceptorMoveUp() {
-    viewModel.moveSelectionUp()
+    if viewModel.panelMode == .createSpace {
+      viewModel.moveCreateSelectionUp()
+    } else {
+      viewModel.moveSelectionUp()
+    }
   }
 
   func keyInterceptorConfirm() {
+    if viewModel.panelMode == .createSpace {
+      confirmCreateMenuSelection()
+      return
+    }
     switch viewModel.selectedItem {
+    case .spaces:
+      viewModel.enterCreateMode(
+        workspaces: appSettings.workspaces, displayUUID: viewModel.contextDisplayUUID)
+      resizePanelsToFit()
     case .settings:
       openSettings()
     case .spaceHeader, .windowRow:
@@ -405,6 +435,11 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorCancel() {
+    if viewModel.panelMode == .createSpace {
+      viewModel.exitCreateMode()
+      resizePanelsToFit()
+      return
+    }
     hidePanel()
   }
 
@@ -429,11 +464,19 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorJumpToNextSpace() {
-    viewModel.moveToNextSpace()
+    if viewModel.panelMode == .createSpace {
+      viewModel.moveCreateSelectionDown()
+    } else {
+      viewModel.moveToNextSpace()
+    }
   }
 
   func keyInterceptorJumpToPreviousSpace() {
-    viewModel.moveToPreviousSpace()
+    if viewModel.panelMode == .createSpace {
+      viewModel.moveCreateSelectionUp()
+    } else {
+      viewModel.moveToPreviousSpace()
+    }
   }
 
   func keyInterceptorStartRename() {
@@ -497,87 +540,117 @@ extension AppDelegate: KeyInterceptorDelegate {
     }
   }
 
-  func keyInterceptorCreateSpace() {
-    keyInterceptor.setSuppressConfirm(true)
-    viewModel.sortOverlayText = "Creating space..."
-    viewModel.sortOverlayGeneration += 1
-
-    viewModel.spaceManager.createSpace(count: 1) { [weak self] result in
-      guard let self else { return }
-      switch result {
-      case .success:
-        self.viewModel.sortOverlayText = "Created new space"
-      case .failure(let error):
-        self.viewModel.sortOverlayText = error.localizedDescription
-      }
-      self.viewModel.sortOverlayGeneration += 1
-      self.viewModel.refresh()
-      self.viewModel.resetSelection()
-
-      DispatchQueue.main.async {
-        let screens = self.targetScreens()
-        for (i, screen) in screens.enumerated() where i < self.panels.count {
-          _ = self.resizePanelToFit(self.panels[i], on: screen)
-          self.centerPanel(self.panels[i], on: screen)
-        }
-      }
+  func keyInterceptorToggleCreateMenu() {
+    if viewModel.panelMode == .createSpace {
+      viewModel.exitCreateMode()
+      resizePanelsToFit()
+    } else {
+      viewModel.enterCreateMode(
+        workspaces: appSettings.workspaces, displayUUID: viewModel.contextDisplayUUID)
+      resizePanelsToFit()
     }
   }
 
-  func keyInterceptorCreateDefaultSpaces() {
-    let workspaces = appSettings.workspaces
-    guard !workspaces.isEmpty else {
-      viewModel.sortOverlayText = "No workspaces defined"
-      viewModel.sortOverlayGeneration += 1
+  private func confirmCreateMenuSelection() {
+    guard let selIdx = viewModel.createMenuSelection,
+      selIdx < viewModel.createMenuItems.count
+    else { return }
+
+    let item = viewModel.createMenuItems[selIdx]
+
+    // "Back" — just exit create mode, return to normal panel
+    if item.workspaceIndex == SwitcherViewModel.backWorkspaceIndex {
+      viewModel.exitCreateMode()
+      resizePanelsToFit()
       return
     }
 
-    hidePanel()
-    keyInterceptor.setSuppressConfirm(true)
-
-    DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-      guard let self else { return }
-
-      let restorer = WorkspaceRestorer(
-        spaceManager: self.viewModel.spaceManager,
-        spaceNameStore: self.viewModel.spaceNameStore
-      )
-
-      let data = workspaces.map { ws in
-        WorkspaceConfigData(
-          name: ws.name,
-          path: ws.path,
-          launchers: ws.launchers.map { l in
-            LauncherData(label: l.label, type: l.type.rawValue, command: l.command, appName: l.appName)
-          }
-        )
+    // Use the display captured when entering create mode
+    let activeScreenNumber: CGDirectDisplayID? = {
+      if let uuid = viewModel.createModeDisplayUUID {
+        return SpaceManager.displayIDForUUID(uuid)
       }
+      return nil
+    }()
 
-      let summary = try? restorer.restoreSync(
-        workspaces: data,
-        defaultNames: self.appSettings.customSpaceNames
-      )
+    viewModel.exitCreateMode()
+    hidePanel()
 
-      DispatchQueue.main.async {
-        if let summary {
-          var msg: [String] = []
-          if summary.spacesCreated > 0 {
-            msg.append(
-              "\(summary.spacesCreated) space\(summary.spacesCreated == 1 ? "" : "s") created")
-          }
-          if summary.appsLaunched > 0 {
-            msg.append(
-              "\(summary.appsLaunched) app\(summary.appsLaunched == 1 ? "" : "s") launched")
-          }
-          if msg.isEmpty {
-            msg.append("All workspaces up to date")
-          }
-          self.viewModel.sortOverlayText = msg.joined(separator: ", ")
-        } else {
-          self.viewModel.sortOverlayText = "Workspace restore failed"
+    if let wsIdx = item.workspaceIndex {
+      // Determine which workspaces to restore
+      let workspacesToRestore: [WorkspaceConfig]
+      if wsIdx == SwitcherViewModel.allSpacesWorkspaceIndex {
+        workspacesToRestore = appSettings.workspaces
+      } else {
+        workspacesToRestore = [appSettings.workspaces[wsIdx]]
+      }
+      keyInterceptor.setSuppressConfirm(true)
+
+      DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+        guard let self else { return }
+
+        let restorer = WorkspaceRestorer(
+          spaceManager: self.viewModel.spaceManager,
+          spaceNameStore: self.viewModel.spaceNameStore
+        )
+
+        let data = workspacesToRestore.map { ws in
+          WorkspaceConfigData(
+            name: ws.name,
+            path: ws.path,
+            launchers: ws.launchers.map { l in
+              LauncherData(
+                label: l.label, type: l.type.rawValue, command: l.command, appName: l.appName)
+            }
+          )
         }
-        self.viewModel.sortOverlayGeneration += 1
-        self.showPanel()
+
+        let summary = try? restorer.restoreSync(
+          workspaces: data,
+          defaultNames: workspacesToRestore.map(\.name)
+        )
+
+        DispatchQueue.main.async {
+          if let summary {
+            var msg: [String] = []
+            if summary.spacesCreated > 0 {
+              msg.append(
+                "\(summary.spacesCreated) space\(summary.spacesCreated == 1 ? "" : "s") created")
+            }
+            if summary.appsLaunched > 0 {
+              msg.append(
+                "\(summary.appsLaunched) app\(summary.appsLaunched == 1 ? "" : "s") launched")
+            }
+            if msg.isEmpty {
+              let name =
+                workspacesToRestore.count == 1 ? workspacesToRestore[0].name : "All workspaces"
+              msg.append("\(name) up to date")
+            }
+            self.viewModel.sortOverlayText = msg.joined(separator: ", ")
+          } else {
+            self.viewModel.sortOverlayText = "Restore failed"
+          }
+          self.viewModel.sortOverlayGeneration += 1
+          self.showPanel()
+        }
+      }
+    } else {
+      // "New Space" — create unnamed space on the active display
+      keyInterceptor.setSuppressConfirm(true)
+
+      viewModel.spaceManager.createSpace(count: 1, screenNumber: activeScreenNumber) {
+        [weak self] result in
+        guard let self else { return }
+        DispatchQueue.main.async {
+          switch result {
+          case .success:
+            self.viewModel.sortOverlayText = "Created new space"
+          case .failure(let error):
+            self.viewModel.sortOverlayText = error.localizedDescription
+          }
+          self.viewModel.sortOverlayGeneration += 1
+          self.showPanel()
+        }
       }
     }
   }

@@ -57,6 +57,7 @@ public struct SwitcherRow: Identifiable {
 public enum SelectedItem: Equatable, Hashable {
   case spaceHeader(UInt64)  // space ID
   case windowRow(Int)  // CGWindowID
+  case spaces
   case settings
 }
 
@@ -75,6 +76,74 @@ public final class SwitcherViewModel: ObservableObject {
 
   /// Incremented each time the overlay is shown, so stale dismiss timers are ignored.
   @Published public var sortOverlayGeneration: Int = 0
+
+  // MARK: - Create Space Menu
+
+  public enum PanelMode {
+    case normal
+    case createSpace
+  }
+
+  public struct CreateMenuItem: Identifiable {
+    public let id: Int
+    public let label: String
+    public let workspaceIndex: Int?  // nil = "New Space" (unnamed)
+  }
+
+  @Published public var panelMode: PanelMode = .normal
+  @Published public var createMenuItems: [CreateMenuItem] = []
+  @Published public var createMenuSelection: Int? = nil
+  /// The display UUID the user was on when entering create mode.
+  public var createModeDisplayUUID: String?
+
+  /// Special sentinel workspace indices.
+  public static let backWorkspaceIndex = -2
+  public static let allSpacesWorkspaceIndex = -1
+
+  public func enterCreateMode(workspaces: [WorkspaceConfig], displayUUID: String? = nil) {
+    createModeDisplayUUID = displayUUID
+    var items: [CreateMenuItem] = []
+    items.append(
+      CreateMenuItem(id: 0, label: "Back", workspaceIndex: Self.backWorkspaceIndex))
+    items.append(CreateMenuItem(id: 1, label: "New Space", workspaceIndex: nil))
+    for (i, ws) in workspaces.enumerated() {
+      items.append(CreateMenuItem(id: i + 2, label: ws.name, workspaceIndex: i))
+    }
+    if !workspaces.isEmpty {
+      items.append(
+        CreateMenuItem(
+          id: workspaces.count + 2, label: "All Spaces",
+          workspaceIndex: Self.allSpacesWorkspaceIndex))
+    }
+    createMenuItems = items
+    createMenuSelection = 1  // Select "New Space" by default (skip "Back")
+    panelMode = .createSpace
+  }
+
+  public func exitCreateMode() {
+    panelMode = .normal
+    createMenuItems = []
+    createMenuSelection = nil
+    createModeDisplayUUID = nil
+  }
+
+  public func moveCreateSelectionDown() {
+    guard !createMenuItems.isEmpty else { return }
+    if let current = createMenuSelection {
+      createMenuSelection = (current + 1) % createMenuItems.count
+    } else {
+      createMenuSelection = 0
+    }
+  }
+
+  public func moveCreateSelectionUp() {
+    guard !createMenuItems.isEmpty else { return }
+    if let current = createMenuSelection {
+      createMenuSelection = (current - 1 + createMenuItems.count) % createMenuItems.count
+    } else {
+      createMenuSelection = createMenuItems.count - 1
+    }
+  }
 
   public var isRenaming: Bool { renamingSpaceID != nil }
 
@@ -99,6 +168,10 @@ public final class SwitcherViewModel: ObservableObject {
 
   /// In mode 3, tracks which display group the user was navigating when .settings was selected.
   private var settingsDisplayIndex: Int = 0
+
+  /// The display UUID the user is currently navigating in Mode 3.
+  /// Used so .spaces/.settings only highlight on the relevant panel.
+  @Published public var navigationDisplayUUID: String?
 
   /// Persistent MRU history of space IDs, most recent first.
   /// Updated on each refresh() when the current space changes.
@@ -424,6 +497,7 @@ public final class SwitcherViewModel: ObservableObject {
         }
       }
     }
+    items.append(.spaces)
     items.append(.settings)
     return items
   }
@@ -469,10 +543,15 @@ public final class SwitcherViewModel: ObservableObject {
     let items = flatSelectableItems
     guard items.count > 1 else { return }
 
-    // Mode 3: .settings acts as a stop between each display group
+    // Mode 3: .spaces and .settings act as stops between display groups
     if !displayOrder.isEmpty {
       let ranges = displayGroupRanges()
       guard !ranges.isEmpty else { return }
+
+      if selectedItem == .spaces {
+        selectedItem = .settings
+        return
+      }
 
       if selectedItem == .settings {
         // From .settings, continue to the next display's first item (wrapping)
@@ -486,10 +565,10 @@ public final class SwitcherViewModel: ObservableObject {
         return
       }
 
-      // At end of a display group → go to .settings
+      // At end of a display group → go to .spaces
       if let groupIdx = ranges.firstIndex(where: { $0.end == idx }) {
         settingsDisplayIndex = groupIdx
-        selectedItem = .settings
+        selectedItem = .spaces
         return
       }
 
@@ -514,13 +593,18 @@ public final class SwitcherViewModel: ObservableObject {
     let items = flatSelectableItems
     guard items.count > 1 else { return }
 
-    // Mode 3: .settings acts as a stop between each display group
+    // Mode 3: .spaces and .settings act as stops between display groups
     if !displayOrder.isEmpty {
       let ranges = displayGroupRanges()
       guard !ranges.isEmpty else { return }
 
       if selectedItem == .settings {
-        // From .settings, go back to the last item of the source display group
+        selectedItem = .spaces
+        return
+      }
+
+      if selectedItem == .spaces {
+        // From .spaces, go back to the last item of the source display group
         selectedItem = items[ranges[settingsDisplayIndex].end]
         return
       }
@@ -578,6 +662,7 @@ public final class SwitcherViewModel: ObservableObject {
     switch item {
     case .spaceHeader(let id): return id
     case .windowRow(let id): return map[id]
+    case .spaces: return nil
     case .settings: return nil
     }
   }
@@ -592,16 +677,58 @@ public final class SwitcherViewModel: ObservableObject {
       return
     }
 
+    // Explicit handling for .spaces and .settings
+    if case .spaces = current {
+      selectedItem = .settings
+      return
+    }
+    if case .settings = current {
+      if !displayOrder.isEmpty {
+        // Mode 3: go to next display group's first space
+        let ranges = displayGroupRanges()
+        let nextGroup = (settingsDisplayIndex + 1) % ranges.count
+        settingsDisplayIndex = nextGroup
+        // Find the first space item in the next group
+        let start = ranges[nextGroup].start
+        selectedItem = items[start]
+      } else {
+        // Mode 1/2: wrap to first space
+        if let first = items.first(where: { spaceID(for: $0, using: map) != nil }) {
+          selectedItem = first
+        }
+      }
+      return
+    }
+
     let currentSpace = spaceID(for: current, using: map)
 
-    // Scan forward (with wrap) for the first item in a different section or .settings
+    // In Mode 3, find the display group boundary so we stop at .spaces
+    let groupEnd: Int?
+    if !displayOrder.isEmpty {
+      let ranges = displayGroupRanges()
+      groupEnd = ranges.first(where: { currentPos <= $0.end })?.end
+    } else {
+      groupEnd = nil
+    }
+
+    // Scan forward for the first item in a different section, or .spaces/.settings
     for offset in 1..<items.count {
       let pos = (currentPos + offset) % items.count
       let item = items[pos]
-      if case .settings = item {
-        selectedItem = item
+      if case .settings = item { selectedItem = item; return }
+      if case .spaces = item { selectedItem = item; return }
+
+      // In Mode 3, if we've crossed the group boundary, stop at .spaces
+      if let end = groupEnd, pos > end {
+        // Track which group we came from
+        let ranges = displayGroupRanges()
+        if let groupIdx = ranges.firstIndex(where: { $0.end == end }) {
+          settingsDisplayIndex = groupIdx
+        }
+        selectedItem = .spaces
         return
       }
+
       let itemSpace = spaceID(for: item, using: map)
       guard itemSpace != nil else { continue }
       if itemSpace != currentSpace {
@@ -621,12 +748,24 @@ public final class SwitcherViewModel: ObservableObject {
       return
     }
 
-    // If on .settings, jump to the first item of the last section
+    // Settings → Spaces → last section
     if case .settings = current {
-      // Find the last section's first item
+      selectedItem = .spaces
+      return
+    }
+    if case .spaces = current {
+      // Find the last section's first item in the current display group
+      let searchEnd: Int
+      if !displayOrder.isEmpty {
+        let ranges = displayGroupRanges()
+        searchEnd = ranges[settingsDisplayIndex].end
+      } else {
+        // Find last item before .spaces
+        searchEnd = (currentPos - 1 + items.count) % items.count
+      }
       var lastSpace: UInt64?
       var lastPos: Int?
-      for i in stride(from: items.count - 1, through: 0, by: -1) {
+      for i in stride(from: searchEnd, through: 0, by: -1) {
         let item = items[i]
         if let space = spaceID(for: item, using: map) {
           if lastSpace == nil { lastSpace = space }
@@ -639,18 +778,53 @@ public final class SwitcherViewModel: ObservableObject {
 
     let currentSpace = spaceID(for: current, using: map)
 
-    // Scan backward for the first item in a different section or .settings
+    // In Mode 3, find the display group boundary
+    let groupStart: Int?
+    if !displayOrder.isEmpty {
+      let ranges = displayGroupRanges()
+      groupStart = ranges.first(where: { currentPos >= $0.start && currentPos <= $0.end })?.start
+    } else {
+      groupStart = nil
+    }
+
+    // Scan backward for the first item in a different section or .spaces/.settings
     var targetSpace: UInt64?
     var targetPos: Int?
     for offset in 1..<items.count {
       let pos = (currentPos - offset + items.count) % items.count
       let item = items[pos]
-      if case .settings = item {
-        if targetSpace != nil {
-          // Already found a previous space — stop here
-          break
+
+      // Wrap-around: hitting the trailing .settings/.spaces stops means we wrapped
+      // past the start of items. Associate with the LAST display group so the highlight
+      // appears on the correct panel.
+      if case .settings = item, targetSpace == nil {
+        if !displayOrder.isEmpty {
+          let ranges = displayGroupRanges()
+          if !ranges.isEmpty { settingsDisplayIndex = ranges.count - 1 }
         }
         selectedItem = item
+        return
+      }
+      if case .spaces = item, targetSpace == nil {
+        if !displayOrder.isEmpty {
+          let ranges = displayGroupRanges()
+          if !ranges.isEmpty { settingsDisplayIndex = ranges.count - 1 }
+        }
+        selectedItem = item
+        return
+      }
+      if case .settings = item { break }
+      if case .spaces = item { break }
+
+      // In Mode 3, if we've crossed the group boundary going backward, stop at .settings
+      // of the PREVIOUS display group (mirrors moveToNextSpace which stops at .spaces of
+      // the current group when crossing forward).
+      if let start = groupStart, pos < start, targetSpace == nil {
+        let ranges = displayGroupRanges()
+        if let prevGroupIdx = ranges.firstIndex(where: { pos >= $0.start && pos <= $0.end }) {
+          settingsDisplayIndex = prevGroupIdx
+        }
+        selectedItem = .settings
         return
       }
       let itemSpace = spaceID(for: item, using: map)
@@ -709,9 +883,23 @@ public final class SwitcherViewModel: ObservableObject {
     case .windowRow(let windowID):
       return filteredSections.first(where: { $0.windows.contains(where: { $0.id == windowID }) })?
         .displayUUID
-    case .settings, nil:
+    case .spaces, .settings, nil:
       return nil
     }
+  }
+
+  /// Returns the display UUID the user was navigating when they reached
+  /// .spaces or .settings. Falls back to activeDisplayUUID for normal items.
+  public var contextDisplayUUID: String? {
+    if let uuid = activeDisplayUUID { return uuid }
+    // When on .spaces or .settings, use the display group we came from
+    guard !displayOrder.isEmpty else {
+      // Mode 1/2: use the first section's display (or focused display)
+      return filteredSections.first?.displayUUID
+    }
+    // Mode 3: settingsDisplayIndex tracks which group
+    guard settingsDisplayIndex < displayOrder.count else { return displayOrder.first }
+    return displayOrder[settingsDisplayIndex]
   }
 
   /// Moves selection to the first window (or header) on the given display.
@@ -813,7 +1001,7 @@ public final class SwitcherViewModel: ObservableObject {
         spaceManager.switchToSpace(spaceIndex: spaceIndex, screenNumber: screenNumber)
         return
       }
-    case .settings, nil:
+    case .spaces, .settings, nil:
       return
     }
 

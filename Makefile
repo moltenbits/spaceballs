@@ -60,7 +60,8 @@ run.json: ## Build + run CLI (JSON output)
 	swift run $(SWIFT_BUILD_FLAGS) spaceballs --json
 
 kill: ## Kill running Spaceballs.app
-	@pkill -f "Spaceballs.app" 2>/dev/null || true
+	@pkill -INT -f "Spaceballs.app" 2>/dev/null || true
+	@sleep 1
 
 clean: ## Remove .build/
 	swift package clean

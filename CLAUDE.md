@@ -26,6 +26,8 @@ make clean        # Remove .build/
 
 Underlying tool: Swift Package Manager (`swift build`, `swift test`, etc.).
 
+**After finishing any requested code change, automatically run `make everything` to install it.**
+
 ## Architecture
 
 ### Package Structure

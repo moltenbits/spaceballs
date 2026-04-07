@@ -452,7 +452,8 @@ public class SpaceManager {
   /// - Parameter count: Number of spaces to create (default 1).
   /// - Parameter completion: Called on the main queue when done, with success/failure.
   public func createSpace(
-    count: Int = 1, completion: ((Result<Int, SpaceCreateError>) -> Void)? = nil
+    count: Int = 1, screenNumber: CGDirectDisplayID? = nil,
+    completion: ((Result<Int, SpaceCreateError>) -> Void)? = nil
   ) {
     guard AXIsProcessTrusted() else {
       completion?(.failure(.accessibilityNotTrusted))
@@ -492,20 +493,25 @@ public class SpaceManager {
 
       Thread.sleep(forTimeInterval: 0.3)
 
-      // Find the add button in the Spaces Bar.
-      // Navigate: mc → mc.display → mc.spaces, then find a button whose
-      // AXIdentifier is "mc.spaces.add" or whose description contains "add".
+      // Find the add button in the Spaces Bar on the target display.
       let addButton: AXUIElement? = {
-        for displayChild in Self.axChildren(mcGroup) {
-          guard Self.axStringAttribute(displayChild, name: "AXIdentifier") == "mc.display" else {
-            continue
+        // If a specific display is requested, find its mc.display first
+        let displayElements: [AXUIElement]
+        if let screenNumber,
+          let targetDisplay = Self.axChildMatchingDisplay(mcGroup, screenNumber: screenNumber)
+        {
+          displayElements = [targetDisplay]
+        } else {
+          displayElements = Self.axChildren(mcGroup).filter {
+            Self.axStringAttribute($0, name: "AXIdentifier") == "mc.display"
           }
+        }
+
+        for displayChild in displayElements {
           if let mcSpaces = Self.axChildWithIdentifier(displayChild, identifier: "mc.spaces") {
-            // Try by identifier first
             if let add = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.add") {
               return add
             }
-            // Fallback: search for a button with "add" in name or description
             if let add = Self.findAddButton(in: mcSpaces) {
               return add
             }

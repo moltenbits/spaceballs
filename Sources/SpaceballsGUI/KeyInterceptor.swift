@@ -19,9 +19,8 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorCommitRename()
   func keyInterceptorCancelRename()
   func keyInterceptorCycleSortOrder()
-  func keyInterceptorCreateDefaultSpaces()
   func keyInterceptorCloseSpace()
-  func keyInterceptorCreateSpace()
+  func keyInterceptorToggleCreateMenu()
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -251,6 +250,14 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
+    // Cmd+Enter/Return — confirm selection (same as releasing Cmd)
+    if cmdHeld && (keyCode == 36 || keyCode == 76) && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorConfirm()
+      }
+      return nil  // consume
+    }
+
     // Next space (Cmd held)
     if cmdHeld && keyCode == Int64(bindings.nextSpace) && interceptor.panelVisible {
       DispatchQueue.main.async {
@@ -321,18 +328,10 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Create new space
+    // Toggle create space menu
     if cmdHeld && keyCode == Int64(bindings.createSpace) && interceptor.panelVisible {
       DispatchQueue.main.async {
-        interceptor.delegate?.keyInterceptorCreateSpace()
-      }
-      return nil  // consume
-    }
-
-    // Create default spaces
-    if cmdHeld && keyCode == Int64(bindings.createDefaultSpaces) && interceptor.panelVisible {
-      DispatchQueue.main.async {
-        interceptor.delegate?.keyInterceptorCreateDefaultSpaces()
+        interceptor.delegate?.keyInterceptorToggleCreateMenu()
       }
       return nil  // consume
     }

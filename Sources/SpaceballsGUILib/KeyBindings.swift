@@ -11,7 +11,6 @@ public struct KeyBindings: Codable, Equatable {
   public var previousDisplay: UInt16
   public var renameSpace: UInt16
   public var cycleSortOrder: UInt16
-  public var createDefaultSpaces: UInt16
   public var createSpace: UInt16
   public var closeWindow: UInt16
   public var quitApp: UInt16
@@ -26,7 +25,6 @@ public struct KeyBindings: Codable, Equatable {
     previousDisplay: UInt16 = 123,
     renameSpace: UInt16 = 15,
     cycleSortOrder: UInt16 = 1,
-    createDefaultSpaces: UInt16 = 2,
     createSpace: UInt16 = 45,
     closeWindow: UInt16 = 13,
     quitApp: UInt16 = 12,
@@ -40,11 +38,33 @@ public struct KeyBindings: Codable, Equatable {
     self.previousDisplay = previousDisplay
     self.renameSpace = renameSpace
     self.cycleSortOrder = cycleSortOrder
-    self.createDefaultSpaces = createDefaultSpaces
     self.createSpace = createSpace
     self.closeWindow = closeWindow
     self.quitApp = quitApp
     self.cancel = cancel
+  }
+
+  // Backward-compatible decoder — new fields default gracefully
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    activateAndNext = try c.decodeIfPresent(UInt16.self, forKey: .activateAndNext) ?? 48
+    previousItem = try c.decodeIfPresent(UInt16.self, forKey: .previousItem) ?? 50
+    nextSpace = try c.decodeIfPresent(UInt16.self, forKey: .nextSpace) ?? 125
+    previousSpace = try c.decodeIfPresent(UInt16.self, forKey: .previousSpace) ?? 126
+    nextDisplay = try c.decodeIfPresent(UInt16.self, forKey: .nextDisplay) ?? 124
+    previousDisplay = try c.decodeIfPresent(UInt16.self, forKey: .previousDisplay) ?? 123
+    renameSpace = try c.decodeIfPresent(UInt16.self, forKey: .renameSpace) ?? 15
+    cycleSortOrder = try c.decodeIfPresent(UInt16.self, forKey: .cycleSortOrder) ?? 1
+    createSpace = try c.decodeIfPresent(UInt16.self, forKey: .createSpace) ?? 45
+    closeWindow = try c.decodeIfPresent(UInt16.self, forKey: .closeWindow) ?? 13
+    quitApp = try c.decodeIfPresent(UInt16.self, forKey: .quitApp) ?? 12
+    cancel = try c.decodeIfPresent(UInt16.self, forKey: .cancel) ?? 53
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case activateAndNext, previousItem, nextSpace, previousSpace
+    case nextDisplay, previousDisplay, renameSpace, cycleSortOrder
+    case createSpace, closeWindow, quitApp, cancel
   }
 
   public subscript(action: ShortcutAction) -> UInt16 {
@@ -58,7 +78,6 @@ public struct KeyBindings: Codable, Equatable {
       case .previousDisplay: previousDisplay
       case .renameSpace: renameSpace
       case .cycleSortOrder: cycleSortOrder
-      case .createDefaultSpaces: createDefaultSpaces
       case .createSpace: createSpace
       case .closeWindow: closeWindow
       case .quitApp: quitApp
@@ -75,7 +94,6 @@ public struct KeyBindings: Codable, Equatable {
       case .previousDisplay: previousDisplay = newValue
       case .renameSpace: renameSpace = newValue
       case .cycleSortOrder: cycleSortOrder = newValue
-      case .createDefaultSpaces: createDefaultSpaces = newValue
       case .createSpace: createSpace = newValue
       case .closeWindow: closeWindow = newValue
       case .quitApp: quitApp = newValue
@@ -111,7 +129,6 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
   case previousDisplay
   case renameSpace
   case cycleSortOrder
-  case createDefaultSpaces
   case createSpace
   case closeWindow
   case quitApp
@@ -133,8 +150,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .previousDisplay: "Previous display"
     case .renameSpace: "Rename space"
     case .cycleSortOrder: "Cycle sort order"
-    case .createDefaultSpaces: "Create default spaces"
-    case .createSpace: "Create new space"
+    case .createSpace: "Create space menu"
     case .closeWindow: "Close window"
     case .quitApp: "Quit app"
     case .cancel: "Cancel"
@@ -151,8 +167,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .previousDisplay: "Cycles to the previous display"
     case .renameSpace: "Starts renaming the selected space"
     case .cycleSortOrder: "Cycles through space sort orders"
-    case .createDefaultSpaces: "Creates any missing spaces from your default names list"
-    case .createSpace: "Creates a new unnamed desktop space"
+    case .createSpace: "Opens the create space menu"
     case .closeWindow: "Closes the selected window (Shift closes the space)"
     case .quitApp: "Quits the app owning the selected window"
     case .cancel: "Dismisses the panel"

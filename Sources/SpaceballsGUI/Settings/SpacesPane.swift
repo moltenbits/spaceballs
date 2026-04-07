@@ -8,8 +8,8 @@ struct SpacesPane: View {
   @State private var editText: String = ""
   @State private var configuringIndex: Int? = nil
 
-  private let listBg = Color(white: 0.97)
-  private let footerBg = Color(white: 0.935)
+  private let listBg = Color(nsColor: .controlBackgroundColor)
+  private let footerBg = Color(nsColor: .windowBackgroundColor)
 
   var body: some View {
     spacesListView
