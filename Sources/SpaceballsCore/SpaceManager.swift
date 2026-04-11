@@ -1315,8 +1315,9 @@ public class SpaceManager {
       Thread.sleep(forTimeInterval: 0.2)
       Self.postMouseUp(at: targetCenter)
 
-      Thread.sleep(forTimeInterval: 0.2)
-      Self.dismissMissionControl()
+      // Click the target space to switch to it (also dismisses MC)
+      Thread.sleep(forTimeInterval: 0.3)
+      AXUIElementPerformAction(targetButton, kAXPressAction as CFString)
       success = true
     }
 
