@@ -1229,6 +1229,53 @@ public class SpaceManager {
 
   // MARK: - Window Move via Mission Control
 
+  /// Moves a window to a different Space by activating it, opening Mission Control,
+  /// and simulating a drag to the target space.
+  ///
+  /// - Parameters:
+  ///   - windowID: CGWindowID of the window to move.
+  ///   - targetSpaceID: ManagedSpaceID of the destination space.
+  /// - Throws: `WindowActivationError` if the window can't be found or activated.
+  /// - Returns: `true` if the drag completed successfully.
+  @discardableResult
+  public func moveWindowToSpace(windowID: Int, targetSpaceID: UInt64) throws -> Bool {
+    // 1. Look up the window title from the raw window list.
+    let windowList = dataSource.fetchWindowList()
+    guard let entry = windowList.first(where: {
+      ($0[kCGWindowNumber as String] as? Int) == windowID
+    }) else {
+      throw WindowActivationError.windowNotFound(windowID: windowID)
+    }
+    let windowTitle = (entry[kCGWindowName as String] as? String)
+      ?? (entry[kCGWindowOwnerName as String] as? String)
+      ?? ""
+
+    // 2. Resolve the target space's "Desktop N" label (what MC shows).
+    let allSpaces = getAllSpaces()
+    guard let targetSpace = allSpaces.first(where: { $0.id == targetSpaceID }) else {
+      print("moveWindowToSpace: space \(targetSpaceID) not found")
+      return false
+    }
+
+    let displayDesktopSpaces = allSpaces
+      .filter { $0.displayUUID == targetSpace.displayUUID && $0.type == .desktop }
+    guard let ordinalIndex = displayDesktopSpaces.firstIndex(where: { $0.id == targetSpaceID })
+    else {
+      print("moveWindowToSpace: could not determine ordinal for space \(targetSpaceID)")
+      return false
+    }
+    let targetSpaceTitle = "Desktop \(ordinalIndex + 1)"
+
+    // 3. Activate the window to switch to its space.
+    try activateWindow(id: windowID)
+
+    // 4. Brief delay for the space switch animation to complete.
+    Thread.sleep(forTimeInterval: 0.3)
+
+    // 5. Perform the MC drag.
+    return moveWindowInMC(windowTitle: windowTitle, targetSpaceTitle: targetSpaceTitle)
+  }
+
   /// Moves a window to a different Space by simulating a drag in Mission Control.
   ///
   /// Opens Mission Control, finds the window thumbnail by title, initiates a
