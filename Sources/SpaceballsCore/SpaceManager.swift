@@ -1269,11 +1269,20 @@ public class SpaceManager {
     // 3. Activate the window to switch to its space.
     try activateWindow(id: windowID)
 
-    // 4. Brief delay for the space switch animation to complete.
-    Thread.sleep(forTimeInterval: 0.3)
+    // 4. Wait for the space switch animation to complete.
+    //    Cross-space transitions need more time than same-space activations.
+    Thread.sleep(forTimeInterval: 0.8)
 
     // 5. Perform the MC drag.
-    return moveWindowInMC(windowTitle: windowTitle, targetSpaceTitle: targetSpaceTitle)
+    let moved = moveWindowInMC(windowTitle: windowTitle, targetSpaceTitle: targetSpaceTitle)
+
+    // 6. Activate the window again so it's in front on the target space.
+    if moved {
+      Thread.sleep(forTimeInterval: 0.3)
+      try activateWindow(id: windowID)
+    }
+
+    return moved
   }
 
   /// Moves a window to a different Space by simulating a drag in Mission Control.

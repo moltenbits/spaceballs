@@ -211,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     currentPanelDisplayUUID = activeUUID
+    keyInterceptor.setSuppressConfirm(false)
     keyInterceptor.setPanelVisible(true)
 
     // Deferred re-size: NSHostingView needs a run loop cycle to settle SwiftUI
@@ -239,6 +240,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func hidePanel() {
     if viewModel.panelMode == .createSpace {
       viewModel.exitCreateMode()
+    }
+    if viewModel.moveMode {
+      viewModel.cancelMoveMode()
     }
     if viewModel.isRenaming {
       viewModel.cancelRename()
@@ -402,6 +406,8 @@ extension AppDelegate: KeyInterceptorDelegate {
   func keyInterceptorMoveDown() {
     if viewModel.panelMode == .createSpace {
       viewModel.moveCreateSelectionDown()
+    } else if viewModel.moveMode {
+      viewModel.moveMarkedWindowToNextSpace()
     } else {
       viewModel.moveSelectionDown()
     }
@@ -410,6 +416,8 @@ extension AppDelegate: KeyInterceptorDelegate {
   func keyInterceptorMoveUp() {
     if viewModel.panelMode == .createSpace {
       viewModel.moveCreateSelectionUp()
+    } else if viewModel.moveMode {
+      viewModel.moveMarkedWindowToPreviousSpace()
     } else {
       viewModel.moveSelectionUp()
     }
@@ -418,6 +426,13 @@ extension AppDelegate: KeyInterceptorDelegate {
   func keyInterceptorConfirm() {
     if viewModel.panelMode == .createSpace {
       confirmCreateMenuSelection()
+      return
+    }
+    // Move mode: execute the move instead of normal activation
+    if viewModel.moveMode {
+      if viewModel.executeMoveWindow() {
+        hidePanel()
+      }
       return
     }
     switch viewModel.selectedItem {
@@ -438,6 +453,10 @@ extension AppDelegate: KeyInterceptorDelegate {
     if viewModel.panelMode == .createSpace {
       viewModel.exitCreateMode()
       resizePanelsToFit()
+      return
+    }
+    if viewModel.moveMode {
+      viewModel.cancelMoveMode()
       return
     }
     hidePanel()
@@ -466,6 +485,8 @@ extension AppDelegate: KeyInterceptorDelegate {
   func keyInterceptorJumpToNextSpace() {
     if viewModel.panelMode == .createSpace {
       viewModel.moveCreateSelectionDown()
+    } else if viewModel.moveMode {
+      viewModel.moveMarkedWindowToNextSpace()
     } else {
       viewModel.moveToNextSpace()
     }
@@ -474,6 +495,8 @@ extension AppDelegate: KeyInterceptorDelegate {
   func keyInterceptorJumpToPreviousSpace() {
     if viewModel.panelMode == .createSpace {
       viewModel.moveCreateSelectionUp()
+    } else if viewModel.moveMode {
+      viewModel.moveMarkedWindowToPreviousSpace()
     } else {
       viewModel.moveToPreviousSpace()
     }
@@ -484,6 +507,10 @@ extension AppDelegate: KeyInterceptorDelegate {
     viewModel.startRenaming()
     guard viewModel.isRenaming else { return }
     keyInterceptor.setRenameMode(true)
+  }
+
+  func keyInterceptorToggleMoveMode() {
+    viewModel.toggleMoveMode()
   }
 
   func keyInterceptorCycleSortOrder() {
@@ -529,6 +556,7 @@ extension AppDelegate: KeyInterceptorDelegate {
       self.viewModel.sortOverlayGeneration += 1
       self.viewModel.refresh()
       self.viewModel.resetSelection()
+      self.keyInterceptor.setSuppressConfirm(false)
 
       DispatchQueue.main.async {
         let screens = self.targetScreens()

@@ -14,6 +14,7 @@ public struct KeyBindings: Codable, Equatable {
   public var createSpace: UInt16
   public var closeWindow: UInt16
   public var quitApp: UInt16
+  public var moveWindow: UInt16
   public var cancel: UInt16
 
   public init(
@@ -28,6 +29,7 @@ public struct KeyBindings: Codable, Equatable {
     createSpace: UInt16 = 45,
     closeWindow: UInt16 = 13,
     quitApp: UInt16 = 12,
+    moveWindow: UInt16 = 46,
     cancel: UInt16 = 53
   ) {
     self.activateAndNext = activateAndNext
@@ -41,6 +43,7 @@ public struct KeyBindings: Codable, Equatable {
     self.createSpace = createSpace
     self.closeWindow = closeWindow
     self.quitApp = quitApp
+    self.moveWindow = moveWindow
     self.cancel = cancel
   }
 
@@ -58,13 +61,14 @@ public struct KeyBindings: Codable, Equatable {
     createSpace = try c.decodeIfPresent(UInt16.self, forKey: .createSpace) ?? 45
     closeWindow = try c.decodeIfPresent(UInt16.self, forKey: .closeWindow) ?? 13
     quitApp = try c.decodeIfPresent(UInt16.self, forKey: .quitApp) ?? 12
+    moveWindow = try c.decodeIfPresent(UInt16.self, forKey: .moveWindow) ?? 46
     cancel = try c.decodeIfPresent(UInt16.self, forKey: .cancel) ?? 53
   }
 
   private enum CodingKeys: String, CodingKey {
     case activateAndNext, previousItem, nextSpace, previousSpace
     case nextDisplay, previousDisplay, renameSpace, cycleSortOrder
-    case createSpace, closeWindow, quitApp, cancel
+    case createSpace, closeWindow, quitApp, moveWindow, cancel
   }
 
   public subscript(action: ShortcutAction) -> UInt16 {
@@ -81,6 +85,7 @@ public struct KeyBindings: Codable, Equatable {
       case .createSpace: createSpace
       case .closeWindow: closeWindow
       case .quitApp: quitApp
+      case .moveWindow: moveWindow
       case .cancel: cancel
       }
     }
@@ -97,6 +102,7 @@ public struct KeyBindings: Codable, Equatable {
       case .createSpace: createSpace = newValue
       case .closeWindow: closeWindow = newValue
       case .quitApp: quitApp = newValue
+      case .moveWindow: moveWindow = newValue
       case .cancel: cancel = newValue
       }
     }
@@ -132,6 +138,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
   case createSpace
   case closeWindow
   case quitApp
+  case moveWindow
   case cancel
 
   public var id: String { rawValue }
@@ -153,6 +160,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .createSpace: "Create space menu"
     case .closeWindow: "Close window"
     case .quitApp: "Quit app"
+    case .moveWindow: "Move window"
     case .cancel: "Cancel"
     }
   }
@@ -170,6 +178,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .createSpace: "Opens the create space menu"
     case .closeWindow: "Closes the selected window (Shift closes the space)"
     case .quitApp: "Quits the app owning the selected window"
+    case .moveWindow: "Marks the selected window for moving to another space"
     case .cancel: "Dismisses the panel"
     }
   }

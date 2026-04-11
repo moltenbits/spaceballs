@@ -20,6 +20,7 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorCancelRename()
   func keyInterceptorCycleSortOrder()
   func keyInterceptorCloseSpace()
+  func keyInterceptorToggleMoveMode()
   func keyInterceptorToggleCreateMenu()
 }
 
@@ -324,6 +325,14 @@ private func keyInterceptorCallback(
     if cmdHeld && keyCode == Int64(bindings.cycleSortOrder) && interceptor.panelVisible {
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorCycleSortOrder()
+      }
+      return nil  // consume
+    }
+
+    // Move window to another space
+    if cmdHeld && keyCode == Int64(bindings.moveWindow) && interceptor.panelVisible {
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorToggleMoveMode()
       }
       return nil  // consume
     }

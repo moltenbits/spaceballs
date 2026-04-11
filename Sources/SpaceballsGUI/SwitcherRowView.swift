@@ -4,6 +4,7 @@ import SwiftUI
 struct SwitcherRowView: View {
   let row: SwitcherRow
   let isSelected: Bool
+  var isMoveMode: Bool = false
   var showAppIcon: Bool = true
   var textSize: CGFloat = 13
   var iconSize: CGFloat = 20
@@ -64,7 +65,8 @@ struct SwitcherRowView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
       isSelected
-        ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
+        ? RoundedRectangle(cornerRadius: 6).fill(
+          Color.accentColor.opacity(isMoveMode ? 0.35 : 0.8))
         : nil
     )
     .contentShape(Rectangle())

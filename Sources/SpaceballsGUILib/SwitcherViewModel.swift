@@ -77,6 +77,17 @@ public final class SwitcherViewModel: ObservableObject {
   /// Incremented each time the overlay is shown, so stale dismiss timers are ignored.
   @Published public var sortOverlayGeneration: Int = 0
 
+  // MARK: - Move Mode
+
+  /// When true, the user has marked a window for moving to another space.
+  @Published public var moveMode: Bool = false
+
+  /// The CGWindowID of the window marked for moving. Set when entering move mode.
+  @Published public var markedWindowID: Int? = nil
+
+  /// The space ID that the marked window currently belongs to (for UI highlighting).
+  @Published public var markedWindowSpaceID: UInt64? = nil
+
   // MARK: - Create Space Menu
 
   public enum PanelMode {
@@ -1012,6 +1023,100 @@ public final class SwitcherViewModel: ObservableObject {
     } catch {
       print("Failed to activate window \(windowID): \(error)")
     }
+  }
+
+  // MARK: - Move Window to Space
+
+  /// Toggles move mode. If a window row is selected, marks it for moving.
+  public func toggleMoveMode() {
+    if moveMode {
+      cancelMoveMode()
+      return
+    }
+
+    guard case .windowRow(let windowID) = selectedItem else { return }
+
+    let spaceID = filteredSections.first(where: {
+      $0.windows.contains(where: { $0.id == windowID })
+    })?.id
+
+    markedWindowID = windowID
+    markedWindowSpaceID = spaceID
+    moveMode = true
+  }
+
+  /// Visually moves the marked window to the next space in the list.
+  public func moveMarkedWindowToNextSpace() {
+    guard moveMode, let windowID = markedWindowID else { return }
+    moveMarkedWindowByOffset(1, windowID: windowID)
+  }
+
+  /// Visually moves the marked window to the previous space in the list.
+  public func moveMarkedWindowToPreviousSpace() {
+    guard moveMode, let windowID = markedWindowID else { return }
+    moveMarkedWindowByOffset(-1, windowID: windowID)
+  }
+
+  private func moveMarkedWindowByOffset(_ offset: Int, windowID: Int) {
+    // Find the section currently containing the marked window
+    guard let sourceIdx = sections.firstIndex(where: {
+      $0.windows.contains(where: { $0.id == windowID })
+    }) else { return }
+
+    // Calculate target section index (wrap around)
+    let count = sections.count
+    guard count > 1 else { return }
+    let targetIdx = (sourceIdx + offset + count) % count
+
+    // Remove the row from the source section
+    guard let rowIdx = sections[sourceIdx].windows.firstIndex(where: {
+      $0.id == windowID
+    }) else { return }
+    let row = sections[sourceIdx].windows.remove(at: rowIdx)
+
+    // Insert as the first window in the target section
+    sections[targetIdx].windows.insert(row, at: 0)
+
+    // Keep selection on the moved window
+    selectedItem = .windowRow(windowID)
+  }
+
+  /// Executes the move: moves the marked window to whatever space it's currently shown in.
+  /// Returns `true` if a move was initiated.
+  @discardableResult
+  public func executeMoveWindow() -> Bool {
+    guard moveMode, let windowID = markedWindowID else { return false }
+
+    // Find which space the window is currently shown in (after visual moves)
+    let targetSpaceID = sections.first(where: {
+      $0.windows.contains(where: { $0.id == windowID })
+    })?.id
+
+    guard let targetSpaceID, targetSpaceID != markedWindowSpaceID else {
+      cancelMoveMode()
+      return false
+    }
+
+    let moveWindowID = windowID
+    let moveTargetSpaceID = targetSpaceID
+    cancelMoveMode()
+
+    DispatchQueue.global(qos: .userInteractive).async { [spaceManager] in
+      do {
+        try spaceManager.moveWindowToSpace(windowID: moveWindowID, targetSpaceID: moveTargetSpaceID)
+      } catch {
+        print("Failed to move window \(moveWindowID) to space \(moveTargetSpaceID): \(error)")
+      }
+    }
+
+    return true
+  }
+
+  /// Cancels move mode and clears all move-related state.
+  public func cancelMoveMode() {
+    moveMode = false
+    markedWindowID = nil
+    markedWindowSpaceID = nil
   }
 
   // MARK: - Close / Quit

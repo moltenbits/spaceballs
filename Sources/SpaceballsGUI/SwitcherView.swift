@@ -420,6 +420,7 @@ struct SwitcherView: View {
         SwitcherRowView(
           row: row,
           isSelected: viewModel.selectedItem == .windowRow(row.id),
+          isMoveMode: viewModel.moveMode,
           showAppIcon: appSettings.showAppIcons,
           textSize: CGFloat(appSettings.textSize),
           iconSize: appSettings.iconSize,

@@ -2,9 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Table of Contents
+
+- [What This Is](#what-this-is)
+- [Build & Run Commands](#build--run-commands)
+- [Architecture](#architecture)
+  - [Package Structure](#package-structure)
+  - [Source Layout](#source-layout)
+  - [Key Design Patterns](#key-design-patterns)
+- [Private APIs](#private-apis)
+  - [Cross-Space Window Activation Flow](#cross-space-window-activation-flow)
+  - [Moving Windows Between Spaces via Mission Control Drag](#moving-windows-between-spaces-via-mission-control-drag)
+  - [Cross-Space Window Activation Requires .app Bundle](#cross-space-window-activation-requires-app-bundle)
+- [Key Constraints](#key-constraints)
+- [Known Limitations](#known-limitations)
+  - [Space Names Cannot Be Read or Set via API](#space-names-cannot-be-read-or-set-via-api)
+  - [Moving Windows Between Spaces — CGS APIs Blocked, MC Drag Works](#moving-windows-between-spaces--cgs-apis-blocked-mc-drag-works)
+  - [Opening New Windows on a Specific Space](#opening-new-windows-on-a-specific-space)
+
+---
+
 ## What This Is
 
-Spaceballs is a macOS window switcher app inspired by [Contexts](https://contexts.co) — a fast, keyboard-driven way to navigate between windows across Spaces. It provides per-window (not per-app) listing, Space-aware organization with MRU ordering, cross-space window activation, and a configurable floating panel UI.
+Spaceballs is a macOS window switcher app inspired by [Contexts](https://contexts.co) — a fast, keyboard-driven way to navigate between windows across Spaces. It provides per-window (not per-app) listing, Space-aware organization with MRU ordering, cross-space window activation, window-to-space moving, and a configurable floating panel UI.
 
 ## Build & Run Commands
 
@@ -49,7 +69,7 @@ Sources/
 │   ├── PrivateCGS.swift         # CGS type definitions & @_silgen_name bindings
 │   ├── PrivateSkyLight.swift    # SkyLight process/window activation APIs
 │   ├── PrivateAX.swift          # Accessibility framework bindings
-│   ├── SpaceManager.swift       # Core logic: enumeration, activation, close, quit
+│   ├── SpaceManager.swift       # Core logic: enumeration, activation, close, quit, move
 │   ├── SystemDataSource.swift   # Protocol for CGS data abstraction (testable)
 │   ├── CGSDataSource.swift      # Real CGS implementation
 │   └── WindowActivationError.swift
@@ -60,7 +80,7 @@ Sources/
 ├── SpaceballsGUI/           # GUI app — AppKit + SwiftUI
 │   ├── main.swift               # Entry point: NSApp.accessory + AppDelegate
 │   ├── AppDelegate.swift        # Panel lifecycle, multi-display, key interception
-│   ├── KeyInterceptor.swift     # CGEvent tap: Cmd+Tab/`/W/Q/,/Esc
+│   ├── KeyInterceptor.swift     # CGEvent tap: Cmd+Tab/`/W/Q/M/,/Esc
 │   ├── SwitcherPanel.swift      # Floating NSPanel configuration
 │   ├── SwitcherView.swift       # Root SwiftUI view (sections + settings row)
 │   ├── SwitcherRowView.swift    # Window row + section header views
@@ -74,6 +94,7 @@ Sources/
     ├── SpaceballsCommand.swift    # @main ParsableCommand
     ├── ListCommand.swift        # list subcommand (default)
     ├── ActivateCommand.swift    # activate <windowID> subcommand
+    ├── MoveCommand.swift        # move <window> <space> subcommand
     ├── Output.swift             # Text/JSON formatting
     └── Version.swift
 ```
@@ -85,6 +106,7 @@ Sources/
 - **SelectedItem** enum: `.spaceHeader(UInt64)`, `.windowRow(Int)`, `.settings` — unifies the keyboard navigation cycle through space headers, window rows, and the settings row
 - **AppDelegate** manages an array of `SwitcherPanel` instances (one per display for "All" mode), all sharing the same `SwitcherViewModel`
 - **KeyInterceptor** uses a `CGEvent.tapCreate` at `.cghidEventTap` level with signal handlers to ensure cleanup on process exit (prevents system-wide input freeze)
+- **Move mode** in `SwitcherViewModel` visually relocates window rows between sections. `MissionControlContext` + CGEvent mouse simulation handles the actual move via Mission Control drag.
 
 ## Private APIs
 
@@ -98,6 +120,7 @@ Sources/
 | `GetProcessForPID` | Carbon (deprecated) | PID → ProcessSerialNumber |
 | `_AXUIElementCreateWithRemoteToken` | HIServices | Construct AX handles for cross-space windows |
 | `_AXUIElementGetWindow` | HIServices | AXUIElement → CGWindowID |
+| `CoreDockSendNotification` | CoreDock | Open/dismiss Mission Control |
 
 ### Cross-Space Window Activation Flow
 
@@ -106,6 +129,28 @@ Sources/
 3. `SLPSPostEventRecordTo` — two synthetic event records (key-down + key-up) with CGWindowID at offset 0x3c
 4. `AXUIElementPerformAction(kAXRaiseAction)` — z-order raise within the app's window stack
 5. 100ms timeout on brute-force search (same as AltTab)
+
+### Moving Windows Between Spaces via Mission Control Drag
+
+Native CGS/SkyLight move APIs (`SLSMoveWindowsToManagedSpace`, `CGSAddWindowsToSpaces`) are blocked on macOS 14.5+ by `connection_holds_rights_on_window` checks. Spaceballs works around this by simulating the drag that a user would perform manually in Mission Control:
+
+1. `activateWindow(id:)` — switch to the window's space (800ms delay for cross-space transitions)
+2. `CoreDockSendNotification("com.apple.expose.awake")` — open Mission Control
+3. `MissionControlContext` — navigate the Dock's AX hierarchy to find `mc.windows` (window thumbnails) and `mc.spaces.list` (space buttons)
+4. Match the target window by `AXTitle` in `mc.windows`
+5. `postMouseMoveAndGrab()` — hover + mouseDown on thumbnail center
+6. `postMouseDragToPoint()` — nudge 15px to initiate drag state
+7. Wait 500ms for MC to adjust spaces bar, then re-query `mc.spaces.list` positions (they shift during drag)
+8. Match target space by title ("Desktop N"), drag directly to its center
+9. `postMouseUp()` — drop the window
+10. `AXUIElementPerformAction(kAXPressAction)` on target space button — switch to it
+11. `activateWindow(id:)` — bring the moved window to front
+
+**Key details:**
+- Window thumbnails in MC are `AXButton` children of `mc.windows` with `AXTitle` = window title, `AXPosition`/`AXSize` = screen coordinates
+- Space buttons shift when a window is dragged into the bar (placeholder insertion). Positions must be read AFTER initiating the drag, not before.
+- Space buttons are matched by title ("Desktop N"), not index, because placeholder insertion shifts indices.
+- The `move` CLI subcommand accepts window titles or IDs, and space names or IDs.
 
 ### Cross-Space Window Activation Requires .app Bundle
 
@@ -118,7 +163,7 @@ Sources/
 - **Screen Recording permission** required for window titles
 - **Private APIs** — undocumented Apple internals; may break across macOS versions
 - **No external dependencies** beyond swift-argument-parser (CLI only); GUI is pure Swift + system frameworks
-- **Read-only for spaces** — cannot move windows between Spaces on modern macOS without SIP disabled (see Known Limitations below)
+- **Window move via MC drag simulation** — moving windows between Spaces works by simulating a drag in Mission Control (no SIP required), but is timing-sensitive and depends on MC's AX hierarchy
 
 ## Known Limitations
 
@@ -132,17 +177,23 @@ macOS does not store human-readable names for Spaces. The "Desktop 1", "Desktop 
 
 **Spaceballs's approach:** Store custom names locally in UserDefaults, keyed by space UUID. Users can rename spaces in Settings. Default labels use ordinal numbering ("Desktop 1", "Desktop 2").
 
-### Moving Windows Between Spaces Requires SIP Disabled
+### Moving Windows Between Spaces — CGS APIs Blocked, MC Drag Works
 
-Private CGS/SkyLight APIs exist for moving windows between spaces, but Apple has locked them down so they only work from `Dock.app`'s privileged WindowServer connection.
+Private CGS/SkyLight APIs (`SLSMoveWindowsToManagedSpace`, `CGSAddWindowsToSpaces`, etc.) are blocked on macOS 14.5+ by `connection_holds_rights_on_window` checks — only `Dock.app`'s privileged WindowServer connection passes.
 
-| macOS Version | Move APIs Work Without SIP? |
+| macOS Version | CGS Move APIs Work? |
 |---|---|
 | < 14.5 (pre-Sonoma) | Yes |
 | 14.5+ (Sonoma) | No — `connection_holds_rights_on_window` checks |
 | 15.0+ (Sequoia) | No — workarounds also blocked |
 
-**Spaceballs's approach:** Treat the app as read-only for space/window topology. Focus on enumeration and focus-switching only.
+**Spaceballs's approach:** Simulate the drag that a user would perform manually in Mission Control. Open MC, find the window thumbnail via AX, post CGEvent mouse events to drag it to the target space. No SIP required. See "Moving Windows Between Spaces via Mission Control Drag" above for the full flow.
+
+**Limitations of MC drag approach:**
+- Timing-sensitive — delays between activation, MC open, drag initiation, and position re-query must be tuned
+- Window matched by title string — duplicate titles could match the wrong window
+- Briefly visible MC animation during the move (~2s)
+- Depends on Mission Control's AX hierarchy structure (could change across macOS versions)
 
 ### Opening New Windows on a Specific Space
 
