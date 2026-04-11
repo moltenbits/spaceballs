@@ -1034,6 +1034,452 @@ public class SpaceManager {
     app.terminate()
   }
 
+  // MARK: - Mission Control Context
+
+  /// Resolved AX elements for an open Mission Control session on a single display.
+  struct MissionControlContext {
+    let mcGroup: AXUIElement
+    let mcDisplay: AXUIElement
+    let mcWindows: AXUIElement
+    let mcSpaces: AXUIElement
+    let mcSpacesList: AXUIElement
+
+    /// All window thumbnail buttons currently shown in Mission Control.
+    var windowButtons: [AXUIElement] { SpaceManager.axChildren(mcWindows) }
+
+    /// All space buttons in the spaces bar.
+    var spaceButtons: [AXUIElement] { SpaceManager.axChildren(mcSpacesList) }
+
+    /// Finds a window thumbnail by title. Prefers exact match, falls back to
+    /// case-insensitive substring. Returns `nil` if no match or multiple substring matches.
+    func findWindowButton(titled title: String) -> AXUIElement? {
+      // Prefer exact match
+      if let exact = windowButtons.first(where: {
+        SpaceManager.axStringAttribute($0, name: "AXTitle") == title
+      }) {
+        return exact
+      }
+      // Fall back to substring match, but only if unambiguous
+      let matches = windowButtons.filter {
+        (SpaceManager.axStringAttribute($0, name: "AXTitle") ?? "")
+          .localizedCaseInsensitiveContains(title)
+      }
+      return matches.count == 1 ? matches.first : nil
+    }
+
+    /// Returns all window thumbnails whose title contains the given substring.
+    func findWindowButtons(titleContaining substring: String) -> [AXUIElement] {
+      windowButtons.filter {
+        (SpaceManager.axStringAttribute($0, name: "AXTitle") ?? "")
+          .localizedCaseInsensitiveContains(substring)
+      }
+    }
+
+    /// Finds a space button by exact title match.
+    func findSpaceButton(titled title: String) -> AXUIElement? {
+      spaceButtons.first {
+        SpaceManager.axStringAttribute($0, name: "AXTitle") == title
+      }
+    }
+  }
+
+  /// Opens Mission Control via Dock's CoreDock API, polls for the AX hierarchy,
+  /// and returns a context with resolved element references.
+  ///
+  /// Must be called from a background thread (blocks while polling).
+  /// Caller is responsible for calling `dismissMissionControl()` when done.
+  static func openMissionControlContext(
+    screenNumber: CGDirectDisplayID? = nil
+  ) -> MissionControlContext? {
+    guard
+      let dockApp = NSRunningApplication.runningApplications(
+        withBundleIdentifier: "com.apple.dock"
+      ).first
+    else {
+      print("openMissionControlContext: Dock not running")
+      return nil
+    }
+
+    let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
+
+    CoreDockSendNotification("com.apple.expose.awake" as CFString)
+
+    // Poll for the Mission Control AX group
+    let mcGroup: AXUIElement? = {
+      let deadline = DispatchTime.now() + .milliseconds(2000)
+      while DispatchTime.now() < deadline {
+        if let mc = axChildWithIdentifier(dockElement, identifier: "mc") { return mc }
+        Thread.sleep(forTimeInterval: 0.01)
+      }
+      return nil
+    }()
+
+    guard let mcGroup else {
+      print("openMissionControlContext: Mission Control AX group not found")
+      return nil
+    }
+
+    // Wait for MC animation and AX tree to fully populate
+    Thread.sleep(forTimeInterval: 0.5)
+
+    // Find mc.display (match by screen number if provided, or use first/only)
+    let mcDisplay: AXUIElement?
+    if let screenNumber {
+      mcDisplay = axChildMatchingDisplay(mcGroup, screenNumber: screenNumber)
+    } else {
+      mcDisplay = axChildren(mcGroup).first {
+        axStringAttribute($0, name: "AXIdentifier") == "mc.display"
+      }
+    }
+
+    guard let mcDisplay else {
+      print("openMissionControlContext: mc.display not found")
+      return nil
+    }
+
+    guard let mcWindows = axChildWithIdentifier(mcDisplay, identifier: "mc.windows"),
+      let mcSpaces = axChildWithIdentifier(mcDisplay, identifier: "mc.spaces"),
+      let mcSpacesList = axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
+    else {
+      print("openMissionControlContext: mc.windows/mc.spaces/mc.spaces.list not found")
+      return nil
+    }
+
+    return MissionControlContext(
+      mcGroup: mcGroup, mcDisplay: mcDisplay,
+      mcWindows: mcWindows, mcSpaces: mcSpaces, mcSpacesList: mcSpacesList)
+  }
+
+  // MARK: - AX Position/Size Helpers
+
+  static func axPosition(_ element: AXUIElement) -> CGPoint? {
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &ref) == .success,
+      let value = ref
+    else { return nil }
+    var point = CGPoint.zero
+    guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else { return nil }
+    return point
+  }
+
+  static func axSize(_ element: AXUIElement) -> CGSize? {
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &ref) == .success,
+      let value = ref
+    else { return nil }
+    var size = CGSize.zero
+    guard AXValueGetValue(value as! AXValue, .cgSize, &size) else { return nil }
+    return size
+  }
+
+  /// Returns the center point of an AX element's frame.
+  static func axCenter(_ element: AXUIElement) -> CGPoint? {
+    guard let pos = axPosition(element), let size = axSize(element) else { return nil }
+    return CGPoint(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
+  }
+
+  // MARK: - CGEvent Mouse Simulation
+
+  /// Moves the cursor to a point, pauses, then presses mouseDown to grab.
+  static func postMouseMoveAndGrab(at point: CGPoint) {
+    if let move = CGEvent(
+      mouseEventSource: nil, mouseType: .mouseMoved,
+      mouseCursorPosition: point, mouseButton: .left)
+    {
+      move.post(tap: .cghidEventTap)
+    }
+    Thread.sleep(forTimeInterval: 0.05)
+
+    if let down = CGEvent(
+      mouseEventSource: nil, mouseType: .leftMouseDown,
+      mouseCursorPosition: point, mouseButton: .left)
+    {
+      down.post(tap: .cghidEventTap)
+    }
+    Thread.sleep(forTimeInterval: 0.1)
+  }
+
+  /// Posts mouseDragged events in steps from one point to another (mouse must already be down).
+  static func postMouseDragToPoint(from: CGPoint, to: CGPoint, steps: Int = 15) {
+    for i in 1...steps {
+      let t = CGFloat(i) / CGFloat(steps)
+      let point = CGPoint(
+        x: from.x + (to.x - from.x) * t,
+        y: from.y + (to.y - from.y) * t
+      )
+      if let drag = CGEvent(
+        mouseEventSource: nil, mouseType: .leftMouseDragged,
+        mouseCursorPosition: point, mouseButton: .left)
+      {
+        drag.post(tap: .cghidEventTap)
+      }
+      Thread.sleep(forTimeInterval: 0.008)
+    }
+  }
+
+  /// Posts a mouseUp event at the given point.
+  static func postMouseUp(at point: CGPoint) {
+    if let up = CGEvent(
+      mouseEventSource: nil, mouseType: .leftMouseUp,
+      mouseCursorPosition: point, mouseButton: .left)
+    {
+      up.post(tap: .cghidEventTap)
+    }
+  }
+
+  // MARK: - Window Move via Mission Control
+
+  /// Moves a window to a different Space by simulating a drag in Mission Control.
+  ///
+  /// Opens Mission Control, finds the window thumbnail by title, initiates a
+  /// minimal drag to let the spaces bar settle, re-queries space positions,
+  /// then drags directly to the target space and drops.
+  ///
+  /// - Parameters:
+  ///   - windowTitle: Substring to match against MC window thumbnail titles.
+  ///   - targetSpaceTitle: Exact title of the target space (e.g., "Desktop 2").
+  ///   - verbose: Print diagnostic output.
+  /// - Returns: `true` if the drag completed, `false` on any error.
+  @discardableResult
+  public func moveWindowInMC(
+    windowTitle: String, targetSpaceTitle: String, verbose: Bool = false
+  ) -> Bool {
+    guard AXIsProcessTrusted() else {
+      print("moveWindowInMC: Accessibility not trusted")
+      return false
+    }
+
+    let semaphore = DispatchSemaphore(value: 0)
+    var success = false
+
+    DispatchQueue.global(qos: .userInteractive).async {
+      defer { semaphore.signal() }
+
+      guard let mc = Self.openMissionControlContext() else {
+        Self.dismissMissionControl()
+        return
+      }
+
+      // Find the window thumbnail (exact match preferred, unambiguous substring fallback)
+      guard let windowButton = mc.findWindowButton(titled: windowTitle),
+        let windowCenter = Self.axCenter(windowButton)
+      else {
+        let matches = mc.findWindowButtons(titleContaining: windowTitle)
+        if matches.count > 1 {
+          print("moveWindowInMC: Multiple windows match \"\(windowTitle)\":")
+          for m in matches {
+            print("  - \(Self.axStringAttribute(m, name: "AXTitle") ?? "?")")
+          }
+        } else {
+          let available = mc.windowButtons.compactMap {
+            Self.axStringAttribute($0, name: "AXTitle")
+          }
+          print("moveWindowInMC: No window matching \"\(windowTitle)\"")
+          if verbose { print("  Available: \(available)") }
+        }
+        Self.dismissMissionControl()
+        return
+      }
+
+      if verbose {
+        let title = Self.axStringAttribute(windowButton, name: "AXTitle") ?? "?"
+        print("  Window: \"\(title)\" at \(windowCenter)")
+      }
+
+      // Grab and nudge to initiate drag (minimal 15px movement)
+      Self.postMouseMoveAndGrab(at: windowCenter)
+      let nudge = CGPoint(x: windowCenter.x, y: windowCenter.y - 15)
+      Self.postMouseDragToPoint(from: windowCenter, to: nudge, steps: 3)
+
+      // Wait for MC to adjust the spaces bar
+      Thread.sleep(forTimeInterval: 0.5)
+
+      // Re-query space positions after drag initiation
+      guard let targetButton = mc.findSpaceButton(titled: targetSpaceTitle),
+        let targetCenter = Self.axCenter(targetButton)
+      else {
+        let available = mc.spaceButtons.compactMap {
+          Self.axStringAttribute($0, name: "AXTitle")
+        }
+        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found")
+        if verbose { print("  Available: \(available)") }
+        Self.postMouseUp(at: nudge)
+        Self.dismissMissionControl()
+        return
+      }
+
+      if verbose { print("  Target: \"\(targetSpaceTitle)\" at \(targetCenter)") }
+
+      // Drag directly to the target space and drop
+      Self.postMouseDragToPoint(from: nudge, to: targetCenter)
+      Thread.sleep(forTimeInterval: 0.2)
+      Self.postMouseUp(at: targetCenter)
+
+      Thread.sleep(forTimeInterval: 0.2)
+      Self.dismissMissionControl()
+      success = true
+    }
+
+    semaphore.wait()
+    return success
+  }
+
+  // MARK: - Mission Control Diagnostics
+
+  /// Dumps the full AX hierarchy of Mission Control for diagnostic purposes.
+  public func dumpMissionControlAXTree() {
+    guard AXIsProcessTrusted() else {
+      print("dumpMissionControlAXTree: Accessibility not trusted")
+      return
+    }
+
+    let semaphore = DispatchSemaphore(value: 0)
+
+    DispatchQueue.global(qos: .userInteractive).async {
+      guard let mc = Self.openMissionControlContext() else {
+        Self.dismissMissionControl()
+        semaphore.signal()
+        return
+      }
+
+      print("=== Mission Control AX Tree ===\n")
+      Self.dumpAXElement(mc.mcGroup, indent: 0)
+      print("\n=== End AX Tree ===")
+
+      Thread.sleep(forTimeInterval: 0.3)
+      Self.dismissMissionControl()
+      semaphore.signal()
+    }
+
+    semaphore.wait()
+  }
+
+  /// Opens Mission Control, grabs a window, nudges it to initiate drag,
+  /// re-queries positions, then visits each space button (1.5s each)
+  /// before dropping on a specified space. Used as a manual functional test.
+  public func debugMCDragPositions(windowTitle: String, dropSpaceTitle: String? = nil) {
+    guard AXIsProcessTrusted() else { return }
+
+    let semaphore = DispatchSemaphore(value: 0)
+
+    DispatchQueue.global(qos: .userInteractive).async {
+      guard let mc = Self.openMissionControlContext() else {
+        Self.dismissMissionControl()
+        semaphore.signal()
+        return
+      }
+
+      // Find the window thumbnail
+      guard let windowButton = mc.findWindowButton(titled: windowTitle),
+        let windowCenter = Self.axCenter(windowButton)
+      else {
+        let matches = mc.findWindowButtons(titleContaining: windowTitle)
+        if matches.count > 1 {
+          print("Multiple windows match \"\(windowTitle)\":")
+          for m in matches {
+            print("  - \(Self.axStringAttribute(m, name: "AXTitle") ?? "?")")
+          }
+        } else {
+          print("Window \"\(windowTitle)\" not found")
+        }
+        Self.dismissMissionControl()
+        semaphore.signal()
+        return
+      }
+
+      // Grab and nudge to initiate drag
+      Self.postMouseMoveAndGrab(at: windowCenter)
+      let nudge = CGPoint(x: windowCenter.x, y: windowCenter.y - 15)
+      Self.postMouseDragToPoint(from: windowCenter, to: nudge, steps: 3)
+      Thread.sleep(forTimeInterval: 0.8)
+
+      // Re-query positions after drag initiation
+      let spaceButtons = mc.spaceButtons
+      var lastPoint = nudge
+
+      // Visit each space button
+      for (i, btn) in spaceButtons.enumerated() {
+        let title = Self.axStringAttribute(btn, name: "AXTitle") ?? "?"
+        guard let center = Self.axCenter(btn) else { continue }
+        print("Moving to [\(i)] \"\(title)\" at \(center)")
+        Self.postMouseDragToPoint(from: lastPoint, to: center, steps: 10)
+        lastPoint = center
+        Thread.sleep(forTimeInterval: 1.5)
+      }
+
+      // Drop on the specified space, or the last one visited
+      let dropTitle = dropSpaceTitle
+        ?? Self.axStringAttribute(spaceButtons.last!, name: "AXTitle") ?? ""
+      if let dropButton = mc.findSpaceButton(titled: dropTitle),
+        let dropCenter = Self.axCenter(dropButton)
+      {
+        print("Dropping on \"\(dropTitle)\" at \(dropCenter)")
+        Self.postMouseDragToPoint(from: lastPoint, to: dropCenter, steps: 10)
+        Thread.sleep(forTimeInterval: 0.5)
+        Self.postMouseUp(at: dropCenter)
+      } else {
+        print("Drop target \"\(dropTitle)\" not found, releasing at last position")
+        Self.postMouseUp(at: lastPoint)
+      }
+
+      Thread.sleep(forTimeInterval: 0.3)
+      Self.dismissMissionControl()
+      print("Done.")
+      semaphore.signal()
+    }
+
+    semaphore.wait()
+  }
+
+  /// Recursively prints an AX element and all its children.
+  private static func dumpAXElement(_ element: AXUIElement, indent: Int) {
+    let prefix = String(repeating: "  ", count: indent)
+
+    let identifier = axStringAttribute(element, name: "AXIdentifier") ?? "-"
+    let role = axStringAttribute(element, name: "AXRole") ?? "-"
+    let subrole = axStringAttribute(element, name: "AXSubrole") ?? "-"
+    let title = axStringAttribute(element, name: "AXTitle") ?? "-"
+    let desc = axStringAttribute(element, name: "AXDescription") ?? "-"
+    let posStr = axPosition(element).map { "(\(Int($0.x)), \(Int($0.y)))" } ?? "-"
+    let sizeStr = axSize(element).map { "\(Int($0.width))x\(Int($0.height))" } ?? "-"
+    let children = axChildren(element)
+
+    print(
+      "\(prefix)[\(role)/\(subrole)] id=\(identifier) title=\"\(title)\" desc=\"\(desc)\""
+        + " pos=\(posStr) size=\(sizeStr) children=\(children.count)")
+
+    var namesRef: CFArray?
+    if AXUIElementCopyAttributeNames(element, &namesRef) == .success,
+      let names = namesRef as? [String]
+    {
+      let printed = Set([
+        "AXIdentifier", "AXRole", "AXSubrole", "AXTitle", "AXDescription",
+        "AXPosition", "AXSize", "AXChildren", "AXParent", "AXTopLevelUIElement",
+        "AXWindow",
+      ])
+      let interesting = names.filter { !printed.contains($0) }
+      if !interesting.isEmpty {
+        print("\(prefix)  attrs: \(interesting.joined(separator: ", "))")
+        for name in interesting {
+          var valRef: CFTypeRef?
+          if AXUIElementCopyAttributeValue(element, name as CFString, &valRef) == .success,
+            let val = valRef
+          {
+            if let str = val as? String {
+              print("\(prefix)    \(name) = \"\(str)\"")
+            } else if let num = val as? NSNumber {
+              print("\(prefix)    \(name) = \(num)")
+            }
+          }
+        }
+      }
+    }
+
+    for child in children {
+      dumpAXElement(child, indent: indent + 1)
+    }
+  }
+
   // MARK: - AX Window Discovery
 
   /// Finds an AXUIElement via the standard `kAXWindowsAttribute` API.
