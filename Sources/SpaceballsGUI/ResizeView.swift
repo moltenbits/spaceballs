@@ -22,10 +22,11 @@ struct ResizeView: View {
         Spacer()
       }
 
-      // Interactive grid
+      // Interactive grid — use active region's grid if a preset was applied
       ResizeGridView(
-        columns: settings.resizeGridColumns,
-        rows: settings.resizeGridRows
+        columns: viewModel.activeRegion?.gridColumns ?? settings.resizeGridColumns,
+        rows: viewModel.activeRegion?.gridRows ?? settings.resizeGridRows,
+        highlightedRegion: viewModel.activeRegion
       ) { region in
         viewModel.applyRegion(region, margins: CGFloat(settings.resizeMargins))
       }
@@ -44,19 +45,32 @@ struct ResizeView: View {
 struct ResizeGridView: View {
   let columns: Int
   let rows: Int
+  var highlightedRegion: GridRegion?
   let onRegionSelected: (GridRegion) -> Void
 
   @State private var dragStart: (col: Int, row: Int)?
   @State private var dragCurrent: (col: Int, row: Int)?
 
   private var selectedRange: (minCol: Int, maxCol: Int, minRow: Int, maxRow: Int)? {
-    guard let start = dragStart, let current = dragCurrent else { return nil }
-    return (
-      minCol: min(start.col, current.col),
-      maxCol: max(start.col, current.col),
-      minRow: min(start.row, current.row),
-      maxRow: max(start.row, current.row)
-    )
+    // Drag selection takes priority over preset highlight
+    if let start = dragStart, let current = dragCurrent {
+      return (
+        minCol: min(start.col, current.col),
+        maxCol: max(start.col, current.col),
+        minRow: min(start.row, current.row),
+        maxRow: max(start.row, current.row)
+      )
+    }
+    // Show preset highlight when not dragging
+    if let r = highlightedRegion {
+      return (
+        minCol: r.column,
+        maxCol: r.column + r.columnSpan - 1,
+        minRow: r.row,
+        maxRow: r.row + r.rowSpan - 1
+      )
+    }
+    return nil
   }
 
   var body: some View {

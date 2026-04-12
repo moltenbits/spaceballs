@@ -10,6 +10,9 @@ public final class ResizeViewModel: ObservableObject {
   /// The screen the focused window resides on.
   public internal(set) var targetScreen: NSScreen?
 
+  /// The region currently shown on the grid (set when a preset is applied).
+  @Published public var activeRegion: GridRegion?
+
   /// Callback invoked after a grid-drag resize to dismiss the panel.
   public var onResizeComplete: (() -> Void)?
 
@@ -41,6 +44,7 @@ public final class ResizeViewModel: ObservableObject {
     }
 
     lastPresetKeyCode = nil
+    activeRegion = nil
   }
 
   /// Resizes the captured window to the given grid region on the current target screen.
@@ -85,5 +89,6 @@ public final class ResizeViewModel: ObservableObject {
     }
 
     lastPresetKeyCode = preset.keyCode
+    activeRegion = preset.region
   }
 }
