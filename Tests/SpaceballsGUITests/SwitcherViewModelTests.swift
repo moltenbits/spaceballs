@@ -567,6 +567,9 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .windowRow(20))  // first window in Space 2
 
     vm.moveSelectionDown()
+    #expect(vm.selectedItem == .spaces)
+
+    vm.moveSelectionDown()
     #expect(vm.selectedItem == .settings)
   }
 
@@ -577,6 +580,9 @@ struct SelectionNavigationTests {
     vm.refresh()
 
     vm.selectedItem = .windowRow(20)  // last row
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .spaces)
+
     vm.moveSelectionDown()
     #expect(vm.selectedItem == .settings)
   }
@@ -613,7 +619,7 @@ struct SelectionNavigationTests {
 
     vm.selectedItem = .windowRow(10)  // first item
     vm.moveSelectionUp()
-    #expect(vm.selectedItem == .settings)
+    #expect(vm.selectedItem == .settings)  // wraps to last item
   }
 
   @Test("moveSelectionUp from settings goes to last row")
@@ -623,6 +629,9 @@ struct SelectionNavigationTests {
     vm.refresh()
 
     vm.selectedItem = .settings
+    vm.moveSelectionUp()
+    #expect(vm.selectedItem == .spaces)
+
     vm.moveSelectionUp()
     #expect(vm.selectedItem == .windowRow(20))  // last row
   }
@@ -665,23 +674,29 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .windowRow(11))  // second Safari window
 
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == .settings)  // past last → settings
+    #expect(vm.selectedItem == .spaces)  // past last → spaces
+
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .settings)
 
     vm.moveSelectionDown()
     #expect(vm.selectedItem == .windowRow(10))  // wraps back to first window
   }
 
-  @Test("Selection on empty results is a no-op")
-  func emptyResultsNoOp() {
+  @Test("Selection on empty results navigates spaces and settings only")
+  func emptyResultsNavigation() {
     let ds = MockDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
     vm.moveSelectionDown()
-    #expect(vm.selectedItem == nil)
+    #expect(vm.selectedItem == .spaces)
+
+    vm.moveSelectionDown()
+    #expect(vm.selectedItem == .settings)
 
     vm.moveSelectionUp()
-    #expect(vm.selectedItem == nil)
+    #expect(vm.selectedItem == .spaces)
   }
 
   @Test("Activating first window row of a space activates that window")
@@ -716,10 +731,10 @@ struct SelectionNavigationTests {
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
     vm.refresh()
 
-    // Expected cycle: 10 → 11 → 20 → settings → 10
+    // Expected cycle: 10 → 11 → 20 → spaces → settings → 10
     let expected: [SelectedItem] = [
       .windowRow(10), .windowRow(11),
-      .windowRow(20), .settings,
+      .windowRow(20), .spaces, .settings,
     ]
 
     vm.selectedItem = nil
@@ -788,7 +803,10 @@ struct SelectionNavigationTests {
 
     vm.selectedItem = .windowRow(20)  // Space 2 (last section)
     vm.moveToNextSpace()
-    #expect(vm.selectedItem == .settings)  // stops on settings first
+    #expect(vm.selectedItem == .spaces)  // stops on spaces first
+
+    vm.moveToNextSpace()
+    #expect(vm.selectedItem == .settings)  // then settings
 
     vm.moveToNextSpace()
     #expect(vm.selectedItem == .windowRow(10))  // then wraps to Space 1
