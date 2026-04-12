@@ -728,27 +728,11 @@ extension AppDelegate: KeyInterceptorDelegate {
         )
 
         DispatchQueue.main.async {
-          if let summary {
-            var msg: [String] = []
-            if summary.spacesCreated > 0 {
-              msg.append(
-                "\(summary.spacesCreated) space\(summary.spacesCreated == 1 ? "" : "s") created")
-            }
-            if summary.appsLaunched > 0 {
-              msg.append(
-                "\(summary.appsLaunched) app\(summary.appsLaunched == 1 ? "" : "s") launched")
-            }
-            if msg.isEmpty {
-              let name =
-                workspacesToRestore.count == 1 ? workspacesToRestore[0].name : "All workspaces"
-              msg.append("\(name) up to date")
-            }
-            self.viewModel.sortOverlayText = msg.joined(separator: ", ")
-          } else {
+          if summary == nil {
             self.viewModel.sortOverlayText = "Restore failed"
+            self.viewModel.sortOverlayGeneration += 1
+            self.showPanel()
           }
-          self.viewModel.sortOverlayGeneration += 1
-          self.showPanel()
         }
       }
     } else {
