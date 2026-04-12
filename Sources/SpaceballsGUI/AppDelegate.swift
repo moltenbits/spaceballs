@@ -756,6 +756,28 @@ extension AppDelegate: KeyInterceptorDelegate {
       viewModel.spaceManager.createSpace(count: 1, screenNumber: activeScreenNumber) {
         [weak self] result in
         guard let self else { return }
+
+        // Switch to the newly created space (the last desktop on the display)
+        if case .success = result {
+          let allSpaces = self.viewModel.spaceManager.getAllSpaces()
+          let displayUUID: String? = {
+            if let sn = activeScreenNumber {
+              return allSpaces.first(where: {
+                SpaceManager.displayIDForUUID($0.displayUUID) == sn
+              })?.displayUUID
+            }
+            return allSpaces.first?.displayUUID
+          }()
+          if let uuid = displayUUID {
+            let desktops = allSpaces.filter {
+              $0.displayUUID == uuid && $0.type == .desktop
+            }
+            if let lastSpace = desktops.last {
+              try? self.viewModel.spaceManager.switchToSpace(id: lastSpace.id)
+            }
+          }
+        }
+
         DispatchQueue.main.async {
           switch result {
           case .success:
