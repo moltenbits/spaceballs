@@ -919,6 +919,19 @@ public class SpaceManager {
     let pid = pid_t(rawPID)
     let targetCGWindowID = CGWindowID(windowID)
 
+    // Self-owned windows (e.g. the Settings window) — bring to front via AppKit
+    // directly. The SkyLight/AX activation flow crashes on the process's own windows.
+    if pid == ProcessInfo.processInfo.processIdentifier {
+      DispatchQueue.main.async {
+        for window in NSApp.windows where CGWindowID(window.windowNumber) == targetCGWindowID {
+          window.makeKeyAndOrderFront(nil)
+          NSApp.activate(ignoringOtherApps: true)
+          break
+        }
+      }
+      return
+    }
+
     // 3. Try the standard kAXWindowsAttribute first (fast, works for same-space windows).
     let axElement = findAXWindowStandard(pid: pid, targetCGWindowID: targetCGWindowID)
 
