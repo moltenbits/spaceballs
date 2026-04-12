@@ -58,7 +58,7 @@ final class SettingsWindowController {
       backing: .buffered,
       defer: false
     )
-    win.title = "Spaceballs Settings"
+    win.title = "Settings"
     win.contentView = hostingView
     win.contentMinSize = NSSize(width: 600, height: 400)
     win.contentMaxSize = NSSize(width: 600, height: maxHeight)

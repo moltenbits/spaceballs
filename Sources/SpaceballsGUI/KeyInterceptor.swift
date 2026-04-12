@@ -22,6 +22,9 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorCloseSpace()
   func keyInterceptorToggleMoveMode()
   func keyInterceptorToggleCreateMenu()
+  func keyInterceptorShowResize()
+  func keyInterceptorResizeCancel()
+  func keyInterceptorResizePreset(keyCode: UInt16)
 }
 
 /// Global reference for signal handler cleanup. The event tap MUST be removed
@@ -44,6 +47,8 @@ final class KeyInterceptor {
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
   private(set) var panelVisible = false
+  private(set) var resizePanelVisible = false
+  private(set) var resizePresetApplied = false
   private(set) var renameMode = false
   private(set) var recordingMode = false
   var suppressConfirm = false
@@ -51,6 +56,15 @@ final class KeyInterceptor {
 
   func setPanelVisible(_ visible: Bool) {
     panelVisible = visible
+  }
+
+  func setResizePanelVisible(_ visible: Bool) {
+    resizePanelVisible = visible
+    if !visible { resizePresetApplied = false }
+  }
+
+  func setResizePresetApplied() {
+    resizePresetApplied = true
   }
 
   func setRenameMode(_ active: Bool) {
@@ -230,6 +244,34 @@ private func keyInterceptorCallback(
       return Unmanaged.passUnretained(event)
     }
 
+    // Cmd+Shift+D — toggle resize grid panel (fires globally, independent of switcher panel)
+    if cmdHeld && flags.contains(.maskShift) && keyCode == Int64(bindings.showResize) {
+      DispatchQueue.main.async {
+        if interceptor.resizePanelVisible {
+          interceptor.delegate?.keyInterceptorResizeCancel()
+        } else {
+          interceptor.delegate?.keyInterceptorShowResize()
+        }
+      }
+      return nil  // consume
+    }
+
+    // Resize panel is open — handle its keyboard events
+    if interceptor.resizePanelVisible {
+      // Escape — dismiss
+      if keyCode == Int64(bindings.cancel) {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorResizeCancel()
+        }
+        return nil  // consume
+      }
+      // Any other key — check against preset shortcuts
+      DispatchQueue.main.async {
+        interceptor.delegate?.keyInterceptorResizePreset(keyCode: UInt16(keyCode))
+      }
+      return nil  // consume
+    }
+
     // Activate / Next item
     if cmdHeld && keyCode == Int64(bindings.activateAndNext) {
       DispatchQueue.main.async {
@@ -380,6 +422,16 @@ private func keyInterceptorCallback(
   case .flagsChanged:
     // In rename mode, pass through modifier changes without confirming
     if interceptor.renameMode {
+      return Unmanaged.passUnretained(event)
+    }
+
+    // Resize panel: dismiss on Cmd release if a preset was applied
+    if interceptor.resizePanelVisible {
+      if interceptor.resizePresetApplied && !flags.contains(.maskCommand) {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorResizeCancel()
+        }
+      }
       return Unmanaged.passUnretained(event)
     }
 

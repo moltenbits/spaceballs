@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var appSettings: AppSettings!
   private var settingsController: SettingsWindowController!
   private var currentPanelDisplayUUID: String?
+  private var resizePanel: ResizePanel?
+  private var resizeViewModel: ResizeViewModel!
   private var cancellables = Set<AnyCancellable>()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -21,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     viewModel = SwitcherViewModel(spaceNameStore: spaceNameStore)
 
     panels = [makePanel()]
+    resizeViewModel = ResizeViewModel()
 
     settingsController = SettingsWindowController(
       spaceManager: viewModel.spaceManager,
@@ -61,8 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Dismiss on click outside any panel
     clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
       [weak self] event in
-      guard let self, self.panels.contains(where: \.isVisible) else { return }
-      self.hidePanel()
+      guard let self else { return }
+      if self.resizePanel?.isVisible == true {
+        self.hideResizePanel()
+      }
+      if self.panels.contains(where: \.isVisible) {
+        self.hidePanel()
+      }
     }
 
     // Listen for CLI commands via distributed notifications.
@@ -125,6 +133,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       keyEquivalent: "q")
     appMenuItem.submenu = appMenu
     mainMenu.addItem(appMenuItem)
+
+    // Edit menu — required for standard text field shortcuts (Cmd+A/C/X/V/Z)
+    let editMenuItem = NSMenuItem()
+    let editMenu = NSMenu(title: "Edit")
+    editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+    editMenu.addItem(.separator())
+    editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    editMenu.addItem(
+      withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    editMenuItem.submenu = editMenu
+    mainMenu.addItem(editMenuItem)
 
     NSApp.mainMenu = mainMenu
   }
@@ -387,6 +409,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let upwardBias = screenFrame.height * 0.1 * max(1 - fillRatio, 0)
     let y = screenFrame.midY - panelSize.height / 2 + upwardBias
     panel.setFrameOrigin(NSPoint(x: x, y: y))
+  }
+
+  // MARK: - Resize Panel Management
+
+  private func showResizePanel() {
+    // Dismiss switcher panel if open
+    if keyInterceptor.panelVisible {
+      hidePanel()
+    }
+
+    resizeViewModel.captureCurrentWindow()
+
+    let panel: ResizePanel
+    if let existing = resizePanel {
+      panel = existing
+    } else {
+      panel = ResizePanel(contentRect: .zero)
+      resizePanel = panel
+    }
+
+    let rootView = ResizeView(
+      viewModel: resizeViewModel,
+      settings: appSettings
+    )
+    panel.setRootView(rootView)
+    applyResizePanelAppearance(panel)
+
+    resizeViewModel.onResizeComplete = { [weak self] in
+      self?.hideResizePanel()
+    }
+
+    // Determine which screen to show on — use the target window's screen,
+    // fall back to the main screen
+    let screen = resizeViewModel.targetScreen ?? NSScreen.main ?? NSScreen.screens.first!
+
+    // Size and center
+    panel.contentView?.layoutSubtreeIfNeeded()
+    if let hostingView = panel.contentView {
+      let fittingSize = hostingView.fittingSize
+      panel.setContentSize(fittingSize)
+    }
+    let panelSize = panel.frame.size
+    let screenFrame = screen.visibleFrame
+    let x = screenFrame.midX - panelSize.width / 2
+    let y = screenFrame.midY - panelSize.height / 2 + screenFrame.height * 0.05
+    panel.setFrameOrigin(NSPoint(x: x, y: y))
+
+    panel.makeKeyAndOrderFront(nil)
+    keyInterceptor.setResizePanelVisible(true)
+  }
+
+  private func hideResizePanel() {
+    resizePanel?.orderOut(nil)
+    keyInterceptor.setResizePanelVisible(false)
+  }
+
+  private func applyResizePanelAppearance(_ panel: ResizePanel) {
+    switch appSettings.colorScheme {
+    case .auto:
+      panel.appearance = nil
+    case .light:
+      panel.appearance = NSAppearance(named: .aqua)
+    case .dark:
+      panel.appearance = NSAppearance(named: .darkAqua)
+    }
   }
 }
 
@@ -691,5 +778,21 @@ extension AppDelegate: KeyInterceptorDelegate {
   func keyInterceptorCancelRename() {
     viewModel.cancelRename()
     keyInterceptor.setRenameMode(false)
+  }
+
+  func keyInterceptorShowResize() {
+    showResizePanel()
+  }
+
+  func keyInterceptorResizeCancel() {
+    hideResizePanel()
+  }
+
+  func keyInterceptorResizePreset(keyCode: UInt16) {
+    guard let preset = appSettings.resizePresets.first(where: { $0.keyCode == keyCode }) else {
+      return
+    }
+    resizeViewModel.applyPreset(preset, margins: CGFloat(appSettings.resizeMargins))
+    keyInterceptor.setResizePresetApplied()
   }
 }

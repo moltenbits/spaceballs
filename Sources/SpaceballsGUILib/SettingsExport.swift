@@ -14,13 +14,19 @@ public struct SettingsExport: Codable {
   public var excludedBundleIDs: [String]
   public var keyBindings: KeyBindings
   public var workspaces: [WorkspaceConfig]
+  public var resizeGridColumns: Int
+  public var resizeGridRows: Int
+  public var resizeMargins: Double
+  public var resizePresets: [ResizePreset]
 
   public init(
     showAppIcons: Bool, showCurrentBadge: Bool, showDisplayBadge: Bool,
     showEmptySpaces: Bool, filterSpacesByDisplay: Bool, colorScheme: String,
     textSize: Double, panelDisplay: String, spaceSortOrder: String,
     excludedBundleIDs: [String], keyBindings: KeyBindings,
-    workspaces: [WorkspaceConfig]
+    workspaces: [WorkspaceConfig],
+    resizeGridColumns: Int = 12, resizeGridRows: Int = 12,
+    resizeMargins: Double = 0, resizePresets: [ResizePreset]? = nil
   ) {
     self.showAppIcons = showAppIcons
     self.showCurrentBadge = showCurrentBadge
@@ -34,6 +40,12 @@ public struct SettingsExport: Codable {
     self.excludedBundleIDs = excludedBundleIDs
     self.keyBindings = keyBindings
     self.workspaces = workspaces
+    self.resizeGridColumns = resizeGridColumns
+    self.resizeGridRows = resizeGridRows
+    self.resizeMargins = resizeMargins
+    self.resizePresets =
+      resizePresets
+      ?? ResizePreset.defaultPresets(gridColumns: resizeGridColumns, gridRows: resizeGridRows)
   }
 
   public static func from(settings: AppSettings) -> SettingsExport {
@@ -49,7 +61,11 @@ public struct SettingsExport: Codable {
       spaceSortOrder: settings.spaceSortOrder.rawValue,
       excludedBundleIDs: Array(settings.excludedBundleIDs).sorted(),
       keyBindings: settings.keyBindings,
-      workspaces: settings.workspaces
+      workspaces: settings.workspaces,
+      resizeGridColumns: settings.resizeGridColumns,
+      resizeGridRows: settings.resizeGridRows,
+      resizeMargins: settings.resizeMargins,
+      resizePresets: settings.resizePresets
     )
   }
 
@@ -66,6 +82,10 @@ public struct SettingsExport: Codable {
     settings.excludedBundleIDs = Set(excludedBundleIDs)
     settings.keyBindings = keyBindings
     settings.workspaces = workspaces
+    settings.resizeGridColumns = resizeGridColumns
+    settings.resizeGridRows = resizeGridRows
+    settings.resizeMargins = resizeMargins
+    settings.resizePresets = resizePresets
   }
 
   // Support importing legacy exports that used customSpaceNames: [String]
@@ -73,6 +93,7 @@ public struct SettingsExport: Codable {
     case showAppIcons, showCurrentBadge, showDisplayBadge, showEmptySpaces
     case filterSpacesByDisplay, colorScheme, textSize, panelDisplay, spaceSortOrder
     case excludedBundleIDs, keyBindings, workspaces, customSpaceNames
+    case resizeGridColumns, resizeGridRows, resizeMargins, resizePresets
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -89,6 +110,10 @@ public struct SettingsExport: Codable {
     try c.encode(excludedBundleIDs, forKey: .excludedBundleIDs)
     try c.encode(keyBindings, forKey: .keyBindings)
     try c.encode(workspaces, forKey: .workspaces)
+    try c.encode(resizeGridColumns, forKey: .resizeGridColumns)
+    try c.encode(resizeGridRows, forKey: .resizeGridRows)
+    try c.encode(resizeMargins, forKey: .resizeMargins)
+    try c.encode(resizePresets, forKey: .resizePresets)
   }
 
   public init(from decoder: Decoder) throws {
@@ -113,6 +138,13 @@ public struct SettingsExport: Codable {
     } else {
       workspaces = []
     }
+
+    resizeGridColumns = try c.decodeIfPresent(Int.self, forKey: .resizeGridColumns) ?? 12
+    resizeGridRows = try c.decodeIfPresent(Int.self, forKey: .resizeGridRows) ?? 12
+    resizeMargins = try c.decodeIfPresent(Double.self, forKey: .resizeMargins) ?? 0
+    resizePresets =
+      try c.decodeIfPresent([ResizePreset].self, forKey: .resizePresets)
+      ?? ResizePreset.defaultPresets(gridColumns: resizeGridColumns, gridRows: resizeGridRows)
   }
 
   public static func exportJSON(settings: AppSettings) throws -> Data {

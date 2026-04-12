@@ -8,6 +8,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   case general
   case spaces
   case shortcuts
+  case resize
   case excluded
   case appearance
   case about
@@ -19,6 +20,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .general: "General"
     case .spaces: "Spaces"
     case .shortcuts: "Shortcuts"
+    case .resize: "Resize"
     case .excluded: "Excluded"
     case .appearance: "Appearance"
     case .about: "About"
@@ -30,6 +32,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .general: "gearshape"
     case .spaces: "square.grid.2x2"
     case .shortcuts: "keyboard"
+    case .resize: "rectangle.split.3x3"
     case .excluded: "eye.slash"
     case .appearance: "paintbrush"
     case .about: "info.circle"
@@ -78,6 +81,8 @@ struct SettingsView: View {
       SpacesPane(settings: appSettings)
     case .shortcuts:
       ShortcutsPane(settings: appSettings)
+    case .resize:
+      ResizePane(settings: appSettings)
     case .excluded:
       ExcludedAppsPane(settings: appSettings)
     case .appearance:

@@ -138,6 +138,28 @@ public final class AppSettings: ObservableObject {
     }
   }
 
+  // MARK: - Resize Grid Settings
+
+  @Published public var resizeGridColumns: Int {
+    didSet { defaults.set(resizeGridColumns, forKey: "resizeGridColumns") }
+  }
+
+  @Published public var resizeGridRows: Int {
+    didSet { defaults.set(resizeGridRows, forKey: "resizeGridRows") }
+  }
+
+  @Published public var resizeMargins: Double {
+    didSet { defaults.set(resizeMargins, forKey: "resizeMargins") }
+  }
+
+  @Published public var resizePresets: [ResizePreset] {
+    didSet {
+      if let data = try? JSONEncoder().encode(resizePresets) {
+        defaults.set(data, forKey: "resizePresets")
+      }
+    }
+  }
+
   /// Transient flag — not persisted. Disables the event tap while recording a shortcut.
   @Published public var isRecordingShortcut = false
 
@@ -154,6 +176,9 @@ public final class AppSettings: ObservableObject {
       "showDisplayBadge": true,
       "showEmptySpaces": true,
       "spaceSortOrder": SpaceSortOrder.mru.rawValue,
+      "resizeGridColumns": 12,
+      "resizeGridRows": 12,
+      "resizeMargins": 0.0,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -194,6 +219,22 @@ public final class AppSettings: ObservableObject {
       self.keyBindings = decoded
     } else {
       self.keyBindings = KeyBindings()
+    }
+
+    // Resize grid settings
+    let gridCols = defaults.integer(forKey: "resizeGridColumns")
+    let gridRows = defaults.integer(forKey: "resizeGridRows")
+    self.resizeGridColumns = gridCols
+    self.resizeGridRows = gridRows
+    self.resizeMargins = defaults.double(forKey: "resizeMargins")
+
+    if let data = defaults.data(forKey: "resizePresets"),
+      let decoded = try? JSONDecoder().decode([ResizePreset].self, from: data)
+    {
+      self.resizePresets = decoded
+    } else {
+      self.resizePresets = ResizePreset.defaultPresets(
+        gridColumns: gridCols, gridRows: gridRows)
     }
   }
 
