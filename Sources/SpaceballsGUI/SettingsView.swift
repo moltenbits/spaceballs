@@ -6,11 +6,11 @@ import SwiftUI
 
 enum SettingsPane: String, CaseIterable, Identifiable {
   case general
-  case spaces
-  case shortcuts
-  case resize
-  case excluded
   case appearance
+  case spaces
+  case resize
+  case shortcuts
+  case excluded
   case about
 
   var id: String { rawValue }
