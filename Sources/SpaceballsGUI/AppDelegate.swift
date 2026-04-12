@@ -779,14 +779,11 @@ extension AppDelegate: KeyInterceptorDelegate {
         }
 
         DispatchQueue.main.async {
-          switch result {
-          case .success:
-            self.viewModel.sortOverlayText = "Created new space"
-          case .failure(let error):
+          if case .failure(let error) = result {
             self.viewModel.sortOverlayText = error.localizedDescription
+            self.viewModel.sortOverlayGeneration += 1
+            self.showPanel()
           }
-          self.viewModel.sortOverlayGeneration += 1
-          self.showPanel()
         }
       }
     }
