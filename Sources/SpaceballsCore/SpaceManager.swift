@@ -682,7 +682,8 @@ public class SpaceManager {
         return
       }
 
-      Thread.sleep(forTimeInterval: 0.3)
+      // Wait for macOS to finish the space removal animation before dismissing MC
+      Thread.sleep(forTimeInterval: 0.8)
       Self.dismissMissionControl()
 
       completion?(.success(()))

@@ -626,30 +626,32 @@ extension AppDelegate: KeyInterceptorDelegate {
     let spaceName =
       viewModel.filteredSections.first(where: { $0.id == spaceID })?.label ?? "Space \(spaceID)"
 
+    // Capture the next MRU space before closing (sections are MRU-ordered)
+    let nextMRUSpaceID = viewModel.sections
+      .first(where: { $0.id != spaceID })?.id
+
     keyInterceptor.setSuppressConfirm(true)
     viewModel.sortOverlayText = "Closing \(spaceName)..."
     viewModel.sortOverlayGeneration += 1
+
+    // Hide panel before the close so MC can open cleanly
+    hidePanel()
 
     viewModel.spaceManager.closeSpaceAndRemoveName(
       id: spaceID, spaceNameStore: viewModel.spaceNameStore
     ) { [weak self] result in
       guard let self else { return }
-      switch result {
-      case .success:
-        self.viewModel.sortOverlayText = "Closed \(spaceName)"
-      case .failure(let error):
-        self.viewModel.sortOverlayText = error.localizedDescription
+
+      // Switch to the next MRU space after successful close
+      if case .success = result, let nextID = nextMRUSpaceID {
+        try? self.viewModel.spaceManager.switchToSpace(id: nextID)
       }
-      self.viewModel.sortOverlayGeneration += 1
-      self.viewModel.refresh()
-      self.viewModel.resetSelection()
-      self.keyInterceptor.setSuppressConfirm(false)
 
       DispatchQueue.main.async {
-        let screens = self.targetScreens()
-        for (i, screen) in screens.enumerated() where i < self.panels.count {
-          _ = self.resizePanelToFit(self.panels[i], on: screen)
-          self.centerPanel(self.panels[i], on: screen)
+        if case .failure(let error) = result {
+          self.viewModel.sortOverlayText = error.localizedDescription
+          self.viewModel.sortOverlayGeneration += 1
+          self.showPanel()
         }
       }
     }
