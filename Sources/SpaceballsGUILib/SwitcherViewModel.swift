@@ -651,10 +651,11 @@ public final class SwitcherViewModel: ObservableObject {
 
   public func resetSelection() {
     let items = flatSelectableItems
-    selectedItem = items.first(where: {
-      if case .windowRow = $0 { return true }
-      return false
-    })
+    guard !items.isEmpty else { selectedItem = nil; return }
+    // Always select the first item so that the subsequent moveDown
+    // (from Cmd+Tab) lands on the second item. This ensures we always
+    // end up on the 2nd row in the list.
+    selectedItem = items.first
   }
 
   /// Builds a window-ID → space-ID lookup from the current sections.

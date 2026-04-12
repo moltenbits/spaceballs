@@ -647,7 +647,7 @@ struct SelectionNavigationTests {
     #expect(vm.selectedItem == .windowRow(11))  // last window in Space 1
   }
 
-  @Test("resetSelection selects first window row")
+  @Test("resetSelection selects first item in list")
   func resetSelection() {
     let ds = makeTwoSpaceDataSource()
     let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
@@ -655,7 +655,53 @@ struct SelectionNavigationTests {
 
     vm.selectedItem = .settings
     vm.resetSelection()
-    #expect(vm.selectedItem == .windowRow(10))  // first window row
+    #expect(vm.selectedItem == .windowRow(10))  // first item (window row in current space)
+  }
+
+  @Test("Cmd+Tab lands on 2nd row when current space has windows")
+  func cmdTabWithWindows() {
+    let ds = makeTwoSpaceDataSource()
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    // Simulate Cmd+Tab: resetSelection then moveDown
+    vm.resetSelection()
+    vm.moveSelectionDown()
+
+    // Current space (1) has windows 10, 11. First item is 10, moveDown → 11
+    #expect(vm.selectedItem == .windowRow(11))
+  }
+
+  @Test("Cmd+Tab lands on 2nd row when current space is empty")
+  func cmdTabEmptySpace() {
+    // Space 1 is current but empty, space 2 has windows
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 1, uuid: "uuid-1"),
+          makeSpaceDict(id: 2, uuid: "uuid-2"),
+        ],
+        currentSpaceID: 1
+      )
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 20, ownerName: "iTerm", name: "zsh", pid: 200),
+      makeWindowDict(id: 21, ownerName: "IntelliJ", name: "main.kt", pid: 201),
+    ]
+    ds.windowSpaces = [20: [2], 21: [2]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.showEmptySpaces = true
+    vm.refresh()
+
+    // Simulate Cmd+Tab: resetSelection then moveDown
+    vm.resetSelection()
+    vm.moveSelectionDown()
+
+    // Empty space 1 header is first item, iTerm (20) is second → lands on iTerm
+    #expect(vm.selectedItem == .windowRow(20))
   }
 
   @Test("Navigation works with filtered results")
