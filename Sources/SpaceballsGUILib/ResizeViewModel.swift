@@ -13,6 +13,13 @@ public final class ResizeViewModel: ObservableObject {
   /// The region currently shown on the grid (set when a preset is applied).
   @Published public var activeRegion: GridRegion?
 
+  /// Live preview region during drag — used by the screen overlay.
+  @Published public var previewRegion: GridRegion?
+
+  /// The columns/rows currently displayed on the grid.
+  @Published public var previewGridColumns: Int = 12
+  @Published public var previewGridRows: Int = 12
+
   /// Callback invoked after a grid-drag resize to dismiss the panel.
   public var onResizeComplete: (() -> Void)?
 

@@ -26,8 +26,12 @@ struct ResizeView: View {
       ResizeGridView(
         columns: viewModel.activeRegion?.gridColumns ?? settings.resizeGridColumns,
         rows: viewModel.activeRegion?.gridRows ?? settings.resizeGridRows,
-        highlightedRegion: viewModel.activeRegion
+        highlightedRegion: viewModel.activeRegion,
+        onPreviewChanged: { region in
+          viewModel.previewRegion = region
+        }
       ) { region in
+        viewModel.previewRegion = nil
         viewModel.applyRegion(region, margins: CGFloat(settings.resizeMargins))
       }
     }
@@ -46,6 +50,7 @@ struct ResizeGridView: View {
   let columns: Int
   let rows: Int
   var highlightedRegion: GridRegion?
+  var onPreviewChanged: ((GridRegion?) -> Void)?
   let onRegionSelected: (GridRegion) -> Void
 
   @State private var dragStart: (col: Int, row: Int)?
@@ -122,6 +127,19 @@ struct ResizeGridView: View {
               dragStart = (startCol, startRow)
             }
             dragCurrent = (col, row)
+            // Publish live preview
+            if let start = dragStart {
+              let sel = (
+                minCol: min(start.col, col), maxCol: max(start.col, col),
+                minRow: min(start.row, row), maxRow: max(start.row, row)
+              )
+              onPreviewChanged?(GridRegion(
+                column: sel.minCol, row: sel.minRow,
+                columnSpan: sel.maxCol - sel.minCol + 1,
+                rowSpan: sel.maxRow - sel.minRow + 1,
+                gridColumns: columns, gridRows: rows
+              ))
+            }
           }
           .onEnded { _ in
             if let sel = selectedRange {
@@ -135,6 +153,7 @@ struct ResizeGridView: View {
               )
               onRegionSelected(region)
             }
+            onPreviewChanged?(nil)
             dragStart = nil
             dragCurrent = nil
           }

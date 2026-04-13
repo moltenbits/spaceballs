@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var currentPanelDisplayUUID: String?
   private var resizePanel: ResizePanel?
   private var resizeViewModel: ResizeViewModel!
+  private let resizeOverlay = ResizeOverlay()
   private let statusHUD = StatusHUD()
   private var cancellables = Set<AnyCancellable>()
 
@@ -457,12 +458,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let y = screenFrame.midY - panelSize.height / 2 + screenFrame.height * 0.05
     panel.setFrameOrigin(NSPoint(x: x, y: y))
 
+    // Show the full-screen grid overlay behind the resize panel
+    resizeViewModel.previewGridColumns = appSettings.resizeGridColumns
+    resizeViewModel.previewGridRows = appSettings.resizeGridRows
+    resizeOverlay.show(on: screen, viewModel: resizeViewModel, settings: appSettings)
+
     panel.makeKeyAndOrderFront(nil)
     keyInterceptor.setResizePanelVisible(true)
   }
 
   private func hideResizePanel() {
     resizePanel?.orderOut(nil)
+    resizeOverlay.dismiss()
+    resizeViewModel.previewRegion = nil
     keyInterceptor.setResizePanelVisible(false)
   }
 
