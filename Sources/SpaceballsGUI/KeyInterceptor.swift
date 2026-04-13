@@ -51,6 +51,8 @@ final class KeyInterceptor {
   private(set) var resizePresetApplied = false
   private(set) var renameMode = false
   private(set) var recordingMode = false
+  /// When true, blocks all Spaceballs shortcuts (Cmd+Tab, Cmd+Shift+D, etc.)
+  private(set) var restoring = false
   var suppressConfirm = false
   var keyBindings = KeyBindings()
 
@@ -65,6 +67,10 @@ final class KeyInterceptor {
 
   func setResizePresetApplied() {
     resizePresetApplied = true
+  }
+
+  func setRestoring(_ active: Bool) {
+    restoring = active
   }
 
   func setRenameMode(_ active: Bool) {
@@ -189,6 +195,17 @@ private func keyInterceptorCallback(
 
   // Recording mode — pass through all events so the key recorder can capture them
   if interceptor.recordingMode {
+    return Unmanaged.passUnretained(event)
+  }
+
+  // Restoring mode — consume Cmd+Tab (and related shortcuts) to prevent
+  // both Spaceballs and macOS app switcher from activating during restore
+  if interceptor.restoring {
+    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+    let flags = event.flags
+    if flags.contains(.maskCommand) && keyCode == Int64(interceptor.keyBindings.activateAndNext) {
+      return nil  // consume — blocks macOS app switcher
+    }
     return Unmanaged.passUnretained(event)
   }
 

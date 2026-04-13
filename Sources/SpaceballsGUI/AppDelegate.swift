@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var currentPanelDisplayUUID: String?
   private var resizePanel: ResizePanel?
   private var resizeViewModel: ResizeViewModel!
+  private let statusHUD = StatusHUD()
   private var cancellables = Set<AnyCancellable>()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -702,6 +703,23 @@ extension AppDelegate: KeyInterceptorDelegate {
         workspacesToRestore = [appSettings.workspaces[wsIdx]]
       }
       keyInterceptor.setSuppressConfirm(true)
+      keyInterceptor.setRestoring(true)
+
+      let displayName =
+        workspacesToRestore.count == 1
+        ? workspacesToRestore[0].name : "workspaces"
+      statusHUD.show(message: "Setting up \(displayName)…")
+
+      // Safety timeout — unblock shortcuts after 10 seconds regardless
+      let restoreTimeout = DispatchWorkItem { [weak self] in
+        guard let self, self.keyInterceptor.restoring else { return }
+        self.keyInterceptor.setRestoring(false)
+        self.statusHUD.show(message: "Setup timed out")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+          self.statusHUD.dismiss()
+        }
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: restoreTimeout)
 
       DispatchQueue.global(qos: .userInteractive).async { [weak self] in
         guard let self else { return }
@@ -728,10 +746,14 @@ extension AppDelegate: KeyInterceptorDelegate {
         )
 
         DispatchQueue.main.async {
+          restoreTimeout.cancel()
+          self.keyInterceptor.setRestoring(false)
+          self.statusHUD.dismiss()
           if summary == nil {
-            self.viewModel.sortOverlayText = "Restore failed"
-            self.viewModel.sortOverlayGeneration += 1
-            self.showPanel()
+            self.statusHUD.show(message: "Failed to set up \(displayName)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+              self.statusHUD.dismiss()
+            }
           }
         }
       }
