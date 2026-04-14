@@ -5,6 +5,11 @@ import SwiftUI
 struct ResizeView: View {
   @ObservedObject var viewModel: ResizeViewModel
   @ObservedObject var settings: AppSettings
+  var displayUUID: String?
+
+  private var isTargetDisplay: Bool {
+    displayUUID == viewModel.targetDisplayUUID
+  }
 
   var body: some View {
     VStack(spacing: 12) {
@@ -26,12 +31,18 @@ struct ResizeView: View {
       ResizeGridView(
         columns: viewModel.activeRegion?.gridColumns ?? settings.resizeGridColumns,
         rows: viewModel.activeRegion?.gridRows ?? settings.resizeGridRows,
-        highlightedRegion: viewModel.activeRegion,
+        highlightedRegion: isTargetDisplay ? viewModel.activeRegion : nil,
         onPreviewChanged: { region in
+          if region != nil, displayUUID != viewModel.targetDisplayUUID {
+            viewModel.setTargetDisplay(displayUUID)
+          }
           viewModel.previewRegion = region
         }
       ) { region in
         viewModel.previewRegion = nil
+        if displayUUID != viewModel.targetDisplayUUID {
+          viewModel.setTargetDisplay(displayUUID)
+        }
         viewModel.applyRegion(region, margins: CGFloat(settings.resizeMargins))
       }
     }

@@ -13,9 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var appSettings: AppSettings!
   private var settingsController: SettingsWindowController!
   private var currentPanelDisplayUUID: String?
-  private var resizePanel: ResizePanel?
+  private var resizePanels: [ResizePanel] = []
   private var resizeViewModel: ResizeViewModel!
-  private let resizeOverlay = ResizeOverlay()
+  private var resizeOverlays: [ResizeOverlay] = []
   private let statusHUD = StatusHUD()
   private var cancellables = Set<AnyCancellable>()
 
@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
       [weak self] event in
       guard let self else { return }
-      if self.resizePanel?.isVisible == true {
+      if self.resizePanels.contains(where: \.isVisible) {
         self.hideResizePanel()
       }
       if self.panels.contains(where: \.isVisible) {
@@ -423,53 +423,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     resizeViewModel.captureCurrentWindow()
 
-    let panel: ResizePanel
-    if let existing = resizePanel {
-      panel = existing
-    } else {
-      panel = ResizePanel(contentRect: .zero)
-      resizePanel = panel
-    }
-
-    let rootView = ResizeView(
-      viewModel: resizeViewModel,
-      settings: appSettings
-    )
-    panel.setRootView(rootView)
-    applyResizePanelAppearance(panel)
-
     resizeViewModel.onResizeComplete = { [weak self] in
       self?.hideResizePanel()
     }
 
-    // Determine which screen to show on — use the target window's screen,
-    // fall back to the main screen
-    let screen = resizeViewModel.targetScreen ?? NSScreen.main ?? NSScreen.screens.first!
+    let allScreens = NSScreen.screens
+    let activeScreen = resizeViewModel.targetScreen ?? NSScreen.main ?? allScreens.first!
+    let activeUUID = Self.displayUUID(for: activeScreen)
 
-    // Size and center
-    panel.contentView?.layoutSubtreeIfNeeded()
-    if let hostingView = panel.contentView {
-      let fittingSize = hostingView.fittingSize
-      panel.setContentSize(fittingSize)
+    // Ensure enough resize panels
+    while resizePanels.count < allScreens.count {
+      resizePanels.append(ResizePanel(contentRect: .zero))
     }
-    let panelSize = panel.frame.size
-    let screenFrame = screen.visibleFrame
-    let x = screenFrame.midX - panelSize.width / 2
-    let y = screenFrame.midY - panelSize.height / 2 + screenFrame.height * 0.05
-    panel.setFrameOrigin(NSPoint(x: x, y: y))
 
-    // Show the full-screen grid overlay behind the resize panel
+    // Show a resize panel on each screen
+    for (i, screen) in allScreens.enumerated() {
+      let panel = resizePanels[i]
+      let screenUUID = Self.displayUUID(for: screen)
+      let rootView = ResizeView(
+        viewModel: resizeViewModel, settings: appSettings, displayUUID: screenUUID)
+      panel.setRootView(rootView)
+      applyResizePanelAppearance(panel)
+
+      // Size and center on this screen
+      panel.contentView?.layoutSubtreeIfNeeded()
+      if let hostingView = panel.contentView {
+        panel.setContentSize(hostingView.fittingSize)
+      }
+      let panelSize = panel.frame.size
+      let screenFrame = screen.visibleFrame
+      let x = screenFrame.midX - panelSize.width / 2
+      let y = screenFrame.midY - panelSize.height / 2 + screenFrame.height * 0.05
+      panel.setFrameOrigin(NSPoint(x: x, y: y))
+
+      if Self.displayUUID(for: screen) == activeUUID {
+        panel.makeKeyAndOrderFront(nil)
+      } else {
+        panel.orderFront(nil)
+      }
+    }
+
+    // Hide extra panels from a previous show with more screens
+    for i in allScreens.count..<resizePanels.count {
+      resizePanels[i].orderOut(nil)
+    }
+
+    // Show the full-screen grid overlay on all displays
     resizeViewModel.previewGridColumns = appSettings.resizeGridColumns
     resizeViewModel.previewGridRows = appSettings.resizeGridRows
-    resizeOverlay.show(on: screen, viewModel: resizeViewModel, settings: appSettings)
+    while resizeOverlays.count < allScreens.count {
+      resizeOverlays.append(ResizeOverlay())
+    }
+    for (i, screen) in allScreens.enumerated() {
+      resizeOverlays[i].show(
+        on: screen, viewModel: resizeViewModel, settings: appSettings,
+        displayUUID: Self.displayUUID(for: screen))
+    }
+    for i in allScreens.count..<resizeOverlays.count {
+      resizeOverlays[i].dismiss()
+    }
 
-    panel.makeKeyAndOrderFront(nil)
     keyInterceptor.setResizePanelVisible(true)
   }
 
   private func hideResizePanel() {
-    resizePanel?.orderOut(nil)
-    resizeOverlay.dismiss()
+    for panel in resizePanels {
+      panel.orderOut(nil)
+    }
+    for overlay in resizeOverlays {
+      overlay.dismiss()
+    }
     resizeViewModel.previewRegion = nil
     keyInterceptor.setResizePanelVisible(false)
   }
@@ -817,6 +840,11 @@ extension AppDelegate: KeyInterceptorDelegate {
 
   func keyInterceptorShowResize() {
     showResizePanel()
+  }
+
+  func keyInterceptorResizeCommit() {
+    resizeViewModel.commitResize(margins: CGFloat(appSettings.resizeMargins))
+    hideResizePanel()
   }
 
   func keyInterceptorResizeCancel() {

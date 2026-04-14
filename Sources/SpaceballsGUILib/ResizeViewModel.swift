@@ -1,6 +1,17 @@
 import Cocoa
 import SpaceballsCore
 
+extension NSScreen {
+  var displayUUID: String? {
+    guard
+      let screenNumber = deviceDescription[
+        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+      let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
+    else { return nil }
+    return CFUUIDCreateString(nil, cfUUID) as String
+  }
+}
+
 public final class ResizeViewModel: ObservableObject {
   @Published public var focusedAppName: String = ""
   @Published public var focusedAppIcon: NSImage?
@@ -9,6 +20,9 @@ public final class ResizeViewModel: ObservableObject {
   public internal(set) var focusedWindowElement: AXUIElement?
   /// The screen the focused window resides on.
   public internal(set) var targetScreen: NSScreen?
+
+  /// The display UUID of the target screen (overlays use this to show highlight only on the correct display).
+  @Published public var targetDisplayUUID: String?
 
   /// The region currently shown on the grid (set when a preset is applied).
   @Published public var activeRegion: GridRegion?
@@ -50,6 +64,7 @@ public final class ResizeViewModel: ObservableObject {
       targetScreen = nil
     }
 
+    targetDisplayUUID = targetScreen?.displayUUID
     lastPresetKeyCode = nil
     activeRegion = nil
   }
@@ -70,9 +85,9 @@ public final class ResizeViewModel: ObservableObject {
   }
 
   /// Applies a preset. If the same preset key is pressed again, cycles to the next screen.
-  /// Does NOT dismiss the panel (so the user can press again to cycle).
+  /// Does NOT resize or dismiss — the actual resize happens on Cmd release via `commitResize`.
   public func applyPreset(_ preset: ResizePreset, margins: CGFloat) {
-    guard let element = focusedWindowElement else { return }
+    guard focusedWindowElement != nil else { return }
 
     let screens = NSScreen.screens
     guard !screens.isEmpty else { return }
@@ -88,14 +103,28 @@ public final class ResizeViewModel: ObservableObject {
       screen = targetScreen ?? screens.first!
     }
 
+    targetScreen = screen
+    targetDisplayUUID = screen.displayUUID
+    lastPresetKeyCode = preset.keyCode
+    activeRegion = preset.region
+  }
+
+  /// Updates the target display (e.g. when the user interacts with a panel on another screen).
+  public func setTargetDisplay(_ uuid: String?) {
+    targetDisplayUUID = uuid
+    targetScreen = NSScreen.screens.first { $0.displayUUID == uuid }
+  }
+
+  /// Commits the pending preset resize and dismisses the panel.
+  public func commitResize(margins: CGFloat) {
+    guard let element = focusedWindowElement,
+      let screen = targetScreen,
+      let region = activeRegion
+    else { return }
     do {
-      try WindowResizer.resize(element, to: preset.region, on: screen, margins: margins)
-      targetScreen = screen
+      try WindowResizer.resize(element, to: region, on: screen, margins: margins)
     } catch {
       print("Resize failed: \(error.localizedDescription)")
     }
-
-    lastPresetKeyCode = preset.keyCode
-    activeRegion = preset.region
   }
 }

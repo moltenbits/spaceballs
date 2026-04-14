@@ -23,6 +23,7 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorToggleMoveMode()
   func keyInterceptorToggleCreateMenu()
   func keyInterceptorShowResize()
+  func keyInterceptorResizeCommit()
   func keyInterceptorResizeCancel()
   func keyInterceptorResizePreset(keyCode: UInt16)
 }
@@ -442,11 +443,11 @@ private func keyInterceptorCallback(
       return Unmanaged.passUnretained(event)
     }
 
-    // Resize panel: dismiss on Cmd release if a preset was applied
+    // Resize panel: commit resize on Cmd release if a preset was applied
     if interceptor.resizePanelVisible {
       if interceptor.resizePresetApplied && !flags.contains(.maskCommand) {
         DispatchQueue.main.async {
-          interceptor.delegate?.keyInterceptorResizeCancel()
+          interceptor.delegate?.keyInterceptorResizeCommit()
         }
       }
       return Unmanaged.passUnretained(event)

@@ -8,11 +8,14 @@ final class ResizeOverlay {
   private var panel: NSPanel?
   private var hostingView: NSHostingView<ResizeOverlayView>?
 
-  func show(on screen: NSScreen, viewModel: ResizeViewModel, settings: AppSettings) {
+  func show(
+    on screen: NSScreen, viewModel: ResizeViewModel, settings: AppSettings,
+    displayUUID: String?
+  ) {
     let panel = self.panel ?? createPanel()
     self.panel = panel
 
-    let view = ResizeOverlayView(viewModel: viewModel, settings: settings)
+    let view = ResizeOverlayView(viewModel: viewModel, settings: settings, displayUUID: displayUUID)
     if let existing = hostingView {
       existing.rootView = view
     } else {
@@ -58,6 +61,11 @@ final class ResizeOverlay {
 struct ResizeOverlayView: View {
   @ObservedObject var viewModel: ResizeViewModel
   @ObservedObject var settings: AppSettings
+  let displayUUID: String?
+
+  private var isTargetDisplay: Bool {
+    displayUUID == viewModel.targetDisplayUUID
+  }
 
   private var columns: Int {
     viewModel.previewRegion?.gridColumns
@@ -72,7 +80,8 @@ struct ResizeOverlayView: View {
   }
 
   private var highlightRegion: GridRegion? {
-    viewModel.previewRegion ?? viewModel.activeRegion
+    guard isTargetDisplay else { return nil }
+    return viewModel.previewRegion ?? viewModel.activeRegion
   }
 
   var body: some View {
