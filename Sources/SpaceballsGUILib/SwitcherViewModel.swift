@@ -1049,36 +1049,59 @@ public final class SwitcherViewModel: ObservableObject {
   /// Visually moves the marked window to the next space in the list.
   public func moveMarkedWindowToNextSpace() {
     guard moveMode, let windowID = markedWindowID else { return }
-    moveMarkedWindowByOffset(1, windowID: windowID)
+    moveMarkedWindowToAdjacentSpace(forward: true, windowID: windowID)
   }
 
   /// Visually moves the marked window to the previous space in the list.
   public func moveMarkedWindowToPreviousSpace() {
     guard moveMode, let windowID = markedWindowID else { return }
-    moveMarkedWindowByOffset(-1, windowID: windowID)
+    moveMarkedWindowToAdjacentSpace(forward: false, windowID: windowID)
   }
 
-  private func moveMarkedWindowByOffset(_ offset: Int, windowID: Int) {
-    // Find the section currently containing the marked window
+  private func moveMarkedWindowToAdjacentSpace(forward: Bool, windowID: Int) {
+    // Use the same navigation as moveToNextSpace/moveToPreviousSpace:
+    // scan through flatSelectableItems to find the next/previous space,
+    // then move the window row to that space in sections.
+    let items = flatSelectableItems
+    guard !items.isEmpty else { return }
+
+    let map = windowSpaceMap()
+    let currentSpaceID = map[windowID]
+
+    // Find the window's current position in flatSelectableItems
+    guard let currentPos = items.firstIndex(of: .windowRow(windowID)) else { return }
+
+    // Scan for the first item in a different space (same logic as moveToNextSpace)
+    var targetSpaceID: UInt64?
+    let step = forward ? 1 : -1
+    for i in 1..<items.count {
+      let pos = (currentPos + i * step + items.count) % items.count
+      let item = items[pos]
+      // Skip .spaces and .settings — wrap through them
+      if case .spaces = item { continue }
+      if case .settings = item { continue }
+      let itemSpace = spaceID(for: item, using: map)
+      if let itemSpace, itemSpace != currentSpaceID {
+        targetSpaceID = itemSpace
+        break
+      }
+    }
+
+    guard let targetSpaceID else { return }
+
+    // Move the window row from its current section to the target section
     guard let sourceIdx = sections.firstIndex(where: {
       $0.windows.contains(where: { $0.id == windowID })
-    }) else { return }
+    }),
+      let targetIdx = sections.firstIndex(where: { $0.id == targetSpaceID }),
+      let rowIdx = sections[sourceIdx].windows.firstIndex(where: { $0.id == windowID })
+    else { return }
 
-    // Calculate target section index (wrap around)
-    let count = sections.count
-    guard count > 1 else { return }
-    let targetIdx = (sourceIdx + offset + count) % count
+    var updated = sections
+    let row = updated[sourceIdx].windows.remove(at: rowIdx)
+    updated[targetIdx].windows.insert(row, at: 0)
+    sections = updated
 
-    // Remove the row from the source section
-    guard let rowIdx = sections[sourceIdx].windows.firstIndex(where: {
-      $0.id == windowID
-    }) else { return }
-    let row = sections[sourceIdx].windows.remove(at: rowIdx)
-
-    // Insert as the first window in the target section
-    sections[targetIdx].windows.insert(row, at: 0)
-
-    // Keep selection on the moved window
     selectedItem = .windowRow(windowID)
   }
 

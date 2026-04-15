@@ -1265,15 +1265,15 @@ public class SpaceManager {
       ?? ""
 
     // 2. Resolve the target space's "Desktop N" label (what MC shows).
+    //    MC uses global numbering across all displays, not per-display ordinals.
     let allSpaces = getAllSpaces()
     guard let targetSpace = allSpaces.first(where: { $0.id == targetSpaceID }) else {
       print("moveWindowToSpace: space \(targetSpaceID) not found")
       return false
     }
 
-    let displayDesktopSpaces = allSpaces
-      .filter { $0.displayUUID == targetSpace.displayUUID && $0.type == .desktop }
-    guard let ordinalIndex = displayDesktopSpaces.firstIndex(where: { $0.id == targetSpaceID })
+    let allDesktopSpaces = allSpaces.filter { $0.type == .desktop }
+    guard let ordinalIndex = allDesktopSpaces.firstIndex(where: { $0.id == targetSpaceID })
     else {
       print("moveWindowToSpace: could not determine ordinal for space \(targetSpaceID)")
       return false
@@ -1284,11 +1284,14 @@ public class SpaceManager {
     try activateWindow(id: windowID)
 
     // 4. Wait for the space switch animation to complete.
-    //    Cross-space transitions need more time than same-space activations.
     Thread.sleep(forTimeInterval: 0.8)
 
-    // 5. Perform the MC drag.
-    let moved = moveWindowInMC(windowTitle: windowTitle, targetSpaceTitle: targetSpaceTitle)
+    // 5. Perform the MC drag. Pass target display so the space button is found
+    //    on the correct display (supports cross-display moves).
+    let targetScreenNumber = Self.displayIDForUUID(targetSpace.displayUUID)
+    let moved = moveWindowInMC(
+      windowTitle: windowTitle, targetSpaceTitle: targetSpaceTitle,
+      targetScreenNumber: targetScreenNumber)
 
     // 6. Activate the window again so it's in front on the target space.
     if moved {
@@ -1301,18 +1304,20 @@ public class SpaceManager {
 
   /// Moves a window to a different Space by simulating a drag in Mission Control.
   ///
-  /// Opens Mission Control, finds the window thumbnail by title, initiates a
-  /// minimal drag to let the spaces bar settle, re-queries space positions,
-  /// then drags directly to the target space and drops.
+  /// Opens Mission Control, searches ALL displays for the window thumbnail and
+  /// target space button (supporting cross-display moves), initiates a drag,
+  /// and drops the window on the target space.
   ///
   /// - Parameters:
   ///   - windowTitle: Substring to match against MC window thumbnail titles.
   ///   - targetSpaceTitle: Exact title of the target space (e.g., "Desktop 2").
+  ///   - targetScreenNumber: Screen number of the display containing the target space.
   ///   - verbose: Print diagnostic output.
   /// - Returns: `true` if the drag completed, `false` on any error.
   @discardableResult
   public func moveWindowInMC(
-    windowTitle: String, targetSpaceTitle: String, verbose: Bool = false
+    windowTitle: String, targetSpaceTitle: String,
+    targetScreenNumber: CGDirectDisplayID? = nil, verbose: Bool = false
   ) -> Bool {
     guard AXIsProcessTrusted() else {
       print("moveWindowInMC: Accessibility not trusted")
@@ -1325,28 +1330,69 @@ public class SpaceManager {
     DispatchQueue.global(qos: .userInteractive).async {
       defer { semaphore.signal() }
 
-      guard let mc = Self.openMissionControlContext() else {
+      guard let dockApp = NSRunningApplication.runningApplications(
+        withBundleIdentifier: "com.apple.dock"
+      ).first else {
+        print("moveWindowInMC: Dock not running")
+        return
+      }
+
+      let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
+      CoreDockSendNotification("com.apple.expose.awake" as CFString)
+
+      // Poll for MC
+      let mcGroup: AXUIElement? = {
+        let deadline = DispatchTime.now() + .milliseconds(2000)
+        while DispatchTime.now() < deadline {
+          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") { return mc }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+        return nil
+      }()
+
+      guard let mcGroup else {
+        print("moveWindowInMC: Mission Control not found")
         Self.dismissMissionControl()
         return
       }
 
-      // Find the window thumbnail (exact match preferred, unambiguous substring fallback)
-      guard let windowButton = mc.findWindowButton(titled: windowTitle),
-        let windowCenter = Self.axCenter(windowButton)
-      else {
-        let matches = mc.findWindowButtons(titleContaining: windowTitle)
-        if matches.count > 1 {
-          print("moveWindowInMC: Multiple windows match \"\(windowTitle)\":")
-          for m in matches {
-            print("  - \(Self.axStringAttribute(m, name: "AXTitle") ?? "?")")
-          }
-        } else {
-          let available = mc.windowButtons.compactMap {
-            Self.axStringAttribute($0, name: "AXTitle")
-          }
-          print("moveWindowInMC: No window matching \"\(windowTitle)\"")
-          if verbose { print("  Available: \(available)") }
+      Thread.sleep(forTimeInterval: 0.5)
+
+      // Gather all mc.display elements
+      let allDisplays = Self.axChildren(mcGroup).filter {
+        Self.axStringAttribute($0, name: "AXIdentifier") == "mc.display"
+      }
+
+      // Search ALL displays for the window thumbnail
+      var windowButton: AXUIElement?
+      var windowCenter: CGPoint?
+      for display in allDisplays {
+        guard let mcWindows = Self.axChildWithIdentifier(display, identifier: "mc.windows") else {
+          continue
         }
+        let buttons = Self.axChildren(mcWindows)
+        // Exact match first
+        if let exact = buttons.first(where: {
+          Self.axStringAttribute($0, name: "AXTitle") == windowTitle
+        }) {
+          windowButton = exact
+          windowCenter = Self.axCenter(exact)
+          break
+        }
+        // Substring fallback
+        let matches = buttons.filter {
+          (Self.axStringAttribute($0, name: "AXTitle") ?? "")
+            .localizedCaseInsensitiveContains(windowTitle)
+        }
+        if matches.count == 1, let match = matches.first {
+          windowButton = match
+          windowCenter = Self.axCenter(match)
+          break
+        }
+      }
+
+      guard let windowButton, let windowCenter else {
+        print("moveWindowInMC: No window matching \"\(windowTitle)\" on any display")
         Self.dismissMissionControl()
         return
       }
@@ -1356,32 +1402,89 @@ public class SpaceManager {
         print("  Window: \"\(title)\" at \(windowCenter)")
       }
 
-      // Grab and nudge to initiate drag (minimal 15px movement)
+      // Build display search order — target display first
+      let displaySearchOrder: [AXUIElement]
+      if let targetScreenNumber {
+        let targetDisplay = allDisplays.first { display in
+          var valueRef: CFTypeRef?
+          if AXUIElementCopyAttributeValue(display, "AXDisplayID" as CFString, &valueRef) == .success,
+            let displayID = valueRef as? Int,
+            CGDirectDisplayID(displayID) == targetScreenNumber
+          {
+            return true
+          }
+          return false
+        }
+        if let targetDisplay {
+          displaySearchOrder = [targetDisplay] + allDisplays.filter { $0 != targetDisplay }
+        } else {
+          displaySearchOrder = allDisplays
+        }
+      } else {
+        displaySearchOrder = allDisplays
+      }
+
+      // Find the approximate location of the target spaces bar BEFORE dragging
+      // (needed to know where to drag toward to trigger placeholder insertion)
+      var spacesBarCenter: CGPoint?
+      for display in displaySearchOrder {
+        guard let mcSpaces = Self.axChildWithIdentifier(display, identifier: "mc.spaces"),
+          let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
+        else { continue }
+        let buttons = Self.axChildren(mcSpacesList)
+        if let match = buttons.first(where: {
+          Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
+        }) {
+          spacesBarCenter = Self.axCenter(match)
+          break
+        }
+      }
+
+      guard let spacesBarCenter else {
+        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found on any display")
+        Self.dismissMissionControl()
+        return
+      }
+
+      // Grab and nudge to initiate drag
       Self.postMouseMoveAndGrab(at: windowCenter)
       let nudge = CGPoint(x: windowCenter.x, y: windowCenter.y - 15)
       Self.postMouseDragToPoint(from: windowCenter, to: nudge, steps: 3)
 
-      // Wait for MC to adjust the spaces bar
+      // Drag toward the target spaces bar to trigger placeholder insertion
+      Self.postMouseDragToPoint(from: nudge, to: spacesBarCenter)
       Thread.sleep(forTimeInterval: 0.5)
 
-      // Re-query space positions after drag initiation
-      guard let targetButton = mc.findSpaceButton(titled: targetSpaceTitle),
-        let targetCenter = Self.axCenter(targetButton)
-      else {
-        let available = mc.spaceButtons.compactMap {
-          Self.axStringAttribute($0, name: "AXTitle")
+      // Re-query the exact target space position now that the placeholder has
+      // shifted the buttons. AX references are live so re-reading children gives
+      // the current layout.
+      var targetButton: AXUIElement?
+      var targetCenter: CGPoint?
+      for display in displaySearchOrder {
+        guard let mcSpaces = Self.axChildWithIdentifier(display, identifier: "mc.spaces"),
+          let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
+        else { continue }
+        let buttons = Self.axChildren(mcSpacesList)
+        if let match = buttons.first(where: {
+          Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
+        }) {
+          targetButton = match
+          targetCenter = Self.axCenter(match)
+          break
         }
-        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found")
-        if verbose { print("  Available: \(available)") }
-        Self.postMouseUp(at: nudge)
+      }
+
+      guard let targetButton, let targetCenter else {
+        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found after drag")
+        Self.postMouseUp(at: spacesBarCenter)
         Self.dismissMissionControl()
         return
       }
 
       if verbose { print("  Target: \"\(targetSpaceTitle)\" at \(targetCenter)") }
 
-      // Drag directly to the target space and drop
-      Self.postMouseDragToPoint(from: nudge, to: targetCenter)
+      // Drag to the exact target space position and drop
+      Self.postMouseDragToPoint(from: spacesBarCenter, to: targetCenter)
       Thread.sleep(forTimeInterval: 0.2)
       Self.postMouseUp(at: targetCenter)
 
