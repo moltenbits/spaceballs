@@ -218,20 +218,11 @@ public final class SwitcherViewModel: ObservableObject {
     let activeWindowIDs = Set(allWindows.map(\.id))
     pendingCloseWindowIDs = pendingCloseWindowIDs.filter { activeWindowIDs.contains($0) }
 
-    // Filter out windows that are pending close (optimistic removal)
-    // and windows that are hidden on a current space. Off-screen windows
-    // on non-current spaces are expected (cross-space) and kept.
-    let currentSpaceIDs = Set(spaces.filter(\.isCurrent).map(\.id))
+    // Filter out windows that are pending close (optimistic removal).
     var windowMap = rawWindowMap
     for (spaceID, windows) in windowMap {
       windowMap[spaceID] = windows.filter { window in
-        if pendingCloseWindowIDs.contains(window.id) { return false }
-        if !window.isOnscreen
-          && window.spaceIDs.allSatisfy({ currentSpaceIDs.contains($0) })
-        {
-          return false
-        }
-        return true
+        !pendingCloseWindowIDs.contains(window.id)
       }
     }
 
