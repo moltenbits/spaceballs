@@ -1164,6 +1164,50 @@ public class SpaceManager {
       mcWindows: mcWindows, mcSpaces: mcSpaces, mcSpacesList: mcSpacesList)
   }
 
+  // MARK: - Display Focus
+
+  /// Clicks on the desktop of the display containing the given space to
+  /// transfer keyboard focus to that display. This ensures Launch Services
+  /// opens new apps on the correct display.
+  public func clickDesktopOnDisplay(forSpaceID spaceID: UInt64) {
+    let allSpaces = getAllSpaces()
+    guard let space = allSpaces.first(where: { $0.id == spaceID }),
+      let screenNumber = Self.displayIDForUUID(space.displayUUID)
+    else { return }
+
+    // Find the NSScreen matching this display
+    guard let screen = NSScreen.screens.first(where: {
+      let desc = $0.deviceDescription
+      return (desc[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == screenNumber
+    }) else { return }
+
+    // Convert screen center to CGEvent coordinates (top-left origin)
+    let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
+    let center = CGPoint(
+      x: screen.frame.midX,
+      y: primaryHeight - screen.frame.midY
+    )
+
+    SpaceManager.postMouseClick(at: center)
+  }
+
+  /// Posts a click (mouseDown + mouseUp) at the given point.
+  static func postMouseClick(at point: CGPoint) {
+    if let down = CGEvent(
+      mouseEventSource: nil, mouseType: .leftMouseDown,
+      mouseCursorPosition: point, mouseButton: .left)
+    {
+      down.post(tap: .cghidEventTap)
+    }
+    Thread.sleep(forTimeInterval: 0.05)
+    if let up = CGEvent(
+      mouseEventSource: nil, mouseType: .leftMouseUp,
+      mouseCursorPosition: point, mouseButton: .left)
+    {
+      up.post(tap: .cghidEventTap)
+    }
+  }
+
   // MARK: - AX Position/Size Helpers
 
   static func axPosition(_ element: AXUIElement) -> CGPoint? {

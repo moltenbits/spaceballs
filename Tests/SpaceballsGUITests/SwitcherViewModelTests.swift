@@ -1005,6 +1005,101 @@ struct CustomSpaceNamesTests {
   }
 }
 
+// MARK: - Global Desktop Ordinal Tests
+
+@Suite("Global Desktop Ordinals")
+struct GlobalDesktopOrdinalTests {
+
+  @Test("Ordinal labels are global across displays, not per-display")
+  func globalOrdinals() {
+    // Secondary display has 3 spaces, primary has 1 — matches a typical
+    // multi-monitor setup where MC shows "Desktop 1-3" on secondary and
+    // "Desktop 4" on primary.
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-secondary",
+        spaces: [
+          makeSpaceDict(id: 10, uuid: "uuid-10"),
+          makeSpaceDict(id: 11, uuid: "uuid-11"),
+          makeSpaceDict(id: 12, uuid: "uuid-12"),
+        ],
+        currentSpaceID: 10
+      ),
+      makeDisplayDict(
+        displayUUID: "display-primary",
+        spaces: [
+          makeSpaceDict(id: 20, uuid: "uuid-20")
+        ],
+        currentSpaceID: 20
+      ),
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 100, ownerName: "App1", name: "Win1", pid: 1),
+      makeWindowDict(id: 200, ownerName: "App2", name: "Win2", pid: 2),
+    ]
+    ds.windowSpaces = [100: [10], 200: [20]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.showEmptySpaces = true
+    vm.refresh()
+
+    // Secondary display spaces should be Desktop 1, 2, 3
+    // Primary display space should be Desktop 4
+    let ordinals = vm.sections.map(\.ordinalLabel)
+    #expect(ordinals.contains("Desktop 1"))
+    #expect(ordinals.contains("Desktop 2"))
+    #expect(ordinals.contains("Desktop 3"))
+    #expect(ordinals.contains("Desktop 4"))
+
+    // The primary display's single space must NOT be "Desktop 1"
+    let primarySection = vm.sections.first(where: { $0.displayUUID == "display-primary" })
+    #expect(primarySection?.ordinalLabel == "Desktop 4")
+  }
+
+  @Test("Per-display ordinals would incorrectly label primary as Desktop 1")
+  func perDisplayWouldBeWrong() {
+    // This test documents why global ordinals are needed:
+    // if we used per-display numbering, the primary display's only space
+    // would be "Desktop 1", conflicting with the secondary display's
+    // actual "Desktop 1" in Mission Control.
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-secondary",
+        spaces: [
+          makeSpaceDict(id: 10, uuid: "uuid-10"),
+          makeSpaceDict(id: 11, uuid: "uuid-11"),
+        ],
+        currentSpaceID: 10
+      ),
+      makeDisplayDict(
+        displayUUID: "display-primary",
+        spaces: [
+          makeSpaceDict(id: 20, uuid: "uuid-20")
+        ],
+        currentSpaceID: 20
+      ),
+    ]
+    ds.windowList = [
+      makeWindowDict(id: 100, ownerName: "App", name: "Win", pid: 1),
+    ]
+    ds.windowSpaces = [100: [20]]
+
+    let vm = SwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.showEmptySpaces = true
+    vm.refresh()
+
+    let primarySection = vm.sections.first(where: { $0.displayUUID == "display-primary" })
+    let secondaryFirst = vm.sections.first(where: { $0.displayUUID == "display-secondary" })
+
+    // Primary must be Desktop 3, not Desktop 1
+    #expect(primarySection?.ordinalLabel == "Desktop 3")
+    // Secondary's first space must be Desktop 1
+    #expect(secondaryFirst?.ordinalLabel == "Desktop 1")
+  }
+}
+
 // MARK: - Display Filtering Tests
 
 @Suite("Display Filtering")

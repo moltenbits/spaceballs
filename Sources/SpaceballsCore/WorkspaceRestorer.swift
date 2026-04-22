@@ -76,10 +76,15 @@ public final class WorkspaceRestorer {
       // Skip this space entirely if all apps are present
       guard !missingLaunchers.isEmpty else { continue }
 
-      // Switch to the space
+      // Switch to the space and ensure it has keyboard focus.
+      // On multi-display, Launch Services opens apps on the display with
+      // keyboard focus, so we click on the target display's desktop after
+      // switching to ensure apps open on the correct display.
       do {
         try spaceManager.switchToSpace(id: spaceID)
         Thread.sleep(forTimeInterval: 2.0)  // Wait for space switch animation
+        spaceManager.clickDesktopOnDisplay(forSpaceID: spaceID)
+        Thread.sleep(forTimeInterval: 0.5)
       } catch {
         errors.append((workspace.name, "", "Failed to switch: \(error.localizedDescription)"))
         continue
