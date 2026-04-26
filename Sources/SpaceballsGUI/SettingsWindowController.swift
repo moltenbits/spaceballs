@@ -8,11 +8,16 @@ final class SettingsWindowController {
   private let spaceManager: SpaceManager
   private let spaceNameStore: SpaceNameStoring
   private let appSettings: AppSettings
+  private let windowLayoutStore: WindowLayoutStore
 
-  init(spaceManager: SpaceManager, spaceNameStore: SpaceNameStoring, appSettings: AppSettings) {
+  init(
+    spaceManager: SpaceManager, spaceNameStore: SpaceNameStoring, appSettings: AppSettings,
+    windowLayoutStore: WindowLayoutStore
+  ) {
     self.spaceManager = spaceManager
     self.spaceNameStore = spaceNameStore
     self.appSettings = appSettings
+    self.windowLayoutStore = windowLayoutStore
   }
 
   func showSettings() {
@@ -25,7 +30,8 @@ final class SettingsWindowController {
     let settingsView = SettingsView(
       spaceManager: spaceManager,
       spaceNameStore: spaceNameStore,
-      appSettings: appSettings
+      appSettings: appSettings,
+      windowLayoutStore: windowLayoutStore
     )
     let hostingView = NSHostingView(rootView: settingsView)
 
@@ -33,7 +39,7 @@ final class SettingsWindowController {
     // Other panes fill the available space with top-aligned content.
     let contentWidth: CGFloat = 430  // 600 - 170 sidebar
     let measureAppearance = NSHostingView(
-      rootView: AppearancePane(settings: appSettings)
+      rootView: AppearancePane(settings: appSettings, windowLayoutStore: windowLayoutStore)
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
         .frame(width: contentWidth)

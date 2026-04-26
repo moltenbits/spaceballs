@@ -53,6 +53,11 @@ public enum WindowResizeError: LocalizedError {
 
 public enum WindowResizer {
 
+  /// Posted after `WindowResizer` successfully changes a window's frame.
+  /// userInfo: ["pid": pid_t, "bundleID": String, "element": AXUIElement]
+  public static let didResizeWindowNotification = Notification.Name(
+    "com.moltenbits.spaceballs.didResizeWindow")
+
   // MARK: - AX Write Helpers
 
   /// Sets the position of an AX window element. Returns true on success.
@@ -60,7 +65,8 @@ public enum WindowResizer {
   public static func setAXPosition(_ element: AXUIElement, _ point: CGPoint) -> Bool {
     var p = point
     guard let value = AXValueCreate(.cgPoint, &p) else { return false }
-    return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) == .success
+    return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+      == .success
   }
 
   /// Sets the size of an AX window element. Returns true on success.
@@ -140,7 +146,8 @@ public enum WindowResizer {
 
   /// Resizes the given AX window element to match a grid region on the specified screen.
   public static func resize(
-    _ element: AXUIElement, to region: GridRegion, on screen: NSScreen, margins: CGFloat = 0
+    _ element: AXUIElement, to region: GridRegion, on screen: NSScreen, margins: CGFloat = 0,
+    pid: pid_t? = nil
   ) throws {
     let frame = targetFrame(for: region, on: screen, margins: margins)
     // Set size first (some apps clamp position based on current size), then position, then
@@ -148,14 +155,33 @@ public enum WindowResizer {
     guard setAXSize(element, frame.size) else { throw WindowResizeError.axSetSizeFailed }
     guard setAXPosition(element, frame.origin) else { throw WindowResizeError.axSetPositionFailed }
     setAXSize(element, frame.size)
+
+    if let pid {
+      postDidResize(element: element, pid: pid)
+    }
   }
 
   /// Convenience: resizes the frontmost application's focused window.
   public static func resizeFocusedWindow(
     to region: GridRegion, margins: CGFloat = 0
   ) throws {
-    let (element, _) = try focusedWindow()
+    let (element, pid) = try focusedWindow()
     guard let screen = screen(for: element) else { throw WindowResizeError.noScreen }
-    try resize(element, to: region, on: screen, margins: margins)
+    try resize(element, to: region, on: screen, margins: margins, pid: pid)
+  }
+
+  // MARK: - Notifications
+
+  private static func postDidResize(element: AXUIElement, pid: pid_t) {
+    let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+    NotificationCenter.default.post(
+      name: didResizeWindowNotification,
+      object: nil,
+      userInfo: [
+        "pid": pid,
+        "bundleID": bundleID,
+        "element": element,
+      ]
+    )
   }
 }

@@ -46,6 +46,7 @@ struct SettingsView: View {
   let spaceManager: SpaceManager
   let spaceNameStore: SpaceNameStoring
   @ObservedObject var appSettings: AppSettings
+  let windowLayoutStore: WindowLayoutStore
 
   @State private var selectedPane: SettingsPane = .general
 
@@ -86,7 +87,7 @@ struct SettingsView: View {
     case .excluded:
       ExcludedAppsPane(settings: appSettings)
     case .appearance:
-      AppearancePane(settings: appSettings)
+      AppearancePane(settings: appSettings, windowLayoutStore: windowLayoutStore)
     case .about:
       AboutPane()
     }

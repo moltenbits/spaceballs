@@ -18,6 +18,8 @@ public final class ResizeViewModel: ObservableObject {
 
   /// The AX element for the focused window, captured when the panel is shown.
   public internal(set) var focusedWindowElement: AXUIElement?
+  /// The pid of the focused window's app, captured alongside the AX element.
+  public internal(set) var focusedWindowPID: pid_t?
   /// The screen the focused window resides on.
   public internal(set) var targetScreen: NSScreen?
 
@@ -56,11 +58,13 @@ public final class ResizeViewModel: ObservableObject {
     focusedAppIcon = app.icon
 
     do {
-      let (element, _) = try WindowResizer.focusedWindow()
+      let (element, pid) = try WindowResizer.focusedWindow()
       focusedWindowElement = element
+      focusedWindowPID = pid
       targetScreen = WindowResizer.screen(for: element)
     } catch {
       focusedWindowElement = nil
+      focusedWindowPID = nil
       targetScreen = nil
     }
 
@@ -76,7 +80,8 @@ public final class ResizeViewModel: ObservableObject {
       let screen = targetScreen
     else { return }
     do {
-      try WindowResizer.resize(element, to: region, on: screen, margins: margins)
+      try WindowResizer.resize(
+        element, to: region, on: screen, margins: margins, pid: focusedWindowPID)
     } catch {
       print("Resize failed: \(error.localizedDescription)")
     }
@@ -122,7 +127,8 @@ public final class ResizeViewModel: ObservableObject {
       let region = activeRegion
     else { return }
     do {
-      try WindowResizer.resize(element, to: region, on: screen, margins: margins)
+      try WindowResizer.resize(
+        element, to: region, on: screen, margins: margins, pid: focusedWindowPID)
     } catch {
       print("Resize failed: \(error.localizedDescription)")
     }
