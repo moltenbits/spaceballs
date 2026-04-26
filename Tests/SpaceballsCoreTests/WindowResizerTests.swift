@@ -55,8 +55,9 @@ struct WindowResizerFrameTests {
     let visibleFrame = CGRect(x: 0, y: 0, width: 1920, height: 1055)
     let primaryHeight: CGFloat = 1080
 
-    let frame = computeTargetFrame(for: region, visibleFrame: visibleFrame,
-                                    primaryHeight: primaryHeight, margins: 0)
+    let frame = computeTargetFrame(
+      for: region, visibleFrame: visibleFrame,
+      primaryHeight: primaryHeight, margins: 0)
 
     #expect(frame.origin.x == 0)
     #expect(frame.width == 1920)
@@ -72,8 +73,9 @@ struct WindowResizerFrameTests {
     let visibleFrame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
     let primaryHeight: CGFloat = 1080
 
-    let frame = computeTargetFrame(for: region, visibleFrame: visibleFrame,
-                                    primaryHeight: primaryHeight, margins: 0)
+    let frame = computeTargetFrame(
+      for: region, visibleFrame: visibleFrame,
+      primaryHeight: primaryHeight, margins: 0)
 
     #expect(frame.origin.x == 0)
     #expect(frame.width == 960)
@@ -89,8 +91,9 @@ struct WindowResizerFrameTests {
     let visibleFrame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
     let primaryHeight: CGFloat = 1080
 
-    let frame = computeTargetFrame(for: region, visibleFrame: visibleFrame,
-                                    primaryHeight: primaryHeight, margins: 0)
+    let frame = computeTargetFrame(
+      for: region, visibleFrame: visibleFrame,
+      primaryHeight: primaryHeight, margins: 0)
 
     #expect(frame.origin.x == 960)
     #expect(frame.width == 960)
@@ -105,8 +108,9 @@ struct WindowResizerFrameTests {
     let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 800)
     let primaryHeight: CGFloat = 800
 
-    let frame = computeTargetFrame(for: region, visibleFrame: visibleFrame,
-                                    primaryHeight: primaryHeight, margins: 10)
+    let frame = computeTargetFrame(
+      for: region, visibleFrame: visibleFrame,
+      primaryHeight: primaryHeight, margins: 10)
 
     #expect(frame.origin.x == 10)
     #expect(frame.width == 1180)  // 1200 - 2*10
@@ -122,8 +126,9 @@ struct WindowResizerFrameTests {
     let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 1200)
     let primaryHeight: CGFloat = 1200
 
-    let frame = computeTargetFrame(for: region, visibleFrame: visibleFrame,
-                                    primaryHeight: primaryHeight, margins: 0)
+    let frame = computeTargetFrame(
+      for: region, visibleFrame: visibleFrame,
+      primaryHeight: primaryHeight, margins: 0)
 
     #expect(frame.width == 600)
     #expect(frame.height == 600)
@@ -139,8 +144,9 @@ struct WindowResizerFrameTests {
     let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 1200)
     let primaryHeight: CGFloat = 1200
 
-    let frame = computeTargetFrame(for: region, visibleFrame: visibleFrame,
-                                    primaryHeight: primaryHeight, margins: 0)
+    let frame = computeTargetFrame(
+      for: region, visibleFrame: visibleFrame,
+      primaryHeight: primaryHeight, margins: 0)
 
     // Bottom half in grid = row 6..11 = lower half of screen
     // In AX coords (top-left origin), lower half starts at y=600
@@ -176,9 +182,12 @@ struct WindowResizeErrorTests {
   @Test("Error descriptions are human-readable")
   func errorDescriptions() {
     #expect(WindowResizeError.noFrontmostApp.localizedDescription == "No frontmost application")
-    #expect(WindowResizeError.noFocusedWindow.localizedDescription == "Could not get focused window")
-    #expect(WindowResizeError.noScreen.localizedDescription == "Could not determine screen for window")
-    #expect(WindowResizeError.axSetPositionFailed.localizedDescription == "Failed to set window position")
+    #expect(
+      WindowResizeError.noFocusedWindow.localizedDescription == "Could not get focused window")
+    #expect(
+      WindowResizeError.noScreen.localizedDescription == "Could not determine screen for window")
+    #expect(
+      WindowResizeError.axSetPositionFailed.localizedDescription == "Failed to set window position")
     #expect(WindowResizeError.axSetSizeFailed.localizedDescription == "Failed to set window size")
   }
 }

@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var resizeOverlays: [ResizeOverlay] = []
   private let statusHUD = StatusHUD()
   private var cancellables = Set<AnyCancellable>()
+  var windowLayoutStore: WindowLayoutStore!
+  private var windowLayoutCoordinator: WindowLayoutCoordinator!
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     spaceNameStore = SpaceNameStore()
@@ -27,10 +29,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     panels = [makePanel()]
     resizeViewModel = ResizeViewModel()
 
+    windowLayoutStore = WindowLayoutStore(spaceManager: viewModel.spaceManager)
+    windowLayoutCoordinator = WindowLayoutCoordinator(
+      store: windowLayoutStore,
+      spaceManager: viewModel.spaceManager,
+      appSettings: appSettings
+    )
+    windowLayoutCoordinator.start()
+
     settingsController = SettingsWindowController(
       spaceManager: viewModel.spaceManager,
       spaceNameStore: spaceNameStore,
-      appSettings: appSettings
+      appSettings: appSettings,
+      windowLayoutStore: windowLayoutStore
     )
 
     setupMainMenu()
@@ -113,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationWillTerminate(_ notification: Notification) {
     keyInterceptor.stop()
+    windowLayoutCoordinator?.stop()
     if let monitor = clickMonitor {
       NSEvent.removeMonitor(monitor)
     }

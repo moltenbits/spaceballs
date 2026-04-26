@@ -1176,10 +1176,13 @@ public class SpaceManager {
     else { return }
 
     // Find the NSScreen matching this display
-    guard let screen = NSScreen.screens.first(where: {
-      let desc = $0.deviceDescription
-      return (desc[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == screenNumber
-    }) else { return }
+    guard
+      let screen = NSScreen.screens.first(where: {
+        let desc = $0.deviceDescription
+        return (desc[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID)
+          == screenNumber
+      })
+    else { return }
 
     // Convert screen center to CGEvent coordinates (top-left origin)
     let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
@@ -1212,7 +1215,8 @@ public class SpaceManager {
 
   static func axPosition(_ element: AXUIElement) -> CGPoint? {
     var ref: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &ref) == .success,
+    guard
+      AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &ref) == .success,
       let value = ref
     else { return nil }
     var point = CGPoint.zero
@@ -1299,12 +1303,15 @@ public class SpaceManager {
   public func moveWindowToSpace(windowID: Int, targetSpaceID: UInt64) throws -> Bool {
     // 1. Look up the window title from the raw window list.
     let windowList = dataSource.fetchWindowList()
-    guard let entry = windowList.first(where: {
-      ($0[kCGWindowNumber as String] as? Int) == windowID
-    }) else {
+    guard
+      let entry = windowList.first(where: {
+        ($0[kCGWindowNumber as String] as? Int) == windowID
+      })
+    else {
       throw WindowActivationError.windowNotFound(windowID: windowID)
     }
-    let windowTitle = (entry[kCGWindowName as String] as? String)
+    let windowTitle =
+      (entry[kCGWindowName as String] as? String)
       ?? (entry[kCGWindowOwnerName as String] as? String)
       ?? ""
 
@@ -1374,9 +1381,11 @@ public class SpaceManager {
     DispatchQueue.global(qos: .userInteractive).async {
       defer { semaphore.signal() }
 
-      guard let dockApp = NSRunningApplication.runningApplications(
-        withBundleIdentifier: "com.apple.dock"
-      ).first else {
+      guard
+        let dockApp = NSRunningApplication.runningApplications(
+          withBundleIdentifier: "com.apple.dock"
+        ).first
+      else {
         print("moveWindowInMC: Dock not running")
         return
       }
@@ -1451,7 +1460,8 @@ public class SpaceManager {
       if let targetScreenNumber {
         let targetDisplay = allDisplays.first { display in
           var valueRef: CFTypeRef?
-          if AXUIElementCopyAttributeValue(display, "AXDisplayID" as CFString, &valueRef) == .success,
+          if AXUIElementCopyAttributeValue(display, "AXDisplayID" as CFString, &valueRef)
+            == .success,
             let displayID = valueRef as? Int,
             CGDirectDisplayID(displayID) == targetScreenNumber
           {
@@ -1626,7 +1636,8 @@ public class SpaceManager {
       }
 
       // Drop on the specified space, or the last one visited
-      let dropTitle = dropSpaceTitle
+      let dropTitle =
+        dropSpaceTitle
         ?? Self.axStringAttribute(spaceButtons.last!, name: "AXTitle") ?? ""
       if let dropButton = mc.findSpaceButton(titled: dropTitle),
         let dropCenter = Self.axCenter(dropButton)

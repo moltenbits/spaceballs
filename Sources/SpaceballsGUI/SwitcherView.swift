@@ -207,57 +207,57 @@ struct SwitcherView: View {
             }
             .frame(width: spaceLabelWidth, alignment: .leading)
 
-          if isBack {
-            // Empty right side to match row height
-            Text("")
-              .frame(width: 110, alignment: .trailing)
-            Spacer()
-              .frame(width: appSettings.iconSize, height: appSettings.iconSize)
-          } else {
-
-            // Matches the 110pt app name column
-            Text(item.label)
-              .font(.system(size: textSize))
-              .foregroundStyle(isSelected ? .white : .secondary)
-              .frame(width: 110, alignment: .trailing)
-              .lineLimit(1)
-
-            // Matches the icon position
-            if isNewSpace {
-              Image(systemName: "plus.square")
-                .resizable()
+            if isBack {
+              // Empty right side to match row height
+              Text("")
+                .frame(width: 110, alignment: .trailing)
+              Spacer()
                 .frame(width: appSettings.iconSize, height: appSettings.iconSize)
-                .foregroundStyle(isSelected ? .white : .secondary)
             } else {
-              Image(systemName: "square.grid.2x2")
-                .resizable()
-                .frame(width: appSettings.iconSize, height: appSettings.iconSize)
-                .foregroundStyle(isSelected ? .white : .secondary)
-            }
 
-            // Right column — app summary or label
-            if let wsIdx = item.workspaceIndex, wsIdx >= 0,
-              wsIdx < appSettings.workspaces.count
-            {
-              let apps = appSettings.workspaces[wsIdx].launchers
-              let names = apps.prefix(4).compactMap { l in
-                l.appName.isEmpty ? nil : l.appName
+              // Matches the 110pt app name column
+              Text(item.label)
+                .font(.system(size: textSize))
+                .foregroundStyle(isSelected ? .white : .secondary)
+                .frame(width: 110, alignment: .trailing)
+                .lineLimit(1)
+
+              // Matches the icon position
+              if isNewSpace {
+                Image(systemName: "plus.square")
+                  .resizable()
+                  .frame(width: appSettings.iconSize, height: appSettings.iconSize)
+                  .foregroundStyle(isSelected ? .white : .secondary)
+              } else {
+                Image(systemName: "square.grid.2x2")
+                  .resizable()
+                  .frame(width: appSettings.iconSize, height: appSettings.iconSize)
+                  .foregroundStyle(isSelected ? .white : .secondary)
               }
-              Text(names.isEmpty ? item.label : names.joined(separator: ", "))
-                .font(.system(size: textSize))
-                .foregroundStyle(isSelected ? .white : .primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 400, alignment: .leading)
-            } else {
-              Text(isNewSpace ? "Empty space" : item.label)
-                .font(.system(size: textSize))
-                .foregroundStyle(isSelected ? .white : .primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 400, alignment: .leading)
-            }
-          } // end if isBack/else
+
+              // Right column — app summary or label
+              if let wsIdx = item.workspaceIndex, wsIdx >= 0,
+                wsIdx < appSettings.workspaces.count
+              {
+                let apps = appSettings.workspaces[wsIdx].launchers
+                let names = apps.prefix(4).compactMap { l in
+                  l.appName.isEmpty ? nil : l.appName
+                }
+                Text(names.isEmpty ? item.label : names.joined(separator: ", "))
+                  .font(.system(size: textSize))
+                  .foregroundStyle(isSelected ? .white : .primary)
+                  .lineLimit(1)
+                  .truncationMode(.tail)
+                  .frame(maxWidth: 400, alignment: .leading)
+              } else {
+                Text(isNewSpace ? "Empty space" : item.label)
+                  .font(.system(size: textSize))
+                  .foregroundStyle(isSelected ? .white : .primary)
+                  .lineLimit(1)
+                  .truncationMode(.tail)
+                  .frame(maxWidth: 400, alignment: .leading)
+              }
+            }  // end if isBack/else
           }
           .padding(.vertical, 1)
           .padding(.horizontal, 10)

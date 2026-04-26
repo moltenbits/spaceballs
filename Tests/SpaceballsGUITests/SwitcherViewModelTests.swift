@@ -1082,7 +1082,7 @@ struct GlobalDesktopOrdinalTests {
       ),
     ]
     ds.windowList = [
-      makeWindowDict(id: 100, ownerName: "App", name: "Win", pid: 1),
+      makeWindowDict(id: 100, ownerName: "App", name: "Win", pid: 1)
     ]
     ds.windowSpaces = [100: [20]]
 

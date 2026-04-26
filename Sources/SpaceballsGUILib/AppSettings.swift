@@ -160,6 +160,12 @@ public final class AppSettings: ObservableObject {
     }
   }
 
+  // MARK: - Window Layout Memory
+
+  @Published public var rememberWindowLayouts: Bool {
+    didSet { defaults.set(rememberWindowLayouts, forKey: "rememberWindowLayouts") }
+  }
+
   /// Transient flag — not persisted. Disables the event tap while recording a shortcut.
   @Published public var isRecordingShortcut = false
 
@@ -179,6 +185,7 @@ public final class AppSettings: ObservableObject {
       "resizeGridColumns": 12,
       "resizeGridRows": 12,
       "resizeMargins": 0.0,
+      "rememberWindowLayouts": true,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -236,6 +243,8 @@ public final class AppSettings: ObservableObject {
       self.resizePresets = ResizePreset.defaultPresets(
         gridColumns: gridCols, gridRows: gridRows)
     }
+
+    self.rememberWindowLayouts = defaults.bool(forKey: "rememberWindowLayouts")
   }
 
   /// Icon size proportional to text size (20px at 13pt text).
