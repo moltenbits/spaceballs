@@ -896,6 +896,7 @@ public class SpaceManager {
   ///
   /// Requires Accessibility permission to be granted to the calling process.
   public func activateWindow(id windowID: Int) throws {
+    let activateStart = Date()
     // 1. Find the window's PID from the raw window list.
     //    Unlike getAllWindows(), this doesn't filter by title — window names
     //    require Screen Recording permission, but activation only needs the PID.
@@ -906,6 +907,8 @@ public class SpaceManager {
       }),
       let rawPID = entry[kCGWindowOwnerPID as String] as? Int
     else {
+      Diagnostics.log(
+        "activate", "windowID=\(windowID) result=window-not-found")
       throw WindowActivationError.windowNotFound(windowID: windowID)
     }
     let ownerName = entry[kCGWindowOwnerName as String] as? String ?? "unknown"
@@ -913,11 +916,17 @@ public class SpaceManager {
 
     // 2. Check AX trust (prompt opens System Settings → Accessibility on first run)
     guard Self.ensureAccessibilityTrusted() else {
+      Diagnostics.log("activate", "windowID=\(windowID) result=ax-not-trusted")
       throw WindowActivationError.accessibilityNotTrusted
     }
 
     let pid = pid_t(rawPID)
     let targetCGWindowID = CGWindowID(windowID)
+
+    Diagnostics.log(
+      "activate",
+      "windowID=\(windowID) owner=\"\(ownerName)\" title=\(Diagnostics.titleForLogging(windowName)) pid=\(pid) starting",
+      app: ownerName)
 
     // Self-owned windows (e.g. the Settings window) — bring to front via AppKit
     // directly. The SkyLight/AX activation flow crashes on the process's own windows.
@@ -928,6 +937,10 @@ public class SpaceManager {
           NSApp.activate(ignoringOtherApps: true)
           break
         }
+        Diagnostics.log(
+          "activate",
+          "windowID=\(windowID) path=self duration=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+          app: ownerName)
       }
       return
     }
@@ -967,17 +980,26 @@ public class SpaceManager {
     //    within a main-thread-safe timeout.
     if let axElement {
       AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) path=standard duration=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+        app: ownerName)
     } else {
       DispatchQueue.global(qos: .userInteractive).async { [self] in
+        let bruteStart = Date()
         if let axElement = findAXWindowBruteForce(
           pid: pid, targetCGWindowID: targetCGWindowID)
         {
           AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+          Diagnostics.log(
+            "activate",
+            "windowID=\(windowID) path=brute-force brute-duration=\(Int(Date().timeIntervalSince(bruteStart) * 1000))ms total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+            app: ownerName)
         } else {
-          print(
-            "activateWindow: AX element not found for window \(windowID)"
-              + " (\(ownerName) — \(windowName ?? "untitled"))"
-              + " — kAXRaiseAction skipped")
+          Diagnostics.log(
+            "activate",
+            "windowID=\(windowID) path=brute-force outcome=not-found total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms (kAXRaiseAction skipped)",
+            app: ownerName)
         }
       }
     }
@@ -1301,6 +1323,9 @@ public class SpaceManager {
   /// - Returns: `true` if the drag completed successfully.
   @discardableResult
   public func moveWindowToSpace(windowID: Int, targetSpaceID: UInt64) throws -> Bool {
+    let token = Diagnostics.beginTiming(
+      "move-space", "moveWindowToSpace",
+      extras: ["windowID": "\(windowID)", "targetSpace": "\(targetSpaceID)"])
     // 1. Look up the window title from the raw window list.
     let windowList = dataSource.fetchWindowList()
     guard
@@ -1308,6 +1333,7 @@ public class SpaceManager {
         ($0[kCGWindowNumber as String] as? Int) == windowID
       })
     else {
+      Diagnostics.endTiming(token, outcome: "window-not-found")
       throw WindowActivationError.windowNotFound(windowID: windowID)
     }
     let windowTitle =
@@ -1319,6 +1345,7 @@ public class SpaceManager {
     //    MC uses global numbering across all displays, not per-display ordinals.
     let allSpaces = getAllSpaces()
     guard let targetSpace = allSpaces.first(where: { $0.id == targetSpaceID }) else {
+      Diagnostics.endTiming(token, outcome: "target-space-not-found")
       print("moveWindowToSpace: space \(targetSpaceID) not found")
       return false
     }
@@ -1326,10 +1353,15 @@ public class SpaceManager {
     let allDesktopSpaces = allSpaces.filter { $0.type == .desktop }
     guard let ordinalIndex = allDesktopSpaces.firstIndex(where: { $0.id == targetSpaceID })
     else {
+      Diagnostics.endTiming(token, outcome: "no-ordinal")
       print("moveWindowToSpace: could not determine ordinal for space \(targetSpaceID)")
       return false
     }
     let targetSpaceTitle = "Desktop \(ordinalIndex + 1)"
+    Diagnostics.log(
+      "move-space",
+      "title=\(Diagnostics.titleForLogging(windowTitle)) → \(targetSpaceTitle) targetDisplay=\(targetSpace.displayUUID)"
+    )
 
     // 3. Activate the window to switch to its space.
     try activateWindow(id: windowID)
@@ -1350,6 +1382,7 @@ public class SpaceManager {
       try activateWindow(id: windowID)
     }
 
+    Diagnostics.endTiming(token, outcome: moved ? "moved" : "drag-failed")
     return moved
   }
 

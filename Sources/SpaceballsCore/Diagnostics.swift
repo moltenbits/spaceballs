@@ -42,12 +42,24 @@ public enum Diagnostics {
   }
 
   /// True when diagnostics are turned on. Reads from UserDefaults so GUI and CLI changes
-  /// take effect immediately without a process restart.
+  /// take effect immediately without a process restart. A non-nil `runtimeOverride`
+  /// (set via `setRuntimeOverride(_:)`) takes precedence. Tests do not inherit the
+  /// user's saved preference: when we detect the process is a test runner, the override
+  /// defaults to `false`. Tests that explicitly want logging can set the override true
+  /// (with a custom log path) for their scope.
   public static var enabled: Bool {
-    get { UserDefaults.standard.bool(forKey: SettingsKey.enabled) }
+    get {
+      if let override = stateLock.withLock({ _runtimeOverride }) { return override }
+      return UserDefaults.standard.bool(forKey: SettingsKey.enabled)
+    }
     set {
       UserDefaults.standard.set(newValue, forKey: SettingsKey.enabled)
     }
+  }
+
+  /// Bypasses the UserDefaults-backed `enabled` flag. `nil` clears the override.
+  public static func setRuntimeOverride(_ value: Bool?) {
+    stateLock.withLock { _runtimeOverride = value }
   }
 
   /// When true, replace window titles in log entries with `<redacted>`. For users who want
@@ -214,6 +226,14 @@ public enum Diagnostics {
     }
   }
 
+  /// Blocks until all queued writes have completed. Short-lived processes (the CLI)
+  /// must call this before exiting or the async writes get lost when the process
+  /// terminates. The GUI doesn't need to call it — writes drain naturally as the
+  /// process lives on.
+  public static func flush() {
+    diagQueue.sync {}
+  }
+
   /// Returns the current log size in bytes (or 0 if missing).
   public static func currentLogSize() -> Int {
     let path = logPath
@@ -235,7 +255,30 @@ public enum Diagnostics {
     label: "com.moltenbits.spaceballs.diagnostics", qos: .utility)
   private static let stateLock = NSLock()
   private static var _customLogPath: String? = nil
+  /// Default `false` when we're running inside a test process so the user's saved
+  /// `diagnosticsEnabled` doesn't bleed into test runs.
+  private static var _runtimeOverride: Bool? = Diagnostics.isLikelyTestProcess ? false : nil
   private static let rotationThreshold: Int = 5 * 1024 * 1024  // 5 MB
+
+  /// Heuristic: are we running inside `swift test` or an XCTest bundle? Used to default
+  /// the runtime override to `false` so tests never write to the user's real log.
+  /// `swift test` actually runs `swiftpm-testing-helper`; XCTest runs `xctest`; the
+  /// PackageTests bundle (run directly) has `PackageTests` in its name. We match all
+  /// three, plus check for the XCTest framework being loaded as a last resort.
+  private static let isLikelyTestProcess: Bool = {
+    let exe = CommandLine.arguments.first ?? ""
+    if exe.contains("xctest")
+      || exe.contains("PackageTests")
+      || exe.contains("swift-testing")
+      || exe.contains("swiftpm-testing-helper")
+    {
+      return true
+    }
+    if NSClassFromString("XCTest") != nil || NSClassFromString("XCTestCase") != nil {
+      return true
+    }
+    return false
+  }()
 
   private static let timestampFormatter: DateFormatter = {
     let f = DateFormatter()

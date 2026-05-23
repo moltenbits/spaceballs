@@ -36,6 +36,7 @@ struct EnableDiagnosticsCommand: ParsableCommand {
     // create one so the header includes the Space layout too.
     let spaceManager = SpaceManager(dataSource: CGSDataSource())
     Diagnostics.writeHeader(appVersion: SpaceballsVersion.version, spaceManager: spaceManager)
+    Diagnostics.flush()
     print("Diagnostics enabled. Log: \(Diagnostics.logPath)")
   }
 }
@@ -143,6 +144,7 @@ struct MarkDiagnosticsCommand: ParsableCommand {
     }
     let text = note.isEmpty ? "(no note)" : note.joined(separator: " ")
     Diagnostics.mark(text)
+    Diagnostics.flush()
     print("Marker written: \(text)")
   }
 }

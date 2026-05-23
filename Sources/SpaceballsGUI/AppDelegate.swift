@@ -96,7 +96,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       object: nil
     )
 
+    // Diagnostics: write a header at launch (if enabled) and re-dump on display
+    // reconfig so the log always has fresh context to correlate against.
+    if Diagnostics.enabled {
+      Diagnostics.writeHeader(
+        appVersion: appVersionString, spaceManager: viewModel.spaceManager)
+    }
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didChangeScreenParametersNotification,
+      object: nil, queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      Diagnostics.log("display", "didChangeScreenParameters fired")
+      // CGS lags screen-parameters notifications on some macOS versions; brief delay
+      // before re-snapshotting so the dumped state matches what the user sees.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        Diagnostics.writeHeader(
+          appVersion: self.appVersionString, spaceManager: self.viewModel.spaceManager)
+      }
+    }
+
+    NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.activeSpaceDidChangeNotification,
+      object: nil, queue: .main
+    ) { _ in
+      Diagnostics.log("space", "activeSpaceDidChange fired")
+    }
+
     print("Spaceballs GUI running. Press Cmd+Tab to activate.")
+  }
+
+  /// "1.0.0 (5)" — used in diagnostic log headers.
+  private var appVersionString: String {
+    let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
+    let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+    return "\(v) (\(b))"
   }
 
   // MARK: - CLI Bridge
@@ -179,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // MARK: - Panel Management
 
   func showPanel() {
+    Diagnostics.log("panel", "switcher show")
     viewModel.overrideDisplayUUID = nil
     viewModel.showEmptySpaces = appSettings.showEmptySpaces
 
@@ -274,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func hidePanel() {
+    Diagnostics.log("panel", "switcher hide")
     if viewModel.panelMode == .createSpace {
       viewModel.exitCreateMode()
     }
@@ -428,6 +464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // MARK: - Resize Panel Management
 
   private func showResizePanel() {
+    Diagnostics.log("panel", "resize show")
     // Dismiss switcher panel if open
     if keyInterceptor.panelVisible {
       hidePanel()
@@ -499,6 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func hideResizePanel() {
+    Diagnostics.log("panel", "resize hide")
     for panel in resizePanels {
       panel.orderOut(nil)
     }
