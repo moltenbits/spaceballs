@@ -283,6 +283,11 @@ private func keyInterceptorCallback(
         }
         return nil  // consume
       }
+      // Drop macOS keyboard auto-repeats: a normal key press generates several over its
+      // ~100ms hold, and `applyPreset` cycles the target screen when the same key fires
+      // twice — producing unpredictable multi-display resizes that depend on hold duration.
+      let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+      if isRepeat { return nil }
       // Any other key — check against preset shortcuts
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorResizePreset(keyCode: UInt16(keyCode))
