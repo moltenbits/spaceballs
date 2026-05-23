@@ -1804,3 +1804,20 @@ public class SpaceManager {
   }
 
 }
+
+// MARK: - Diagnostics snapshot
+
+extension SpaceManager: SpaceManagerSnapshotProvider {
+  public func spaceSnapshotForDiagnostics() -> [String] {
+    let spaces = getAllSpaces()
+    return spaces.map { s in
+      let typeStr: String
+      switch s.type {
+      case .desktop: typeStr = "desktop"
+      case .fullscreen: typeStr = "fullscreen"
+      }
+      return
+        "id=\(s.id) uuid=\(s.uuid) display=\(s.displayUUID) type=\(typeStr) current=\(s.isCurrent)"
+    }
+  }
+}

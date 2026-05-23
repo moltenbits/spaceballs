@@ -166,6 +166,19 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(rememberWindowLayouts, forKey: "rememberWindowLayouts") }
   }
 
+  // MARK: - Diagnostics
+
+  /// Master switch. When off, `Diagnostics.log(...)` calls are no-ops. Default off.
+  @Published public var diagnosticsEnabled: Bool {
+    didSet { defaults.set(diagnosticsEnabled, forKey: "diagnosticsEnabled") }
+  }
+
+  /// When true, window titles are replaced with `<redacted>` in log output. For users who
+  /// want to share logs publicly without leaking what they were working on.
+  @Published public var diagnosticsRedactWindowTitles: Bool {
+    didSet { defaults.set(diagnosticsRedactWindowTitles, forKey: "diagnosticsRedactWindowTitles") }
+  }
+
   /// Transient flag — not persisted. Disables the event tap while recording a shortcut.
   @Published public var isRecordingShortcut = false
 
@@ -186,6 +199,8 @@ public final class AppSettings: ObservableObject {
       "resizeGridRows": 12,
       "resizeMargins": 0.0,
       "rememberWindowLayouts": true,
+      "diagnosticsEnabled": false,
+      "diagnosticsRedactWindowTitles": false,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -245,6 +260,8 @@ public final class AppSettings: ObservableObject {
     }
 
     self.rememberWindowLayouts = defaults.bool(forKey: "rememberWindowLayouts")
+    self.diagnosticsEnabled = defaults.bool(forKey: "diagnosticsEnabled")
+    self.diagnosticsRedactWindowTitles = defaults.bool(forKey: "diagnosticsRedactWindowTitles")
   }
 
   /// Icon size proportional to text size (20px at 13pt text).

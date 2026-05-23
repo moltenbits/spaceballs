@@ -152,21 +152,16 @@ public enum WindowResizer {
     pid: pid_t? = nil, completion: (() -> Void)? = nil
   ) throws {
     let frame = targetFrame(for: region, on: screen, margins: margins)
-    let visible = screen.visibleFrame
-    let screens = NSScreen.screens
-    let screenIdx = screens.firstIndex(of: screen) ?? -1
-    let allFrames = screens.map { s -> String in
-      let f = s.frame
-      let vf = s.visibleFrame
-      return
-        "frame=(\(Int(f.origin.x)),\(Int(f.origin.y)))/\(Int(f.width))x\(Int(f.height))"
-        + " visible=(\(Int(vf.origin.x)),\(Int(vf.origin.y)))/\(Int(vf.width))x\(Int(vf.height))"
-    }.joined(separator: " | ")
-    debugLog(
-      "resize region=(c=\(region.column),r=\(region.row),cs=\(region.columnSpan),rs=\(region.rowSpan),gc=\(region.gridColumns),gr=\(region.gridRows)) "
-        + "targetScreen[\(screenIdx)/\(screens.count)].visible=(\(Int(visible.origin.x)),\(Int(visible.origin.y)))/\(Int(visible.width))x\(Int(visible.height)) "
-        + "allScreens=[\(allFrames)]"
-    )
+    if Diagnostics.enabled {
+      let visible = screen.visibleFrame
+      let screens = NSScreen.screens
+      let screenIdx = screens.firstIndex(of: screen) ?? -1
+      Diagnostics.log(
+        "resize",
+        "region=(c=\(region.column),r=\(region.row),cs=\(region.columnSpan),rs=\(region.rowSpan),gc=\(region.gridColumns),gr=\(region.gridRows)) "
+          + "targetScreen[\(screenIdx)/\(screens.count)].visible=(\(Int(visible.origin.x)),\(Int(visible.origin.y)))/\(Int(visible.width))x\(Int(visible.height))"
+      )
+    }
     try setFrame(element, frame: frame, label: "resize") {
       if let pid {
         postDidResize(element: element, pid: pid)
@@ -188,31 +183,44 @@ public enum WindowResizer {
     _ element: AXUIElement, frame: CGRect, label: String = "setFrame",
     completion: (() -> Void)? = nil
   ) throws {
-    let bundleID = bundleIDForElement(element) ?? "?"
-    debugLog(
-      "\(label) app=\(bundleID) target=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.size.width))x\(Int(frame.size.height)) before=\(currentFrameString(element))"
-    )
+    let bundleID = bundleIDForElement(element)
+    let token = Diagnostics.beginTiming(
+      "resize", "\(label)-setFrame", app: bundleID,
+      extras: [
+        "target":
+          "(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.size.width))x\(Int(frame.size.height))",
+        "before": currentFrameString(element),
+      ])
 
     let posOK = setAXPosition(element, frame.origin)
-    debugLog(
-      "\(label) step=setPos returnedOK=\(posOK) frame=\(currentFrameString(element))"
-    )
-    guard posOK else { throw WindowResizeError.axSetPositionFailed }
+    if Diagnostics.enabled {
+      Diagnostics.log(
+        "resize",
+        "\(label) step=setPos returnedOK=\(posOK) frame=\(currentFrameString(element))",
+        app: bundleID)
+    }
+    guard posOK else {
+      Diagnostics.endTiming(token, outcome: "error:axSetPositionFailed")
+      throw WindowResizeError.axSetPositionFailed
+    }
 
     waitUntilAtTarget(
       element: element, posTarget: frame.origin, sizeTarget: nil,
-      label: label, phase: "after-setPos"
+      label: label, phase: "after-setPos", app: bundleID
     ) {
       let sizeOK = setAXSize(element, frame.size)
-      debugLog(
-        "\(label) step=setSize returnedOK=\(sizeOK) frame=\(currentFrameString(element))"
-      )
+      if Diagnostics.enabled {
+        Diagnostics.log(
+          "resize",
+          "\(label) step=setSize returnedOK=\(sizeOK) frame=\(currentFrameString(element))",
+          app: bundleID)
+      }
 
       waitUntilAtTarget(
         element: element, posTarget: nil, sizeTarget: frame.size,
-        label: label, phase: "after-setSize"
+        label: label, phase: "after-setSize", app: bundleID
       ) {
-        debugLog("\(label) done final=\(currentFrameString(element))")
+        Diagnostics.endTiming(token, outcome: sizeOK ? "ok" : "size-write-failed")
         completion?()
       }
     }
@@ -236,7 +244,8 @@ public enum WindowResizer {
   /// Exits early on `maxWait` to avoid hanging when the app silently refuses a write.
   private static func waitUntilAtTarget(
     element: AXUIElement, posTarget: CGPoint?, sizeTarget: CGSize?,
-    label: String, phase: String, completion: @escaping () -> Void
+    label: String, phase: String, app: String? = nil,
+    completion: @escaping () -> Void
   ) {
     let pollInterval: TimeInterval = 0.025
     let stableDuration: TimeInterval = 0.060
@@ -261,7 +270,7 @@ public enum WindowResizer {
       }
 
       guard let frame = actualFrame else {
-        debugLog("\(label) \(phase) frame read failed; aborting wait")
+        Diagnostics.log("resize", "\(label) \(phase) frame read failed; aborting wait", app: app)
         completion()
         return
       }
@@ -283,25 +292,30 @@ public enum WindowResizer {
           firstAtTarget = Date()
         }
         if Date().timeIntervalSince(firstAtTarget!) >= stableDuration {
-          debugLog(
-            "\(label) \(phase) at-target+stable after \(Int(Date().timeIntervalSince(startTime) * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))"
-          )
+          if Diagnostics.enabled {
+            Diagnostics.log(
+              "resize",
+              "\(label) \(phase) at-target+stable after \(Int(Date().timeIntervalSince(startTime) * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))",
+              app: app)
+          }
           completion()
           return
         }
       } else {
-        if firstAtTarget != nil {
-          debugLog(
-            "\(label) \(phase) drifted off target at \(Int(Date().timeIntervalSince(startTime) * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))"
-          )
+        if firstAtTarget != nil && Diagnostics.enabled {
+          Diagnostics.log(
+            "resize",
+            "\(label) \(phase) drifted off target at \(Int(Date().timeIntervalSince(startTime) * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))",
+            app: app)
         }
         firstAtTarget = nil
       }
 
       if Date().timeIntervalSince(startTime) > maxWait {
-        debugLog(
-          "\(label) \(phase) timeout after \(Int(maxWait * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))"
-        )
+        Diagnostics.log(
+          "resize",
+          "\(label) \(phase) timeout after \(Int(maxWait * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))",
+          app: app)
         completion()
         return
       }
@@ -326,86 +340,16 @@ public enum WindowResizer {
     return bounds
   }
 
-  /// Polls the element's frame until two consecutive reads (30ms apart) match, indicating
-  /// any in-progress animation has completed. Bails out after `maxWait` to avoid hanging if
-  /// the app never stops twitching (or its frame perpetually drifts).
-  private static func waitUntilSettled(
-    element: AXUIElement, maxWait: TimeInterval = 1.0, completion: @escaping () -> Void
-  ) {
-    let pollInterval: TimeInterval = 0.030
-    let stableThreshold: CGFloat = 1
-    let startTime = Date()
-    var lastFrame: CGRect?
+  // MARK: - Diagnostics helpers
 
-    func poll() {
-      guard let pos = SpaceManager.axPosition(element),
-        let size = SpaceManager.axSize(element)
-      else {
-        completion()
-        return
-      }
-      let currentFrame = CGRect(origin: pos, size: size)
-
-      if let last = lastFrame {
-        let stable =
-          abs(currentFrame.origin.x - last.origin.x) < stableThreshold
-          && abs(currentFrame.origin.y - last.origin.y) < stableThreshold
-          && abs(currentFrame.size.width - last.size.width) < stableThreshold
-          && abs(currentFrame.size.height - last.size.height) < stableThreshold
-        if stable {
-          completion()
-          return
-        }
-      }
-
-      lastFrame = currentFrame
-
-      if Date().timeIntervalSince(startTime) > maxWait {
-        completion()
-        return
-      }
-
-      DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) { poll() }
-    }
-
-    DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) { poll() }
-  }
-
-  // MARK: - Diagnostics
-
-  private static let debugLogPath = "/tmp/spaceballs-resize.log"
-  private static let debugLogQueue = DispatchQueue(label: "com.moltenbits.spaceballs.resize-log")
-  private static let debugLogDateFormatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateFormat = "HH:mm:ss.SSS"
-    return f
-  }()
-
-  static func debugLog(_ message: String) {
-    let timestamp = debugLogDateFormatter.string(from: Date())
-    let line = "\(timestamp) \(message)\n"
-    debugLogQueue.async {
-      guard let data = line.data(using: .utf8) else { return }
-      let url = URL(fileURLWithPath: debugLogPath)
-      if FileManager.default.fileExists(atPath: debugLogPath) {
-        if let handle = try? FileHandle(forWritingTo: url) {
-          defer { try? handle.close() }
-          try? handle.seekToEnd()
-          try? handle.write(contentsOf: data)
-        }
-      } else {
-        try? data.write(to: url)
-      }
-    }
-  }
-
-  private static func currentFrameString(_ element: AXUIElement) -> String {
+  /// Snapshot of the element's current frame as a compact log-friendly string.
+  static func currentFrameString(_ element: AXUIElement) -> String {
     let p = SpaceManager.axPosition(element) ?? .zero
     let s = SpaceManager.axSize(element) ?? .zero
     return "(\(Int(p.x)),\(Int(p.y)))/\(Int(s.width))x\(Int(s.height))"
   }
 
-  private static func bundleIDForElement(_ element: AXUIElement) -> String? {
+  static func bundleIDForElement(_ element: AXUIElement) -> String? {
     var pid: pid_t = 0
     guard AXUIElementGetPid(element, &pid) == .success else { return nil }
     return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
