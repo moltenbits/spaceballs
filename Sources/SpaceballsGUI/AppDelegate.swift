@@ -855,8 +855,13 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorResizeCommit() {
-    resizeViewModel.commitResize(margins: CGFloat(appSettings.resizeMargins))
-    hideResizePanel()
+    // Defer hideResizePanel until the async resize chain finishes — otherwise the panel-hide
+    // returns focus to the target app mid-resize, and apps with animated resizes (iTerm,
+    // IntelliJ) cancel the in-progress animation when their window becomes key again.
+    resizeViewModel.commitResize(margins: CGFloat(appSettings.resizeMargins)) {
+      [weak self] in
+      self?.hideResizePanel()
+    }
   }
 
   func keyInterceptorResizeCancel() {
