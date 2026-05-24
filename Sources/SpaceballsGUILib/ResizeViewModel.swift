@@ -120,17 +120,25 @@ public final class ResizeViewModel: ObservableObject {
     targetScreen = NSScreen.screens.first { $0.displayUUID == uuid }
   }
 
-  /// Commits the pending preset resize and dismisses the panel.
-  public func commitResize(margins: CGFloat) {
+  /// Commits the pending preset resize. `completion` fires once the (async) AX write chain
+  /// has finished — callers use this to defer panel-hide / focus changes until the resize
+  /// has fully settled, since apps like iTerm and IntelliJ cancel in-progress animated
+  /// resizes when they receive a "become key" event mid-flight.
+  public func commitResize(margins: CGFloat, completion: (() -> Void)? = nil) {
     guard let element = focusedWindowElement,
       let screen = targetScreen,
       let region = activeRegion
-    else { return }
+    else {
+      completion?()
+      return
+    }
     do {
       try WindowResizer.resize(
-        element, to: region, on: screen, margins: margins, pid: focusedWindowPID)
+        element, to: region, on: screen, margins: margins, pid: focusedWindowPID,
+        completion: completion)
     } catch {
       print("Resize failed: \(error.localizedDescription)")
+      completion?()
     }
   }
 }

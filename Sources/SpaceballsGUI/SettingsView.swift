@@ -11,6 +11,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   case resize
   case shortcuts
   case excluded
+  case diagnostics
   case about
 
   var id: String { rawValue }
@@ -23,6 +24,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .resize: "Resize"
     case .excluded: "Excluded"
     case .appearance: "Appearance"
+    case .diagnostics: "Diagnostics"
     case .about: "About"
     }
   }
@@ -35,6 +37,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case .resize: "rectangle.split.3x3"
     case .excluded: "eye.slash"
     case .appearance: "paintbrush"
+    case .diagnostics: "stethoscope"
     case .about: "info.circle"
     }
   }
@@ -88,6 +91,8 @@ struct SettingsView: View {
       ExcludedAppsPane(settings: appSettings)
     case .appearance:
       AppearancePane(settings: appSettings, windowLayoutStore: windowLayoutStore)
+    case .diagnostics:
+      DiagnosticsPane(settings: appSettings, spaceManager: spaceManager)
     case .about:
       AboutPane()
     }

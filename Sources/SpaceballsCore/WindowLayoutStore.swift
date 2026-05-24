@@ -171,14 +171,30 @@ public final class WindowLayoutStore {
   /// windows of each saved app. Returns the count of windows actually moved.
   @discardableResult
   public func restore(spaceUUID: String, displayUUID: String) -> Int {
-    guard let layout = layout(spaceUUID: spaceUUID, displayUUID: displayUUID) else { return 0 }
-    guard let screen = spaceballsScreen(forDisplayUUID: displayUUID) else { return 0 }
+    let token = Diagnostics.beginTiming(
+      "layout-restore", "restore",
+      extras: ["space": spaceUUID, "display": displayUUID])
+    guard let layout = layout(spaceUUID: spaceUUID, displayUUID: displayUUID) else {
+      Diagnostics.endTiming(token, outcome: "no-layout-for-pair")
+      return 0
+    }
+    guard let screen = spaceballsScreen(forDisplayUUID: displayUUID) else {
+      Diagnostics.endTiming(token, outcome: "display-not-attached")
+      return 0
+    }
 
     let origin = spaceballsAXOrigin(of: screen)
     var moved = 0
 
+    Diagnostics.log(
+      "layout-restore", "applying layout apps=\(layout.apps.count)")
+
     for (bundleID, relative) in layout.apps {
       let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+      if runningApps.isEmpty {
+        Diagnostics.log("layout-restore", "skip — app not running", app: bundleID)
+        continue
+      }
       for app in runningApps {
         let pid = app.processIdentifier
         let axApp = AXUIElementCreateApplication(pid)
@@ -186,7 +202,10 @@ public final class WindowLayoutStore {
         guard
           AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &ref) == .success,
           let raw = ref as? [AXUIElement]
-        else { continue }
+        else {
+          Diagnostics.log("layout-restore", "skip — windows unreadable", app: bundleID)
+          continue
+        }
 
         let absolute = CGRect(
           x: origin.x + CGFloat(relative.x),
@@ -196,15 +215,15 @@ public final class WindowLayoutStore {
         )
 
         for window in raw {
-          // Apply size → position → size to handle apps that clamp one based on the other.
-          guard WindowResizer.setAXSize(window, absolute.size) else { continue }
-          guard WindowResizer.setAXPosition(window, absolute.origin) else { continue }
-          WindowResizer.setAXSize(window, absolute.size)
+          guard
+            (try? WindowResizer.setFrame(window, frame: absolute, label: "restore")) != nil
+          else { continue }
           moved += 1
         }
       }
     }
 
+    Diagnostics.endTiming(token, outcome: "moved=\(moved)")
     return moved
   }
 
