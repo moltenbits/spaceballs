@@ -40,6 +40,5 @@ dist/
 *.swp
 *.swo
 *~
-
-.env
 .claude
+.env
