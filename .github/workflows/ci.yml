@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: swift build --disable-sandbox
+
+      - name: Run tests
+        run: swift test --disable-sandbox
+
+      # Release config catches optimization-only compile issues, and running the
+      # CLI proves the binary launches headless. Only ArgumentParser paths are
+      # exercised — anything touching CGS/AX needs permissions runners can't grant.
+      - name: Release build + CLI smoke test
+        run: |
+          swift build -c release --disable-sandbox --product spaceballs
+          .build/release/spaceballs --version
+          .build/release/spaceballs --help
+
+  lint:
+    name: Lint
+    runs-on: macos-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: swift-format lint
+        run: xcrun swift-format lint -r Sources/ Tests/
