@@ -41,23 +41,31 @@ public enum Diagnostics {
     stateLock.withLock { _customLogPath ?? defaultLogPath }
   }
 
-  /// True when diagnostics are turned on. Reads from UserDefaults so GUI and CLI changes
-  /// take effect immediately without a process restart. A non-nil `runtimeOverride`
-  /// (set via `setRuntimeOverride(_:)`) takes precedence. Tests do not inherit the
-  /// user's saved preference: when we detect the process is a test runner, the override
-  /// defaults to `false`. Tests that explicitly want logging can set the override true
-  /// (with a custom log path) for their scope.
+  /// Shared preferences suite read by both the GUI app and the CLI. The two run with
+  /// different preference domains (`com.moltenbits.spaceballs` for the bundled GUI, the
+  /// bare process name for the unbundled CLI binary), so `UserDefaults.standard` is NOT
+  /// shared between them. Same convention as `SpaceNameStore`.
+  private static let sharedDefaults =
+    UserDefaults(suiteName: "com.moltenbits.spaceballs.shared") ?? .standard
+
+  /// True when diagnostics are turned on. Backed by the shared suite so GUI and CLI
+  /// changes take effect in both processes without a restart (cfprefsd propagates
+  /// cross-process writes). A non-nil `runtimeOverride` (set via `setRuntimeOverride(_:)`)
+  /// takes precedence. Tests do not inherit the user's saved preference: when we detect
+  /// the process is a test runner, the override defaults to `false`. Tests that
+  /// explicitly want logging can set the override true (with a custom log path) for
+  /// their scope.
   public static var enabled: Bool {
     get {
       if let override = stateLock.withLock({ _runtimeOverride }) { return override }
-      return UserDefaults.standard.bool(forKey: SettingsKey.enabled)
+      return sharedDefaults.bool(forKey: SettingsKey.enabled)
     }
     set {
-      UserDefaults.standard.set(newValue, forKey: SettingsKey.enabled)
+      sharedDefaults.set(newValue, forKey: SettingsKey.enabled)
     }
   }
 
-  /// Bypasses the UserDefaults-backed `enabled` flag. `nil` clears the override.
+  /// Bypasses the shared-suite-backed `enabled` flag. `nil` clears the override.
   public static func setRuntimeOverride(_ value: Bool?) {
     stateLock.withLock { _runtimeOverride = value }
   }
@@ -65,8 +73,8 @@ public enum Diagnostics {
   /// When true, replace window titles in log entries with `<redacted>`. For users who want
   /// to share logs publicly. Off by default — titles are usually needed to diagnose.
   public static var redactWindowTitles: Bool {
-    get { UserDefaults.standard.bool(forKey: SettingsKey.redactWindowTitles) }
-    set { UserDefaults.standard.set(newValue, forKey: SettingsKey.redactWindowTitles) }
+    get { sharedDefaults.bool(forKey: SettingsKey.redactWindowTitles) }
+    set { sharedDefaults.set(newValue, forKey: SettingsKey.redactWindowTitles) }
   }
 
   /// Override the log destination (tests, CLI `--log-path`, etc).
@@ -313,7 +321,7 @@ public enum Diagnostics {
         let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path))
       {
         defer { try? handle.close() }
-        try? handle.seekToEnd()
+        _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: data)
       } else {
         try? data.write(to: URL(fileURLWithPath: path))

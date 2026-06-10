@@ -6,46 +6,71 @@ import Testing
 @Suite("Diagnostics", .serialized)
 struct DiagnosticsTests {
 
+  /// Saves the shared-suite value of a key, runs `body`, restores value-or-absence.
+  private func withRestoredSharedKey(_ key: String, _ body: () throws -> Void) throws {
+    let shared = try #require(UserDefaults(suiteName: "com.moltenbits.spaceballs.shared"))
+    let original = shared.object(forKey: key)
+    defer {
+      if let original {
+        shared.set(original, forKey: key)
+      } else {
+        shared.removeObject(forKey: key)
+      }
+    }
+    try body()
+  }
+
   @Test("titleForLogging passes through when redaction is off")
-  func titlePassThrough() {
-    let defaults = UserDefaults.standard
-    defaults.set(false, forKey: Diagnostics.SettingsKey.redactWindowTitles)
-    #expect(Diagnostics.titleForLogging("Untitled.txt") == "Untitled.txt")
-    #expect(Diagnostics.titleForLogging(nil) == "?")
+  func titlePassThrough() throws {
+    try withRestoredSharedKey(Diagnostics.SettingsKey.redactWindowTitles) {
+      Diagnostics.redactWindowTitles = false
+      #expect(Diagnostics.titleForLogging("Untitled.txt") == "Untitled.txt")
+      #expect(Diagnostics.titleForLogging(nil) == "?")
+    }
   }
 
   @Test("titleForLogging redacts when enabled")
-  func titleRedact() {
-    let defaults = UserDefaults.standard
-    defaults.set(true, forKey: Diagnostics.SettingsKey.redactWindowTitles)
-    defer { defaults.set(false, forKey: Diagnostics.SettingsKey.redactWindowTitles) }
-    #expect(Diagnostics.titleForLogging("My Secret Project") == "<redacted>")
-    #expect(Diagnostics.titleForLogging(nil) == "?")
+  func titleRedact() throws {
+    try withRestoredSharedKey(Diagnostics.SettingsKey.redactWindowTitles) {
+      Diagnostics.redactWindowTitles = true
+      #expect(Diagnostics.titleForLogging("My Secret Project") == "<redacted>")
+      #expect(Diagnostics.titleForLogging(nil) == "?")
+    }
   }
 
-  @Test("enabled flag round-trips through UserDefaults")
-  func enabledRoundtrip() {
-    let defaults = UserDefaults.standard
-    let originalUD = defaults.bool(forKey: Diagnostics.SettingsKey.enabled)
+  @Test("enabled flag round-trips through the shared CLI/GUI suite")
+  func enabledRoundtrip() throws {
+    // The flag must live in the shared suite (same one SpaceNameStore uses) — NOT
+    // UserDefaults.standard. The GUI (bundled, com.moltenbits.spaceballs domain) and the
+    // CLI (unbundled, process-name domain) have different standard domains, so a flag
+    // written to .standard by one is invisible to the other.
+    let shared = try #require(UserDefaults(suiteName: "com.moltenbits.spaceballs.shared"))
+    let key = Diagnostics.SettingsKey.enabled
+    let original = shared.object(forKey: key)
     // Tests default to a false runtime override (set in Diagnostics.swift) so the user's
-    // saved diagnostics state doesn't bleed into the test process. We need to clear that
-    // override here so the getter actually reads from UserDefaults.
+    // saved diagnostics state doesn't bleed into the test process. Clear it here so the
+    // getter actually reads from the suite.
     let tmpPath = NSTemporaryDirectory() + "spaceballs-diag-test-\(UUID().uuidString).log"
     Diagnostics.setCustomLogPath(tmpPath)
     Diagnostics.setRuntimeOverride(nil)
     defer {
-      defaults.set(originalUD, forKey: Diagnostics.SettingsKey.enabled)
+      // Restore the user's pre-existing value, or remove the key if it wasn't set.
+      if let original {
+        shared.set(original, forKey: key)
+      } else {
+        shared.removeObject(forKey: key)
+      }
       Diagnostics.setRuntimeOverride(false)
       Diagnostics.setCustomLogPath(nil)
       try? FileManager.default.removeItem(atPath: tmpPath)
     }
 
     Diagnostics.enabled = true
-    #expect(defaults.bool(forKey: Diagnostics.SettingsKey.enabled) == true)
+    #expect(shared.bool(forKey: key) == true)
     #expect(Diagnostics.enabled == true)
 
     Diagnostics.enabled = false
-    #expect(defaults.bool(forKey: Diagnostics.SettingsKey.enabled) == false)
+    #expect(shared.bool(forKey: key) == false)
     #expect(Diagnostics.enabled == false)
   }
 

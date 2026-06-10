@@ -1,4 +1,5 @@
 import Foundation
+import SpaceballsCore
 
 // MARK: - Enums
 
@@ -169,14 +170,18 @@ public final class AppSettings: ObservableObject {
   // MARK: - Diagnostics
 
   /// Master switch. When off, `Diagnostics.log(...)` calls are no-ops. Default off.
+  /// Delegates persistence to `Diagnostics` (shared CLI/GUI suite) — do NOT store in the
+  /// injected `defaults`: the CLI runs in a different preferences domain and would never
+  /// see a value written there.
   @Published public var diagnosticsEnabled: Bool {
-    didSet { defaults.set(diagnosticsEnabled, forKey: "diagnosticsEnabled") }
+    didSet { Diagnostics.enabled = diagnosticsEnabled }
   }
 
   /// When true, window titles are replaced with `<redacted>` in log output. For users who
   /// want to share logs publicly without leaking what they were working on.
+  /// Same shared-suite delegation as `diagnosticsEnabled`.
   @Published public var diagnosticsRedactWindowTitles: Bool {
-    didSet { defaults.set(diagnosticsRedactWindowTitles, forKey: "diagnosticsRedactWindowTitles") }
+    didSet { Diagnostics.redactWindowTitles = diagnosticsRedactWindowTitles }
   }
 
   /// Transient flag — not persisted. Disables the event tap while recording a shortcut.
@@ -199,8 +204,6 @@ public final class AppSettings: ObservableObject {
       "resizeGridRows": 12,
       "resizeMargins": 0.0,
       "rememberWindowLayouts": true,
-      "diagnosticsEnabled": false,
-      "diagnosticsRedactWindowTitles": false,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -260,8 +263,8 @@ public final class AppSettings: ObservableObject {
     }
 
     self.rememberWindowLayouts = defaults.bool(forKey: "rememberWindowLayouts")
-    self.diagnosticsEnabled = defaults.bool(forKey: "diagnosticsEnabled")
-    self.diagnosticsRedactWindowTitles = defaults.bool(forKey: "diagnosticsRedactWindowTitles")
+    self.diagnosticsEnabled = Diagnostics.enabled
+    self.diagnosticsRedactWindowTitles = Diagnostics.redactWindowTitles
   }
 
   /// Icon size proportional to text size (20px at 13pt text).
