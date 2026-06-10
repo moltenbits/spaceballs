@@ -48,7 +48,8 @@ struct RestoreWorkspaceCommand: ParsableCommand {
         name: ws.name,
         path: ws.path,
         launchers: ws.launchers.map { l in
-          LauncherData(label: l.label, type: l.type.rawValue, command: l.command, appName: l.appName)
+          LauncherData(
+            label: l.label, type: l.type.rawValue, command: l.command, appName: l.appName)
         }
       )
     }

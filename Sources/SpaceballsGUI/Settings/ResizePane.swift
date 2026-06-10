@@ -10,7 +10,8 @@ struct ResizePane: View {
     Form {
       Section("Grid") {
         Stepper(
-          "Columns: \(settings.resizeGridColumns)", value: $settings.resizeGridColumns, in: 1...(.max))
+          "Columns: \(settings.resizeGridColumns)", value: $settings.resizeGridColumns,
+          in: 1...(.max))
         Stepper("Rows: \(settings.resizeGridRows)", value: $settings.resizeGridRows, in: 1...(.max))
         Text("Press ⇧⌘D to open the resize grid.")
           .font(.caption)

@@ -53,6 +53,11 @@ public enum WindowResizeError: LocalizedError {
 
 public enum WindowResizer {
 
+  /// Posted after `WindowResizer` successfully changes a window's frame.
+  /// userInfo: ["pid": pid_t, "bundleID": String, "element": AXUIElement]
+  public static let didResizeWindowNotification = Notification.Name(
+    "com.moltenbits.spaceballs.didResizeWindow")
+
   // MARK: - AX Write Helpers
 
   /// Sets the position of an AX window element. Returns true on success.
@@ -60,7 +65,8 @@ public enum WindowResizer {
   public static func setAXPosition(_ element: AXUIElement, _ point: CGPoint) -> Bool {
     var p = point
     guard let value = AXValueCreate(.cgPoint, &p) else { return false }
-    return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) == .success
+    return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+      == .success
   }
 
   /// Sets the size of an AX window element. Returns true on success.
@@ -139,23 +145,237 @@ public enum WindowResizer {
   // MARK: - Resize
 
   /// Resizes the given AX window element to match a grid region on the specified screen.
+  /// `completion` fires after the async write chain finishes — used to defer follow-up
+  /// actions (notification, panel-hide) that would otherwise race with the resize.
   public static func resize(
-    _ element: AXUIElement, to region: GridRegion, on screen: NSScreen, margins: CGFloat = 0
+    _ element: AXUIElement, to region: GridRegion, on screen: NSScreen, margins: CGFloat = 0,
+    pid: pid_t? = nil, completion: (() -> Void)? = nil
   ) throws {
     let frame = targetFrame(for: region, on: screen, margins: margins)
-    // Set size first (some apps clamp position based on current size), then position, then
-    // size again to handle apps that constrain size based on position.
-    guard setAXSize(element, frame.size) else { throw WindowResizeError.axSetSizeFailed }
-    guard setAXPosition(element, frame.origin) else { throw WindowResizeError.axSetPositionFailed }
-    setAXSize(element, frame.size)
+    if Diagnostics.enabled {
+      let visible = screen.visibleFrame
+      let screens = NSScreen.screens
+      let screenIdx = screens.firstIndex(of: screen) ?? -1
+      Diagnostics.log(
+        "resize",
+        "region=(c=\(region.column),r=\(region.row),cs=\(region.columnSpan),rs=\(region.rowSpan),gc=\(region.gridColumns),gr=\(region.gridRows)) "
+          + "targetScreen[\(screenIdx)/\(screens.count)].visible=(\(Int(visible.origin.x)),\(Int(visible.origin.y)))/\(Int(visible.width))x\(Int(visible.height))"
+      )
+    }
+    try setFrame(element, frame: frame, label: "resize") {
+      if let pid {
+        postDidResize(element: element, pid: pid)
+      }
+      completion?()
+    }
+  }
+
+  /// Strict-serialized resize: move first, *wait for the move to actually complete*, then
+  /// resize, *wait for the resize to actually complete*. "Complete" means the AX read has
+  /// matched the target value continuously for `stableDuration` — touching the target once
+  /// isn't enough, because some apps (iTerm) report the target immediately after the write
+  /// returns and then drift as their internal animation runs. We require N consecutive
+  /// reads at the target before considering the write done.
+  ///
+  /// Two writes total, no overlap, no third corrective write. `completion` fires only after
+  /// the final stability check passes.
+  static func setFrame(
+    _ element: AXUIElement, frame: CGRect, label: String = "setFrame",
+    completion: (() -> Void)? = nil
+  ) throws {
+    let bundleID = bundleIDForElement(element)
+    let token = Diagnostics.beginTiming(
+      "resize", "\(label)-setFrame", app: bundleID,
+      extras: [
+        "target":
+          "(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.size.width))x\(Int(frame.size.height))",
+        "before": currentFrameString(element),
+      ])
+
+    let posOK = setAXPosition(element, frame.origin)
+    if Diagnostics.enabled {
+      Diagnostics.log(
+        "resize",
+        "\(label) step=setPos returnedOK=\(posOK) frame=\(currentFrameString(element))",
+        app: bundleID)
+    }
+    guard posOK else {
+      Diagnostics.endTiming(token, outcome: "error:axSetPositionFailed")
+      throw WindowResizeError.axSetPositionFailed
+    }
+
+    waitUntilAtTarget(
+      element: element, posTarget: frame.origin, sizeTarget: nil,
+      label: label, phase: "after-setPos", app: bundleID
+    ) {
+      let sizeOK = setAXSize(element, frame.size)
+      if Diagnostics.enabled {
+        Diagnostics.log(
+          "resize",
+          "\(label) step=setSize returnedOK=\(sizeOK) frame=\(currentFrameString(element))",
+          app: bundleID)
+      }
+
+      waitUntilAtTarget(
+        element: element, posTarget: nil, sizeTarget: frame.size,
+        label: label, phase: "after-setSize", app: bundleID
+      ) {
+        Diagnostics.endTiming(token, outcome: sizeOK ? "ok" : "size-write-failed")
+        completion?()
+      }
+    }
+  }
+
+  private static let positionTolerance: CGFloat = 2
+  private static let sizeTolerance: CGFloat = 5
+
+  /// Polls the window's WindowServer-reported frame until the watched attribute(s) have
+  /// been at the target continuously for `stableDuration`. **We use WindowServer (via
+  /// `CGWindowListCopyWindowInfo`), not AX**, because the AX layer in some apps (notably
+  /// iTerm) reports the target value immediately after `setAXPosition` returns, *while
+  /// the window is still visually animating*. WindowServer reflects the actual on-screen
+  /// bounds, so it changes during the animation and only stabilizes when the animation
+  /// completes — which is what we actually care about.
+  ///
+  /// Drift detection: if the watched attribute leaves the target tolerance after first
+  /// reaching it, the timer resets — so a brief AX-style "lie" + later visual drift
+  /// gets caught.
+  ///
+  /// Exits early on `maxWait` to avoid hanging when the app silently refuses a write.
+  private static func waitUntilAtTarget(
+    element: AXUIElement, posTarget: CGPoint?, sizeTarget: CGSize?,
+    label: String, phase: String, app: String? = nil,
+    completion: @escaping () -> Void
+  ) {
+    let pollInterval: TimeInterval = 0.025
+    let stableDuration: TimeInterval = 0.060
+    let maxWait: TimeInterval = 1.5
+    let startTime = Date()
+    var firstAtTarget: Date? = nil
+    var cgWid: CGWindowID = 0
+    let haveWindowID = _AXUIElementGetWindow(element, &cgWid) == .success
+
+    func poll() {
+      // Prefer WindowServer-reported bounds (reflect actual visual state). Fall back to
+      // AX reads if we can't get a CGWindowID — better than nothing.
+      let actualFrame: CGRect?
+      if haveWindowID {
+        actualFrame = cgWindowFrame(forID: cgWid)
+      } else if let pos = SpaceManager.axPosition(element),
+        let size = SpaceManager.axSize(element)
+      {
+        actualFrame = CGRect(origin: pos, size: size)
+      } else {
+        actualFrame = nil
+      }
+
+      guard let frame = actualFrame else {
+        Diagnostics.log("resize", "\(label) \(phase) frame read failed; aborting wait", app: app)
+        completion()
+        return
+      }
+
+      var atTarget = true
+      if let posTarget = posTarget {
+        let dx = abs(frame.origin.x - posTarget.x)
+        let dy = abs(frame.origin.y - posTarget.y)
+        if dx >= positionTolerance || dy >= positionTolerance { atTarget = false }
+      }
+      if let sizeTarget = sizeTarget {
+        let dw = abs(frame.size.width - sizeTarget.width)
+        let dh = abs(frame.size.height - sizeTarget.height)
+        if dw >= sizeTolerance || dh >= sizeTolerance { atTarget = false }
+      }
+
+      if atTarget {
+        if firstAtTarget == nil {
+          firstAtTarget = Date()
+        }
+        if Date().timeIntervalSince(firstAtTarget!) >= stableDuration {
+          if Diagnostics.enabled {
+            Diagnostics.log(
+              "resize",
+              "\(label) \(phase) at-target+stable after \(Int(Date().timeIntervalSince(startTime) * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))",
+              app: app)
+          }
+          completion()
+          return
+        }
+      } else {
+        if firstAtTarget != nil && Diagnostics.enabled {
+          Diagnostics.log(
+            "resize",
+            "\(label) \(phase) drifted off target at \(Int(Date().timeIntervalSince(startTime) * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))",
+            app: app)
+        }
+        firstAtTarget = nil
+      }
+
+      if Date().timeIntervalSince(startTime) > maxWait {
+        Diagnostics.log(
+          "resize",
+          "\(label) \(phase) timeout after \(Int(maxWait * 1000))ms cgFrame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)))/\(Int(frame.width))x\(Int(frame.height))",
+          app: app)
+        completion()
+        return
+      }
+
+      DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) { poll() }
+    }
+
+    poll()
+  }
+
+  /// Reads a window's frame from WindowServer via `CGWindowListCopyWindowInfo`. Unlike AX
+  /// reads, this reflects the actual on-screen bounds — including in-progress animations.
+  private static func cgWindowFrame(forID cgWid: CGWindowID) -> CGRect? {
+    guard
+      let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, cgWid)
+        as? [[String: Any]],
+      let info = infos.first,
+      let boundsRef = info[kCGWindowBounds as String]
+    else { return nil }
+    var bounds = CGRect.zero
+    CGRectMakeWithDictionaryRepresentation(boundsRef as CFTypeRef as! CFDictionary, &bounds)
+    return bounds
+  }
+
+  // MARK: - Diagnostics helpers
+
+  /// Snapshot of the element's current frame as a compact log-friendly string.
+  static func currentFrameString(_ element: AXUIElement) -> String {
+    let p = SpaceManager.axPosition(element) ?? .zero
+    let s = SpaceManager.axSize(element) ?? .zero
+    return "(\(Int(p.x)),\(Int(p.y)))/\(Int(s.width))x\(Int(s.height))"
+  }
+
+  static func bundleIDForElement(_ element: AXUIElement) -> String? {
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+    return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
   }
 
   /// Convenience: resizes the frontmost application's focused window.
   public static func resizeFocusedWindow(
     to region: GridRegion, margins: CGFloat = 0
   ) throws {
-    let (element, _) = try focusedWindow()
+    let (element, pid) = try focusedWindow()
     guard let screen = screen(for: element) else { throw WindowResizeError.noScreen }
-    try resize(element, to: region, on: screen, margins: margins)
+    try resize(element, to: region, on: screen, margins: margins, pid: pid)
+  }
+
+  // MARK: - Notifications
+
+  private static func postDidResize(element: AXUIElement, pid: pid_t) {
+    let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+    NotificationCenter.default.post(
+      name: didResizeWindowNotification,
+      object: nil,
+      userInfo: [
+        "pid": pid,
+        "bundleID": bundleID,
+        "element": element,
+      ]
+    )
   }
 }

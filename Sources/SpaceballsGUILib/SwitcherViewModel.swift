@@ -642,7 +642,10 @@ public final class SwitcherViewModel: ObservableObject {
 
   public func resetSelection() {
     let items = flatSelectableItems
-    guard !items.isEmpty else { selectedItem = nil; return }
+    guard !items.isEmpty else {
+      selectedItem = nil
+      return
+    }
     // Always select the first item so that the subsequent moveDown
     // (from Cmd+Tab) lands on the second item. This ensures we always
     // end up on the 2nd row in the list.
@@ -718,8 +721,14 @@ public final class SwitcherViewModel: ObservableObject {
     for offset in 1..<items.count {
       let pos = (currentPos + offset) % items.count
       let item = items[pos]
-      if case .settings = item { selectedItem = item; return }
-      if case .spaces = item { selectedItem = item; return }
+      if case .settings = item {
+        selectedItem = item
+        return
+      }
+      if case .spaces = item {
+        selectedItem = item
+        return
+      }
 
       // In Mode 3, if we've crossed the group boundary, stop at .spaces
       if let end = groupEnd, pos > end {
@@ -1081,9 +1090,10 @@ public final class SwitcherViewModel: ObservableObject {
     guard let targetSpaceID else { return }
 
     // Move the window row from its current section to the target section
-    guard let sourceIdx = sections.firstIndex(where: {
-      $0.windows.contains(where: { $0.id == windowID })
-    }),
+    guard
+      let sourceIdx = sections.firstIndex(where: {
+        $0.windows.contains(where: { $0.id == windowID })
+      }),
       let targetIdx = sections.firstIndex(where: { $0.id == targetSpaceID }),
       let rowIdx = sections[sourceIdx].windows.firstIndex(where: { $0.id == windowID })
     else { return }

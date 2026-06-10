@@ -144,12 +144,13 @@ struct ResizeGridView: View {
                 minCol: min(start.col, col), maxCol: max(start.col, col),
                 minRow: min(start.row, row), maxRow: max(start.row, row)
               )
-              onPreviewChanged?(GridRegion(
-                column: sel.minCol, row: sel.minRow,
-                columnSpan: sel.maxCol - sel.minCol + 1,
-                rowSpan: sel.maxRow - sel.minRow + 1,
-                gridColumns: columns, gridRows: rows
-              ))
+              onPreviewChanged?(
+                GridRegion(
+                  column: sel.minCol, row: sel.minRow,
+                  columnSpan: sel.maxCol - sel.minCol + 1,
+                  rowSpan: sel.maxRow - sel.minRow + 1,
+                  gridColumns: columns, gridRows: rows
+                ))
             }
           }
           .onEnded { _ in
@@ -180,4 +181,3 @@ struct ResizeGridView: View {
 private func clamp(_ value: Int, _ low: Int, _ high: Int) -> Int {
   min(max(value, low), high)
 }
-

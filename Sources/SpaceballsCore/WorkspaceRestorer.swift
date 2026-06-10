@@ -99,8 +99,10 @@ public final class WorkspaceRestorer {
           Thread.sleep(forTimeInterval: 1.0)
         } catch {
           errors.append(
-            (workspace.name, launcher.appName.isEmpty ? launcher.type : launcher.appName,
-              error.localizedDescription))
+            (
+              workspace.name, launcher.appName.isEmpty ? launcher.type : launcher.appName,
+              error.localizedDescription
+            ))
         }
       }
     }

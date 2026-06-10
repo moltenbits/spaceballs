@@ -1,8 +1,11 @@
+import SpaceballsCore
 import SpaceballsGUILib
 import SwiftUI
 
 struct AppearancePane: View {
   @ObservedObject var settings: AppSettings
+  let windowLayoutStore: WindowLayoutStore
+  @State private var showClearConfirm = false
 
   private var panelDisplayDescription: String {
     if settings.filterSpacesByDisplay {
@@ -71,6 +74,27 @@ struct AppearancePane: View {
           .foregroundStyle(.secondary)
 
         Toggle("Only show current display's spaces", isOn: $settings.filterSpacesByDisplay)
+      }
+
+      Section("Window Memory") {
+        Toggle(
+          "Remember window layouts per space and display",
+          isOn: $settings.rememberWindowLayouts)
+        Text(
+          "When you resize a window via Spaceballs, its frame is saved for the current space and display. Switching that space to a different display restores each app's last layout for that display."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        Button("Clear All Saved Layouts") {
+          showClearConfirm = true
+        }
+        .confirmationDialog(
+          "Clear all saved window layouts?",
+          isPresented: $showClearConfirm
+        ) {
+          Button("Clear", role: .destructive) { windowLayoutStore.clearAll() }
+          Button("Cancel", role: .cancel) {}
+        }
       }
     }
     .formStyle(.grouped)

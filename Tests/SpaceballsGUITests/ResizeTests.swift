@@ -207,7 +207,7 @@ struct SettingsExportResizeTests {
           gridColumns: 8, gridRows: 10
         ),
         keyCode: 6  // Z
-      ),
+      )
     ]
 
     let data = try SettingsExport.exportJSON(settings: settings1)
