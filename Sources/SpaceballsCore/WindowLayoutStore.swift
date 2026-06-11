@@ -167,8 +167,15 @@ public final class WindowLayoutStore {
 
   // MARK: - Restore
 
-  /// Applies the saved layout for (spaceUUID, displayUUID) to currently-visible
-  /// windows of each saved app. Returns the count of windows actually moved.
+  /// Applies the saved layout for (spaceUUID, displayUUID) to each saved app's windows
+  /// **that are actually on that space**. Returns the count of windows moved.
+  ///
+  /// The per-window space check exists because `kAXWindowsAttribute` returns windows
+  /// from every space, not just the current one (despite Apple's documentation implying
+  /// otherwise — Safari, iTerm, and JetBrains IDEs all demonstrate this). Without the
+  /// check, restoring a space that moved displays stamped cross-display coordinates
+  /// onto other spaces' windows, physically dragging them into whatever space was
+  /// active on the target display (issue #3).
   @discardableResult
   public func restore(spaceUUID: String, displayUUID: String) -> Int {
     let token = Diagnostics.beginTiming(
@@ -182,12 +189,19 @@ public final class WindowLayoutStore {
       Diagnostics.endTiming(token, outcome: "display-not-attached")
       return 0
     }
+    guard let targetSpaceID = spaceID(forUUID: spaceUUID) else {
+      // Can't resolve the space — restoring blind risks exactly the cross-space
+      // moves this method must never make. Restore nothing.
+      Diagnostics.endTiming(token, outcome: "space-uuid-unresolved")
+      return 0
+    }
 
     let origin = spaceballsAXOrigin(of: screen)
     var moved = 0
+    var skippedOffSpace = 0
 
     Diagnostics.log(
-      "layout-restore", "applying layout apps=\(layout.apps.count)")
+      "layout-restore", "applying layout apps=\(layout.apps.count) targetSpaceID=\(targetSpaceID)")
 
     for (bundleID, relative) in layout.apps {
       let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
@@ -215,6 +229,19 @@ public final class WindowLayoutStore {
         )
 
         for window in raw {
+          var cgWid: CGWindowID = 0
+          guard _AXUIElementGetWindow(window, &cgWid) == .success else {
+            Diagnostics.log(
+              "layout-restore", "skip window — CGWindowID unresolved", app: bundleID)
+            continue
+          }
+          guard windowIsOnSpace(windowID: Int(cgWid), spaceID: targetSpaceID) else {
+            skippedOffSpace += 1
+            Diagnostics.log(
+              "layout-restore",
+              "skip window=\(cgWid) — not on target space \(targetSpaceID)", app: bundleID)
+            continue
+          }
           guard
             (try? WindowResizer.setFrame(window, frame: absolute, label: "restore")) != nil
           else { continue }
@@ -223,8 +250,23 @@ public final class WindowLayoutStore {
       }
     }
 
-    Diagnostics.endTiming(token, outcome: "moved=\(moved)")
+    Diagnostics.endTiming(token, outcome: "moved=\(moved) skippedOffSpace=\(skippedOffSpace)")
     return moved
+  }
+
+  // MARK: - Space Filtering
+
+  /// Resolves a space UUID to its ManagedSpaceID via the current CGS snapshot.
+  func spaceID(forUUID uuid: String) -> UInt64? {
+    spaceManager.getAllSpaces().first { $0.uuid == uuid }?.id
+  }
+
+  /// True when the window belongs to the given space. Windows CGS has no space record
+  /// for return false — skipping a restore is recoverable, moving a window across
+  /// spaces is not. Sticky windows report every space they appear on, so they pass
+  /// for any of them.
+  func windowIsOnSpace(windowID: Int, spaceID: UInt64) -> Bool {
+    spaceManager.spaceIDs(forWindowID: windowID).contains(spaceID)
   }
 
   // MARK: - Internals

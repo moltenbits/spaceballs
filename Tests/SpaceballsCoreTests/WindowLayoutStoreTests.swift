@@ -110,6 +110,97 @@ struct WindowLayoutStorePersistenceTests {
   }
 }
 
+@Suite("WindowLayoutStore Space Filtering")
+struct WindowLayoutStoreSpaceFilteringTests {
+
+  // Regression coverage for issue #3: restore() applied saved frames to every window
+  // `kAXWindowsAttribute` returned for an app — including windows living on OTHER
+  // spaces — physically yanking them across displays and into whichever space was
+  // active there. These tests pin the per-window eligibility logic that restore now
+  // consults before touching a window.
+
+  /// Two displays, two spaces: space 100 ("uuid-A") current on display-1,
+  /// space 200 ("uuid-B") current on display-2.
+  private func makeStore() -> WindowLayoutStore {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      [
+        "Display Identifier": "display-1",
+        "Spaces": [
+          ["ManagedSpaceID": 100, "uuid": "uuid-A", "type": 0]
+        ],
+        "Current Space": ["ManagedSpaceID": 100],
+      ],
+      [
+        "Display Identifier": "display-2",
+        "Spaces": [
+          ["ManagedSpaceID": 200, "uuid": "uuid-B", "type": 0]
+        ],
+        "Current Space": ["ManagedSpaceID": 200],
+      ],
+    ]
+    // Window 1 lives on space 100; window 2 on space 200; window 3 is sticky
+    // (both spaces); window 4 has no space info at all.
+    ds.windowSpaces = [
+      1: [100],
+      2: [200],
+      3: [100, 200],
+      4: [],
+    ]
+    let suite = UUID().uuidString
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    return WindowLayoutStore(
+      defaults: defaults, spaceManager: SpaceManager(dataSource: ds))
+  }
+
+  @Test("spaceID(forUUID:) resolves a known space UUID to its ManagedSpaceID")
+  func resolvesKnownUUID() {
+    let store = makeStore()
+    #expect(store.spaceID(forUUID: "uuid-A") == 100)
+    #expect(store.spaceID(forUUID: "uuid-B") == 200)
+  }
+
+  @Test("spaceID(forUUID:) returns nil for an unknown space UUID")
+  func unknownUUIDIsNil() {
+    let store = makeStore()
+    #expect(store.spaceID(forUUID: "uuid-nope") == nil)
+  }
+
+  @Test("Window on the target space is eligible for restore")
+  func windowOnTargetSpaceEligible() {
+    let store = makeStore()
+    #expect(store.windowIsOnSpace(windowID: 1, spaceID: 100))
+  }
+
+  @Test("Window on a different space is NOT eligible — the issue #3 regression")
+  func windowOnOtherSpaceExcluded() {
+    let store = makeStore()
+    // Window 2 lives on space 200. Restoring space 100's layout must not touch it.
+    // (Pre-fix, restore had no per-window space check and moved it anyway.)
+    #expect(!store.windowIsOnSpace(windowID: 2, spaceID: 100))
+  }
+
+  @Test("Sticky window spanning multiple spaces is eligible on any of them")
+  func stickyWindowEligible() {
+    let store = makeStore()
+    #expect(store.windowIsOnSpace(windowID: 3, spaceID: 100))
+    #expect(store.windowIsOnSpace(windowID: 3, spaceID: 200))
+  }
+
+  @Test("Window with no space info is NOT eligible — skip is the safe default")
+  func unknownWindowExcluded() {
+    let store = makeStore()
+    #expect(!store.windowIsOnSpace(windowID: 4, spaceID: 100))
+  }
+
+  @Test("Window absent from the space map entirely is NOT eligible")
+  func unmappedWindowExcluded() {
+    let store = makeStore()
+    #expect(!store.windowIsOnSpace(windowID: 999, spaceID: 100))
+  }
+}
+
 @Suite("WindowFrame")
 struct WindowFrameTests {
   @Test("Codable round-trip preserves values")
