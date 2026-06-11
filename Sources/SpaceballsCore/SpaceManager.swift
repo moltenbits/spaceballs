@@ -89,6 +89,12 @@ public class SpaceManager {
     }
   }
 
+  /// Returns the space IDs the given window belongs to (empty when CGS has no
+  /// record of the window). Sticky windows report every space they appear on.
+  public func spaceIDs(forWindowID windowID: Int) -> [UInt64] {
+    dataSource.fetchSpacesForWindow(windowID)
+  }
+
   /// Enumerates all Spaces across all displays.
   public func getAllSpaces() -> [SpaceInfo] {
     let raw = dataSource.fetchManagedDisplaySpaces()
