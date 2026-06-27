@@ -31,17 +31,20 @@ Spaceballs is a macOS window switcher app inspired by [Contexts](https://context
 All commands use `make`. The build requires `--disable-sandbox` for CGS access.
 
 ```bash
-make build        # Debug build + bundle .build/Spaceballs.app
-make release      # Release build + bundle .build/Spaceballs.app
-make everything   # Kill + build + open the .app
+make build        # Debug build only
+make release      # Release build only
+make bundle       # Debug build + bundle .build/debug/Spaceballs.app and Spaceballs-CLI.app
+make bundle-release # Release build + bundle .build/release/Spaceballs.app and Spaceballs-CLI.app
+make dist         # Build release archive; notarizes when credentials are configured
+make everything   # Kill + install + open /Applications/Spaceballs.app
 make run          # Build + run CLI (text output)
 make run.json     # Build + run CLI (JSON output)
 make kill         # Kill running Spaceballs
 make test         # Run tests
 make format       # Format with swift-format
 make lint         # Lint with swift-format
-make install      # Release build + install CLI binary + CLI .app bundle
-make clean        # Remove .build/
+make install      # Release bundle + install GUI app, CLI app, and CLI symlink
+make clean        # Remove .build/ and dist/
 ```
 
 Underlying tool: Swift Package Manager (`swift build`, `swift test`, etc.).
