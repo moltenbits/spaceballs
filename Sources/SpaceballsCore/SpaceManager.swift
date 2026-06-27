@@ -919,6 +919,9 @@ public class SpaceManager {
     }
     let ownerName = entry[kCGWindowOwnerName as String] as? String ?? "unknown"
     let windowName = entry[kCGWindowName as String] as? String
+    let activationContext =
+      Diagnostics.enabled
+      ? " \(activationContextForDiagnostics(windowID: windowID))" : ""
 
     // 2. Check AX trust (prompt opens System Settings → Accessibility on first run)
     guard Self.ensureAccessibilityTrusted() else {
@@ -928,10 +931,11 @@ public class SpaceManager {
 
     let pid = pid_t(rawPID)
     let targetCGWindowID = CGWindowID(windowID)
+    let spaceWakeFallbackTarget = spaceWakeFallbackTargetForActivation(windowID: windowID)
 
     Diagnostics.log(
       "activate",
-      "windowID=\(windowID) owner=\"\(ownerName)\" title=\(Diagnostics.titleForLogging(windowName)) pid=\(pid) starting",
+      "windowID=\(windowID) owner=\"\(ownerName)\" title=\(Diagnostics.titleForLogging(windowName)) pid=\(pid) starting\(activationContext)",
       app: ownerName)
 
     // Self-owned windows (e.g. the Settings window) — bring to front via AppKit
@@ -957,28 +961,15 @@ public class SpaceManager {
     // 4. Get PSN and activate via SkyLight (same sequence as AltTab).
     //    _SLPSSetFrontProcessWithOptions targets the specific CGWindowID and
     //    triggers macOS's space-switch animation if the window is on another Space.
-    var psn = ProcessSerialNumber()
-    GetProcessForPID(pid, &psn)
+    postSkyLightActivation(
+      pid: pid,
+      targetCGWindowID: targetCGWindowID,
+      windowID: windowID,
+      ownerName: ownerName,
+      phase: "initial",
+      scheduleSpaceCheck: spaceWakeFallbackTarget == nil)
 
-    _SLPSSetFrontProcessWithOptions(&psn, targetCGWindowID, 0x200)
-
-    // 5. Send synthetic key-window events (Hammerspoon technique via AltTab).
-    //    Two event records (type 0x01 key-down, 0x02 key-up) with the
-    //    CGWindowID embedded at offset 0x3c in a 0xf8-byte record.
-    var bytes = [UInt8](repeating: 0, count: 0xf8)
-    bytes[0x04] = 0xf8
-    bytes[0x3a] = 0x10
-    bytes.withUnsafeMutableBufferPointer { buf in
-      var widCopy = targetCGWindowID
-      memcpy(buf.baseAddress! + 0x3c, &widCopy, MemoryLayout<UInt32>.size)
-      memset(buf.baseAddress! + 0x20, 0xff, 0x10)
-    }
-    bytes[0x08] = 0x01
-    SLPSPostEventRecordTo(&psn, &bytes)
-    bytes[0x08] = 0x02
-    SLPSPostEventRecordTo(&psn, &bytes)
-
-    // 6. Raise via AX for z-ordering within the app's window stack.
+    // 5. Raise via AX for z-ordering within the app's window stack.
     //    If the standard lookup found the element (same-space), raise immediately.
     //    Otherwise, dispatch brute-force search to a background thread with a
     //    longer timeout — apps like Safari can have very high AX element IDs
@@ -992,22 +983,212 @@ public class SpaceManager {
         app: ownerName)
     } else {
       DispatchQueue.global(qos: .userInteractive).async { [self] in
+        if let spaceWakeFallbackTarget {
+          // For normal off-Space windows, the brute-force AX lookup often succeeds
+          // quickly and AXRaise helps complete the cross-Space activation. Restored
+          // windows can be different: CGS reports a valid Space mapping, but AX has
+          // no element for the window until that Space is visited. Probe briefly so
+          // ordinary switches stay fast, then wake the Space if the probe sees nothing.
+          let probeStart = Date()
+          let probeResult = findAXWindowBruteForceResult(
+            pid: pid, targetCGWindowID: targetCGWindowID, timeout: 0.25)
+          if let axElement = probeResult.element {
+            AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+            Diagnostics.log(
+              "activate",
+              "windowID=\(windowID) path=brute-force-probe duration=\(Int(Date().timeIntervalSince(probeStart) * 1000))ms total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms \(probeResult.diagnosticsSummary)",
+              app: ownerName)
+            return
+          }
+
+          Diagnostics.log(
+            "activate",
+            "windowID=\(windowID) path=brute-force-probe outcome=not-found duration=\(Int(Date().timeIntervalSince(probeStart) * 1000))ms \(probeResult.diagnosticsSummary)",
+            app: ownerName)
+
+          let waitStart = Date()
+          let switched = waitForCurrentSpace(spaceWakeFallbackTarget.id, timeout: 0.4)
+          Diagnostics.log(
+            "activate",
+            "windowID=\(windowID) skylight-target-space-wait targetSpaceID=\(spaceWakeFallbackTarget.id) success=\(switched) duration=\(Int(Date().timeIntervalSince(waitStart) * 1000))ms",
+            app: ownerName)
+
+          if let axElement = findAXWindowStandard(pid: pid, targetCGWindowID: targetCGWindowID) {
+            AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+            Diagnostics.log(
+              "activate",
+              "windowID=\(windowID) path=standard-after-skylight-wait total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+              app: ownerName)
+            return
+          }
+
+          if !switched {
+            Diagnostics.log(
+              "activate",
+              "windowID=\(windowID) path=brute-force skipped=space-wake-needed fallback=space-wake targetSpaceID=\(spaceWakeFallbackTarget.id)",
+              app: ownerName)
+            activateAfterSpaceWakeFallback(
+              windowID: windowID,
+              ownerName: ownerName,
+              pid: pid,
+              targetCGWindowID: targetCGWindowID,
+              targetSpace: spaceWakeFallbackTarget,
+              activateStart: activateStart)
+            return
+          }
+        }
+
         let bruteStart = Date()
-        if let axElement = findAXWindowBruteForce(
+        let bruteResult = findAXWindowBruteForceResult(
           pid: pid, targetCGWindowID: targetCGWindowID)
-        {
+        if let axElement = bruteResult.element {
           AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
           Diagnostics.log(
             "activate",
-            "windowID=\(windowID) path=brute-force brute-duration=\(Int(Date().timeIntervalSince(bruteStart) * 1000))ms total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+            "windowID=\(windowID) path=brute-force brute-duration=\(Int(Date().timeIntervalSince(bruteStart) * 1000))ms total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms \(bruteResult.diagnosticsSummary)",
             app: ownerName)
         } else {
+          let fallbackMessage =
+            spaceWakeFallbackTarget.map { " fallback=space-wake targetSpaceID=\($0.id)" }
+            ?? ""
           Diagnostics.log(
             "activate",
-            "windowID=\(windowID) path=brute-force outcome=not-found total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms (kAXRaiseAction skipped)",
+            "windowID=\(windowID) path=brute-force outcome=not-found total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms \(bruteResult.diagnosticsSummary)\(fallbackMessage) (kAXRaiseAction skipped)",
             app: ownerName)
+          if let spaceWakeFallbackTarget,
+            !getAllSpaces().contains(where: { $0.id == spaceWakeFallbackTarget.id && $0.isCurrent })
+          {
+            activateAfterSpaceWakeFallback(
+              windowID: windowID,
+              ownerName: ownerName,
+              pid: pid,
+              targetCGWindowID: targetCGWindowID,
+              targetSpace: spaceWakeFallbackTarget,
+              activateStart: activateStart)
+          }
         }
       }
+    }
+  }
+
+  @discardableResult
+  private func postSkyLightActivation(
+    pid: pid_t,
+    targetCGWindowID: CGWindowID,
+    windowID: Int,
+    ownerName: String,
+    phase: String,
+    scheduleSpaceCheck: Bool = true
+  ) -> String {
+    var psn = ProcessSerialNumber()
+    GetProcessForPID(pid, &psn)
+
+    let beforeCurrentSpaces = Diagnostics.enabled ? currentSpacesForActivationDiagnostics() : "[]"
+    let skylightStart = Date()
+    _SLPSSetFrontProcessWithOptions(&psn, targetCGWindowID, 0x200)
+    if Diagnostics.enabled {
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) skylight=set-front-process phase=\(phase) called duration=\(Int(Date().timeIntervalSince(skylightStart) * 1000))ms beforeCurrentSpaces=\(beforeCurrentSpaces)",
+        app: ownerName)
+      if scheduleSpaceCheck {
+        logSpaceChangeAfterSkyLight(
+          windowID: windowID,
+          ownerName: ownerName,
+          beforeCurrentSpaces: beforeCurrentSpaces,
+          phase: phase)
+      }
+    }
+
+    // Synthetic key-window events: two records (key-down/key-up) with the
+    // CGWindowID embedded at offset 0x3c in a 0xf8-byte record.
+    var bytes = [UInt8](repeating: 0, count: 0xf8)
+    bytes[0x04] = 0xf8
+    bytes[0x3a] = 0x10
+    bytes.withUnsafeMutableBufferPointer { buf in
+      var widCopy = targetCGWindowID
+      memcpy(buf.baseAddress! + 0x3c, &widCopy, MemoryLayout<UInt32>.size)
+      memset(buf.baseAddress! + 0x20, 0xff, 0x10)
+    }
+    bytes[0x08] = 0x01
+    SLPSPostEventRecordTo(&psn, &bytes)
+    bytes[0x08] = 0x02
+    SLPSPostEventRecordTo(&psn, &bytes)
+
+    return beforeCurrentSpaces
+  }
+
+  private func activateAfterSpaceWakeFallback(
+    windowID: Int,
+    ownerName: String,
+    pid: pid_t,
+    targetCGWindowID: CGWindowID,
+    targetSpace: SpaceInfo,
+    activateStart: Date
+  ) {
+    let fallbackStart = Date()
+    let beforeCurrentSpaces = currentSpacesForActivationDiagnostics()
+    Diagnostics.log(
+      "activate",
+      "windowID=\(windowID) fallback=space-wake starting targetSpaceID=\(targetSpace.id) beforeCurrentSpaces=\(beforeCurrentSpaces)",
+      app: ownerName)
+
+    do {
+      try switchToSpace(id: targetSpace.id)
+    } catch {
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) fallback=space-wake outcome=switch-error error=\"\(error.localizedDescription)\"",
+        app: ownerName)
+      return
+    }
+
+    let switched = waitForCurrentSpace(targetSpace.id, timeout: 2.5)
+    let afterCurrentSpaces = currentSpacesForActivationDiagnostics()
+    Diagnostics.log(
+      "activate",
+      "windowID=\(windowID) fallback=space-wake switch-complete success=\(switched) duration=\(Int(Date().timeIntervalSince(fallbackStart) * 1000))ms afterCurrentSpaces=\(afterCurrentSpaces)",
+      app: ownerName)
+
+    guard switched else {
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) fallback=space-wake outcome=space-switch-timeout total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+        app: ownerName)
+      return
+    }
+
+    Thread.sleep(forTimeInterval: 0.15)
+    postSkyLightActivation(
+      pid: pid,
+      targetCGWindowID: targetCGWindowID,
+      windowID: windowID,
+      ownerName: ownerName,
+      phase: "space-wake-retry")
+    Thread.sleep(forTimeInterval: 0.15)
+
+    if let axElement = findAXWindowStandard(pid: pid, targetCGWindowID: targetCGWindowID) {
+      AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) fallback=space-wake path=standard total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+        app: ownerName)
+      return
+    }
+
+    let bruteStart = Date()
+    let bruteResult = findAXWindowBruteForceResult(pid: pid, targetCGWindowID: targetCGWindowID)
+    if let axElement = bruteResult.element {
+      AXUIElementPerformAction(axElement, kAXRaiseAction as CFString)
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) fallback=space-wake path=brute-force brute-duration=\(Int(Date().timeIntervalSince(bruteStart) * 1000))ms total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms \(bruteResult.diagnosticsSummary)",
+        app: ownerName)
+    } else {
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) fallback=space-wake outcome=retry-not-found total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms \(bruteResult.diagnosticsSummary)",
+        app: ownerName)
     }
   }
 
@@ -1792,6 +1973,30 @@ public class SpaceManager {
   private func findAXWindowBruteForce(
     pid: pid_t, targetCGWindowID: CGWindowID
   ) -> AXUIElement? {
+    findAXWindowBruteForceResult(pid: pid, targetCGWindowID: targetCGWindowID).element
+  }
+
+  private struct AXWindowBruteForceResult {
+    let element: AXUIElement?
+    let scannedCount: UInt64
+    let highestElementID: UInt64?
+    let timedOut: Bool
+    let timeoutMilliseconds: Int
+    let matchedWindowIDCount: Int
+    let rejectedSubroles: [String]
+
+    var diagnosticsSummary: String {
+      let highest = highestElementID.map(String.init) ?? "none"
+      let rejected =
+        rejectedSubroles.isEmpty ? "[]" : "[\(rejectedSubroles.joined(separator: ","))]"
+      return
+        "brute-scanned=\(scannedCount) brute-highest=\(highest) brute-timeout-ms=\(timeoutMilliseconds) brute-timed-out=\(timedOut) brute-window-id-matches=\(matchedWindowIDCount) brute-rejected-subroles=\(rejected)"
+    }
+  }
+
+  private func findAXWindowBruteForceResult(
+    pid: pid_t, targetCGWindowID: CGWindowID, timeout: TimeInterval = 1.0
+  ) -> AXWindowBruteForceResult {
     // Build the 20-byte remote token template:
     //   bytes  0..3:  pid (Int32)
     //   bytes  4..7:  0 (Int32)
@@ -1804,15 +2009,42 @@ public class SpaceManager {
 
     let startTime = DispatchTime.now()
     let maxElementID: UInt64 = 1_000_000
-    let timeoutNanos: UInt64 = 1_000_000_000  // 1 second
+    let timeoutNanos = UInt64(timeout * 1_000_000_000)
+    let timeoutMilliseconds = Int(timeout * 1000)
+    var scannedCount: UInt64 = 0
+    var highestElementID: UInt64?
+    var timedOut = false
+    var matchedWindowIDCount = 0
+    var rejectedSubroles: [String] = []
+
+    func elapsedPastTimeout() -> Bool {
+      DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds > timeoutNanos
+    }
+
+    func result(_ element: AXUIElement?) -> AXWindowBruteForceResult {
+      AXWindowBruteForceResult(
+        element: element,
+        scannedCount: scannedCount,
+        highestElementID: highestElementID,
+        timedOut: timedOut,
+        timeoutMilliseconds: timeoutMilliseconds,
+        matchedWindowIDCount: matchedWindowIDCount,
+        rejectedSubroles: rejectedSubroles)
+    }
 
     for elementID: UInt64 in 0..<maxElementID {
+      scannedCount += 1
+      highestElementID = elementID
       tokenData.replaceSubrange(12..<20, with: withUnsafeBytes(of: elementID) { Data($0) })
 
       guard
         let unmanaged = _AXUIElementCreateWithRemoteToken(tokenData as CFData),
         case let element = unmanaged.takeRetainedValue()
       else {
+        if elapsedPastTimeout() {
+          timedOut = true
+          break
+        }
         continue
       }
 
@@ -1821,10 +2053,13 @@ public class SpaceManager {
       guard _AXUIElementGetWindow(element, &cgWid) == .success,
         cgWid == targetCGWindowID
       else {
-        let elapsed = DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds
-        if elapsed > timeoutNanos { break }
+        if elapsedPastTimeout() {
+          timedOut = true
+          break
+        }
         continue
       }
+      matchedWindowIDCount += 1
 
       // CGWindowID matches — verify this is a window element, not a child
       // (buttons, text fields etc. also report their containing window's ID).
@@ -1835,11 +2070,96 @@ public class SpaceManager {
         subrole == kAXStandardWindowSubrole as String
           || subrole == kAXDialogSubrole as String
       {
-        return element
+        return result(element)
+      }
+      if rejectedSubroles.count < 8 {
+        if let subrole = subroleRef as? String {
+          rejectedSubroles.append(subrole)
+        } else {
+          rejectedSubroles.append("unreadable")
+        }
+      }
+      if elapsedPastTimeout() {
+        timedOut = true
+        break
       }
     }
 
-    return nil
+    return result(nil)
+  }
+
+  func activationContextForDiagnostics(windowID: Int) -> String {
+    let spaces = getAllSpaces()
+    let currentSpaces = spaces.filter(\.isCurrent).map(formatSpaceForActivationDiagnostics)
+    let targetSpaceIDs = dataSource.fetchSpacesForWindow(windowID)
+    let targetSpaces = targetSpaceIDs.map { spaceID in
+      spaces.first(where: { $0.id == spaceID }).map(formatSpaceForActivationDiagnostics)
+        ?? "id=\(spaceID) metadata=missing"
+    }
+    return
+      "currentSpaces=\(formatActivationDiagnosticsList(currentSpaces)) targetSpaceIDs=\(formatActivationDiagnosticsIDs(targetSpaceIDs)) targetSpaces=\(formatActivationDiagnosticsList(targetSpaces))"
+  }
+
+  func spaceWakeFallbackTargetForActivation(windowID: Int) -> SpaceInfo? {
+    let spaces = getAllSpaces()
+    let targetSpaceIDs = dataSource.fetchSpacesForWindow(windowID)
+    guard targetSpaceIDs.count == 1, let targetSpaceID = targetSpaceIDs.first else {
+      return nil
+    }
+    guard let targetSpace = spaces.first(where: { $0.id == targetSpaceID }) else {
+      return nil
+    }
+    guard targetSpace.type == .desktop, !targetSpace.isCurrent else {
+      return nil
+    }
+    return targetSpace
+  }
+
+  private func currentSpacesForActivationDiagnostics() -> String {
+    formatActivationDiagnosticsList(
+      getAllSpaces().filter(\.isCurrent).map(formatSpaceForActivationDiagnostics))
+  }
+
+  private func waitForCurrentSpace(_ spaceID: UInt64, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if getAllSpaces().contains(where: { $0.id == spaceID && $0.isCurrent }) {
+        return true
+      }
+      Thread.sleep(forTimeInterval: 0.05)
+    }
+    return getAllSpaces().contains(where: { $0.id == spaceID && $0.isCurrent })
+  }
+
+  private func logSpaceChangeAfterSkyLight(
+    windowID: Int, ownerName: String, beforeCurrentSpaces: String, phase: String
+  ) {
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + .milliseconds(750)) {
+      [self] in
+      let afterCurrentSpaces = currentSpacesForActivationDiagnostics()
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) skylight-space-check phase=\(phase) delay=750ms beforeCurrentSpaces=\(beforeCurrentSpaces) afterCurrentSpaces=\(afterCurrentSpaces) changed=\(beforeCurrentSpaces != afterCurrentSpaces)",
+        app: ownerName)
+    }
+  }
+
+  private func formatSpaceForActivationDiagnostics(_ space: SpaceInfo) -> String {
+    let type: String
+    switch space.type {
+    case .desktop: type = "desktop"
+    case .fullscreen: type = "fullscreen"
+    }
+    return
+      "id=\(space.id) uuid=\(space.uuid) display=\(space.displayUUID) type=\(type) current=\(space.isCurrent)"
+  }
+
+  private func formatActivationDiagnosticsList(_ values: [String]) -> String {
+    values.isEmpty ? "[]" : "[\(values.joined(separator: "; "))]"
+  }
+
+  private func formatActivationDiagnosticsIDs(_ values: [UInt64]) -> String {
+    values.isEmpty ? "[]" : "[\(values.map(String.init).joined(separator: ","))]"
   }
 
 }

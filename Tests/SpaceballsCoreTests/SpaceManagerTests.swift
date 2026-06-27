@@ -82,6 +82,97 @@ func makeWindowDict(
 
 // MARK: - Space Parsing Tests
 
+@Suite("Activation Diagnostics")
+struct ActivationDiagnosticsTests {
+
+  @Test("Activation context includes current space and target window spaces")
+  func activationContextIncludesCurrentAndTargetSpaces() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 10, uuid: "space-current"),
+          makeSpaceDict(id: 11, uuid: "space-target"),
+        ],
+        currentSpaceID: 10)
+    ]
+    ds.windowSpaces = [42: [11, 99]]
+
+    let manager = SpaceManager(dataSource: ds)
+
+    #expect(
+      manager.activationContextForDiagnostics(windowID: 42)
+        == "currentSpaces=[id=10 uuid=space-current display=display-1 type=desktop current=true] targetSpaceIDs=[11,99] targetSpaces=[id=11 uuid=space-target display=display-1 type=desktop current=false; id=99 metadata=missing]"
+    )
+  }
+
+  @Test("Activation context handles windows with no space mapping")
+  func activationContextHandlesMissingWindowSpaces() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 10, uuid: "space-current")],
+        currentSpaceID: 10)
+    ]
+
+    let manager = SpaceManager(dataSource: ds)
+
+    #expect(
+      manager.activationContextForDiagnostics(windowID: 42)
+        == "currentSpaces=[id=10 uuid=space-current display=display-1 type=desktop current=true] targetSpaceIDs=[] targetSpaces=[]"
+    )
+  }
+
+  @Test("Space wake fallback target is the single non-current desktop space")
+  func spaceWakeFallbackTargetIsSingleNonCurrentDesktopSpace() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 10, uuid: "space-current"),
+          makeSpaceDict(id: 11, uuid: "space-target"),
+        ],
+        currentSpaceID: 10)
+    ]
+    ds.windowSpaces = [42: [11]]
+
+    let manager = SpaceManager(dataSource: ds)
+
+    #expect(manager.spaceWakeFallbackTargetForActivation(windowID: 42)?.id == 11)
+  }
+
+  @Test("Space wake fallback is skipped for current, sticky, and fullscreen targets")
+  func spaceWakeFallbackSkipsUnsafeTargets() {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 10, uuid: "space-current"),
+          makeSpaceDict(id: 11, uuid: "space-target"),
+          makeSpaceDict(id: 12, uuid: "fullscreen-target", type: 4),
+        ],
+        currentSpaceID: 10)
+    ]
+    ds.windowSpaces = [
+      1: [10],
+      2: [10, 11],
+      3: [12],
+      4: [99],
+    ]
+
+    let manager = SpaceManager(dataSource: ds)
+
+    #expect(manager.spaceWakeFallbackTargetForActivation(windowID: 1) == nil)
+    #expect(manager.spaceWakeFallbackTargetForActivation(windowID: 2) == nil)
+    #expect(manager.spaceWakeFallbackTargetForActivation(windowID: 3) == nil)
+    #expect(manager.spaceWakeFallbackTargetForActivation(windowID: 4) == nil)
+  }
+}
+
 @Suite("Space Parsing")
 struct SpaceParsingTests {
 
