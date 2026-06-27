@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Import Developer ID Application certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Build, sign, and notarize release
+        id: build
+        env:
+          TEAM_NAME: ${{ secrets.TEAM_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/release.sh ${{ steps.version.outputs.version }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/spaceballs-${{ steps.version.outputs.version }}-macos.tar.gz
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Output SHA256
+        run: |
+          echo "### Release Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Archive:** spaceballs-${{ steps.version.outputs.version }}-macos.tar.gz" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**SHA256:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          shasum -a 256 dist/spaceballs-${{ steps.version.outputs.version }}-macos.tar.gz >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  update-homebrew:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref, '-') }}
+
+    steps:
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Get SHA256 from release
+        id: sha256
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ASSET_NAME="spaceballs-${{ steps.version.outputs.version }}-macos.tar.gz"
+          SHA256=$(gh api repos/moltenbits/spaceballs/releases/tags/v${{ steps.version.outputs.version }} \
+            --jq ".assets[] | select(.name == \"$ASSET_NAME\") | .digest" \
+            | sed 's/sha256://')
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v6
+        with:
+          repository: moltenbits/homebrew-tap
+          token: ${{ secrets.HOMEBREW_CASK_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update cask
+        run: |
+          mkdir -p homebrew-tap/Casks
+          cat > homebrew-tap/Casks/spaceballs.rb << 'EOF'
+          cask "spaceballs" do
+            version "${{ steps.version.outputs.version }}"
+            sha256 "${{ steps.sha256.outputs.sha256 }}"
+
+            url "https://github.com/moltenbits/spaceballs/releases/download/v#{version}/spaceballs-#{version}-macos.tar.gz"
+            name "Spaceballs"
+            desc "Keyboard-driven macOS window switcher for Spaces"
+            homepage "https://github.com/moltenbits/spaceballs"
+
+            depends_on macos: ">= :sonoma"
+
+            app "Spaceballs.app"
+            binary "Spaceballs-CLI.app/Contents/MacOS/spaceballs"
+
+            caveats <<~EOS
+              Spaceballs requires Accessibility and Screen Recording permissions.
+              Enable them in System Settings > Privacy & Security after installation.
+
+              Spaceballs uses private macOS APIs for Spaces/window activation and is
+              tested on modern macOS releases.
+            EOS
+          end
+          EOF
+
+          echo "Updated Casks/spaceballs.rb:"
+          cat homebrew-tap/Casks/spaceballs.rb
+
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/spaceballs.rb
+          git commit -m "spaceballs ${{ steps.version.outputs.version }}"
+          git push

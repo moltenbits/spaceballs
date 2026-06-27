@@ -34,7 +34,8 @@ struct WindowCommand: ParsableCommand {
         throw ExitCode.failure
       }
       try AppBundleHelper.reexecViaApp(
-        appPath: appPath, subcommand: "activate", args: [String(windowID)])
+        appPath: appPath, subcommand: Self.configuration.commandName ?? "window",
+        args: [String(windowID)])
     }
   }
 

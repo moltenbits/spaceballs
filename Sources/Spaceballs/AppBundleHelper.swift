@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import SpaceballsCore
 
 /// Shared helpers for re-executing CLI subcommands through the `.app` bundle.
 ///
@@ -11,18 +12,25 @@ enum AppBundleHelper {
 
   static func isRunningInAppBundle() -> Bool {
     let execPath = ProcessInfo.processInfo.arguments[0]
-    return execPath.contains(".app/Contents/MacOS/")
+    return AppBundlePathResolver.containingAppBundlePath(forExecutablePath: execPath) != nil
   }
 
   /// Searches for the installed `Spaceballs-CLI.app` bundle.
   ///
   /// Checks (in order):
-  /// 1. `<prefix>/lib/spaceballs/Spaceballs-CLI.app` relative to the binary
-  /// 2. Common install locations (`/usr/local`, `/opt/homebrew`)
-  /// 3. Development build at `.build/Spaceballs-CLI.app`
+  /// 1. The containing `.app`, when invoked directly or through a symlink into
+  ///    the bundle
+  /// 2. `<prefix>/lib/spaceballs/Spaceballs-CLI.app` relative to the binary
+  /// 3. Common install locations (`/usr/local`, `/opt/homebrew`)
+  /// 4. Development build next to the resolved executable
   static func findInstalledAppBundle() -> String? {
-    let execPath = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
-      .resolvingSymlinksInPath().path
+    let execPath = AppBundlePathResolver.resolvedExecutablePath(
+      ProcessInfo.processInfo.arguments[0])
+
+    if let currentApp = AppBundlePathResolver.containingAppBundlePath(forExecutablePath: execPath) {
+      return currentApp
+    }
+
     let binDir = (execPath as NSString).deletingLastPathComponent
     let prefixDir = (binDir as NSString).deletingLastPathComponent
     let relativePath = (prefixDir as NSString).appendingPathComponent(

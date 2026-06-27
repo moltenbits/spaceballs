@@ -17,7 +17,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       - name: Toolchain info
         run: |
@@ -31,14 +36,20 @@ jobs:
       - name: Run tests
         run: swift test --disable-sandbox
 
-      # Release config catches optimization-only compile issues, and running the
-      # CLI proves the binary launches headless. Only ArgumentParser paths are
-      # exercised — anything touching CGS/AX needs permissions runners can't grant.
-      - name: Release build + CLI smoke test
+      # Release bundling catches plist/signing/layout regressions. The smoke
+      # tests stay on ArgumentParser paths because CGS/AX APIs need permissions
+      # GitHub-hosted runners cannot grant.
+      - name: Release bundle + CLI smoke test
         run: |
-          swift build -c release --disable-sandbox --product spaceballs
-          .build/release/spaceballs --version
-          .build/release/spaceballs --help
+          chmod +x scripts/*.sh
+          ./scripts/bundle.sh release
+          test -x .build/release/Spaceballs.app/Contents/MacOS/spaceballs
+          test -x .build/release/Spaceballs-CLI.app/Contents/MacOS/spaceballs
+          test -f .build/release/Spaceballs-CLI.app/Contents/Resources/completions/_spaceballs
+          codesign --verify --deep --strict .build/release/Spaceballs.app
+          codesign --verify --deep --strict .build/release/Spaceballs-CLI.app
+          .build/release/Spaceballs-CLI.app/Contents/MacOS/spaceballs --version
+          .build/release/Spaceballs-CLI.app/Contents/MacOS/spaceballs --help
 
   lint:
     name: Lint
@@ -47,7 +58,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: swift-format lint
         run: xcrun swift-format lint -r Sources/ Tests/
