@@ -85,8 +85,21 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Check Homebrew token
+        id: homebrew-token
+        env:
+          HOMEBREW_CASK_TOKEN: ${{ secrets.HOMEBREW_CASK_TOKEN }}
+        run: |
+          if [ -n "$HOMEBREW_CASK_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping Homebrew cask update because HOMEBREW_CASK_TOKEN is not configured."
+          fi
+
       - name: Get SHA256 from release
         id: sha256
+        if: steps.homebrew-token.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -97,6 +110,7 @@ jobs:
           echo "sha256=$SHA256" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew-tap
+        if: steps.homebrew-token.outputs.available == 'true'
         uses: actions/checkout@v6
         with:
           repository: moltenbits/homebrew-tap
@@ -104,6 +118,7 @@ jobs:
           path: homebrew-tap
 
       - name: Update cask
+        if: steps.homebrew-token.outputs.available == 'true'
         run: |
           mkdir -p homebrew-tap/Casks
           cat > homebrew-tap/Casks/spaceballs.rb << 'EOF'
@@ -135,6 +150,7 @@ jobs:
           cat homebrew-tap/Casks/spaceballs.rb
 
       - name: Commit and push
+        if: steps.homebrew-token.outputs.available == 'true'
         run: |
           cd homebrew-tap
           git config user.name "github-actions[bot]"
