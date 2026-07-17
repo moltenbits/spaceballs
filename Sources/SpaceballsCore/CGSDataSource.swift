@@ -1,3 +1,4 @@
+import ApplicationServices
 import Cocoa
 
 /// Real implementation that calls private CGS/CG APIs.
@@ -38,5 +39,30 @@ public struct CGSDataSource: SystemDataSource {
       return []
     }
     return result.map { $0.uint64Value }
+  }
+
+  public func liveAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? {
+    // Without AX trust the query returns nothing meaningful; report "unknown"
+    // so callers keep windows rather than hiding real ones.
+    guard AXIsProcessTrusted() else { return nil }
+
+    let appElement = AXUIElementCreateApplication(pid)
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(
+      appElement, kAXWindowsAttribute as CFString, &value)
+    guard err == .success, let axWindows = value as? [AXUIElement] else {
+      return nil
+    }
+
+    // kAXWindowsAttribute covers the app's windows on the current Space (including
+    // minimized ones) but not closed windows — exactly the liveness signal we need.
+    var ids = Set<CGWindowID>()
+    for axWindow in axWindows {
+      var windowID = CGWindowID(0)
+      if _AXUIElementGetWindow(axWindow, &windowID) == .success {
+        ids.insert(windowID)
+      }
+    }
+    return ids
   }
 }

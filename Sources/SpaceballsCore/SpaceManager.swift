@@ -203,7 +203,45 @@ public class SpaceManager {
       (window.name == nil || window.name!.isEmpty) && pidsWithTitledWindows.contains(window.pid)
     }
 
-    return windows
+    // Drop windows that were closed in a still-running app. macOS keeps such
+    // windows in CGWindowListCopyWindowInfo(.optionAll) — ordered out, still mapped
+    // to a Space — until the process exits, so without this they linger in the list.
+    return removeClosedWindows(windows)
+  }
+
+  /// Removes windows that have been closed but still linger in the window-server
+  /// list. A closed window is indistinguishable from a minimized one in
+  /// `CGWindowListCopyWindowInfo` (both are off-screen on their Space with identical
+  /// fields), so liveness is resolved via the Accessibility API, which lists
+  /// minimized (live) windows but not closed ones.
+  ///
+  /// The AX window list only covers the *current* Space, so the check is scoped to
+  /// current-space, off-screen windows: on-screen windows are live by definition,
+  /// and windows on other Spaces can't be validated this way and are always kept.
+  private func removeClosedWindows(_ windows: [WindowInfo]) -> [WindowInfo] {
+    let currentSpaceIDs = Set(getAllSpaces().filter(\.isCurrent).map(\.id))
+    guard !currentSpaceIDs.isEmpty else { return windows }
+
+    // Cache the AX query per pid; an app may have several windows to validate.
+    var liveIDsByPID: [pid_t: Set<CGWindowID>?] = [:]
+    return windows.filter { window in
+      // On-screen ⟹ on an active Space and visible ⟹ definitely a live window.
+      if window.isOnscreen { return true }
+      // Off-screen but not on a current Space ⟹ legitimately on another Space.
+      guard window.spaceIDs.contains(where: { currentSpaceIDs.contains($0) }) else { return true }
+
+      // Off-screen on a current Space ⟹ minimized or closed. Ask AX which.
+      let pid = pid_t(window.pid)
+      let liveIDs: Set<CGWindowID>?
+      if let cached = liveIDsByPID[pid] {
+        liveIDs = cached
+      } else {
+        liveIDs = dataSource.liveAXWindowIDs(pid: pid)
+        liveIDsByPID[pid] = liveIDs
+      }
+      guard let liveIDs else { return true }  // AX unavailable ⟹ keep (conservative).
+      return liveIDs.contains(CGWindowID(window.id))
+    }
   }
 
   /// Returns the CGWindowID of the frontmost normal window on the given space,
