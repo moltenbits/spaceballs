@@ -701,6 +701,70 @@ struct ClosedWindowTombstoneTests {
   }
 }
 
+// MARK: - Stable Point Polling Tests
+
+/// `awaitStablePoint` waits for Mission Control's spaces-bar animation to settle
+/// by polling until two consecutive position reads agree, replacing a fixed
+/// worst-case sleep. These tests drive it with scripted read sequences.
+@Suite("Await Stable Point")
+struct AwaitStablePointTests {
+
+  /// Runs the helper over a scripted sequence of reads with a no-op delay.
+  private func run(
+    _ reads: [CGPoint?], tolerance: CGFloat = 2, maxAttempts: Int = 15
+  ) -> (point: CGPoint, isStable: Bool)? {
+    var script = reads
+    return SpaceManager.awaitStablePoint(
+      tolerance: tolerance, maxAttempts: maxAttempts,
+      read: { script.isEmpty ? nil : script.removeFirst() },
+      delay: {}
+    )
+  }
+
+  @Test("Returns the point once two consecutive reads agree within tolerance")
+  func stabilizesOnAgreement() {
+    let result = run([
+      CGPoint(x: 100, y: 50),  // still animating
+      CGPoint(x: 140, y: 50),  // still animating
+      CGPoint(x: 160, y: 50),
+      CGPoint(x: 161, y: 50),  // within tolerance of previous → stable
+      CGPoint(x: 999, y: 99),  // must never be read
+    ])
+    #expect(result?.point == CGPoint(x: 161, y: 50))
+    #expect(result?.isStable == true)
+  }
+
+  @Test("A failed read breaks the consecutive-agreement streak")
+  func nilReadBreaksStreak() {
+    let result = run(
+      [
+        CGPoint(x: 100, y: 50),
+        nil,  // bar mid-relayout: button momentarily missing
+        CGPoint(x: 100, y: 50),  // agrees with first read, but not consecutively
+        CGPoint(x: 100, y: 50),  // now stable
+      ], maxAttempts: 4)
+    #expect(result?.point == CGPoint(x: 100, y: 50))
+    #expect(result?.isStable == true)
+  }
+
+  @Test("Returns the last seen point unstable when attempts run out")
+  func exhaustionReturnsLastSeen() {
+    let result = run(
+      [
+        CGPoint(x: 100, y: 50),
+        CGPoint(x: 200, y: 50),
+        CGPoint(x: 300, y: 50),  // never settles
+      ], maxAttempts: 3)
+    #expect(result?.point == CGPoint(x: 300, y: 50))
+    #expect(result?.isStable == false)
+  }
+
+  @Test("Returns nil when every read fails")
+  func allNilReturnsNil() {
+    #expect(run([nil, nil, nil], maxAttempts: 3) == nil)
+  }
+}
+
 // MARK: - Window-to-Space Grouping Tests
 
 @Suite("Window-to-Space Grouping")

@@ -137,17 +137,18 @@ Sources/
 
 Native CGS/SkyLight move APIs (`SLSMoveWindowsToManagedSpace`, `CGSAddWindowsToSpaces`) are blocked on macOS 14.5+ by `connection_holds_rights_on_window` checks. Spaceballs works around this by simulating the drag that a user would perform manually in Mission Control:
 
-1. `activateWindow(id:)` — switch to the window's space (800ms delay for cross-space transitions)
+1. `activateWindow(id:)` — switch to the window's space (800ms delay for cross-space transitions; 250ms when the window is already on a current space)
 2. `CoreDockSendNotification("com.apple.expose.awake")` — open Mission Control
 3. `MissionControlContext` — navigate the Dock's AX hierarchy to find `mc.windows` (window thumbnails) and `mc.spaces.list` (space buttons)
 4. Match the target window by `AXTitle` in `mc.windows`
 5. `postMouseMoveAndGrab()` — hover + mouseDown on thumbnail center
 6. `postMouseDragToPoint()` — nudge 15px to initiate drag state
-7. Wait 500ms for MC to adjust spaces bar, then re-query `mc.spaces.list` positions (they shift during drag)
-8. Match target space by title ("Desktop N"), drag directly to its center
-9. `postMouseUp()` — drop the window
-10. `AXUIElementPerformAction(kAXPressAction)` on target space button — switch to it
-11. `activateWindow(id:)` — bring the moved window to front
+7. Drag to the spaces bar's midpoint (NOT a pre-read button position — tiles shift the moment the drag reaches the bar, so any pre-drag button coordinate is stale on arrival)
+8. `awaitStablePoint()` — poll the target button's center (~40ms intervals, 600ms cap) until two consecutive reads agree, i.e. the bar's relayout has settled
+9. Match target space by title ("Desktop N"), glide to its settled center; re-read once and micro-correct if the bar shifted again mid-glide
+10. `postMouseUp()` — drop the window dead-center on the tile
+11. `AXUIElementPerformAction(kAXPressAction)` on target space button — switch to it
+12. `activateWindow(id:)` — bring the moved window to front
 
 **Key details:**
 - Window thumbnails in MC are `AXButton` children of `mc.windows` with `AXTitle` = window title, `AXPosition`/`AXSize` = screen coordinates
