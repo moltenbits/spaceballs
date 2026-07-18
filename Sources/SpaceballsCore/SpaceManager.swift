@@ -54,6 +54,22 @@ public class SpaceManager {
   private let dataSource: SystemDataSource
   private let selfPID = ProcessInfo.processInfo.processIdentifier
 
+  /// Window IDs confirmed closed via an AX liveness check while their Space was
+  /// current. Kept so the verdict survives Space switches (AX can't re-check a
+  /// non-current Space). Guarded by `tombstoneLock` — getAllWindows() is called
+  /// from the main thread and from background restore/move threads.
+  private var closedWindowTombstones = Set<Int>()
+  private let tombstoneLock = NSLock()
+
+  /// Records that a window was just closed by Spaceballs itself, so it is hidden
+  /// immediately and durably — including windows on non-current Spaces, which the
+  /// AX liveness check can't reach. Subject to the same self-correction as
+  /// AX-derived tombstones: if the close turns out to have failed (AX lists the
+  /// window alive, or it shows up on-screen), the verdict is reverted.
+  public func markWindowClosed(id windowID: Int) {
+    tombstoneLock.withLock { _ = closedWindowTombstones.insert(windowID) }
+  }
+
   /// Bundle IDs of `.regular` apps the user wants hidden from Spaceballs.
   public var excludedBundleIDs: Set<String> = []
 
@@ -203,7 +219,70 @@ public class SpaceManager {
       (window.name == nil || window.name!.isEmpty) && pidsWithTitledWindows.contains(window.pid)
     }
 
-    return windows
+    // Drop windows that were closed in a still-running app. macOS keeps such
+    // windows in CGWindowListCopyWindowInfo(.optionAll) — ordered out, still mapped
+    // to a Space — until the process exits, so without this they linger in the list.
+    return removeClosedWindows(windows)
+  }
+
+  /// Removes windows that have been closed but still linger in the window-server
+  /// list. A closed window is indistinguishable from a minimized one in
+  /// `CGWindowListCopyWindowInfo` (both are off-screen on their Space with identical
+  /// fields), so liveness is resolved via the Accessibility API, which lists
+  /// minimized (live) windows but not closed ones.
+  ///
+  /// The AX window list only covers the *current* Space, so fresh verdicts are only
+  /// possible for current-space, off-screen windows: on-screen windows are live by
+  /// definition, and windows on other Spaces can't be interrogated. To keep a ghost
+  /// hidden after its Space stops being current, confirmed-dead window IDs are
+  /// remembered in `closedWindowTombstones` — a dead CGWindowID stays dead, so the
+  /// verdict is applied on every later call regardless of which Space is current.
+  /// Tombstones self-correct (removed if AX ever lists the ID alive again) and are
+  /// pruned once the ID leaves the window list, so a later ID reuse can't be hidden.
+  private func removeClosedWindows(_ windows: [WindowInfo]) -> [WindowInfo] {
+    var tombstones = tombstoneLock.withLock { closedWindowTombstones }
+
+    // Prune tombstones for IDs no longer in the window list (app quit purged them).
+    tombstones.formIntersection(windows.map(\.id))
+
+    let currentSpaceIDs = Set(getAllSpaces().filter(\.isCurrent).map(\.id))
+
+    // Cache the AX query per pid; an app may have several windows to validate.
+    var liveIDsByPID: [pid_t: Set<CGWindowID>?] = [:]
+    let result = windows.filter { window in
+      // On-screen ⟹ on an active Space and visible ⟹ definitely a live window.
+      if window.isOnscreen {
+        tombstones.remove(window.id)
+        return true
+      }
+      // Off-screen but not on a current Space ⟹ AX can't vouch either way.
+      // Keep unless a past current-space check already proved it dead.
+      guard window.spaceIDs.contains(where: { currentSpaceIDs.contains($0) }) else {
+        return !tombstones.contains(window.id)
+      }
+
+      // Off-screen on a current Space ⟹ minimized or closed. Ask AX which.
+      let pid = pid_t(window.pid)
+      let liveIDs: Set<CGWindowID>?
+      if let cached = liveIDsByPID[pid] {
+        liveIDs = cached
+      } else {
+        liveIDs = dataSource.liveAXWindowIDs(pid: pid)
+        liveIDsByPID[pid] = liveIDs
+      }
+      guard let liveIDs else {  // AX unavailable ⟹ no fresh verdict; use memory.
+        return !tombstones.contains(window.id)
+      }
+      if liveIDs.contains(CGWindowID(window.id)) {
+        tombstones.remove(window.id)  // alive — clear any stale verdict
+        return true
+      }
+      tombstones.insert(window.id)  // confirmed dead — remember across Space switches
+      return false
+    }
+
+    tombstoneLock.withLock { closedWindowTombstones = tombstones }
+    return result
   }
 
   /// Returns the CGWindowID of the frontmost normal window on the given space,
@@ -1233,7 +1312,12 @@ public class SpaceManager {
 
       let result = AXUIElementPerformAction(
         closeButton as! AXUIElement, kAXPressAction as CFString)
-      if result != .success {
+      if result == .success {
+        // The close was delivered — tombstone the ID so the window is hidden
+        // durably even if it lives on a non-current Space (where the window
+        // server will keep listing it and AX can't be consulted).
+        markWindowClosed(id: windowID)
+      } else {
         print("closeWindow: kAXPressAction failed (\(result.rawValue)) for window \(windowID)")
       }
     }

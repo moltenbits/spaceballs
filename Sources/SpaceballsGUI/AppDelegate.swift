@@ -20,6 +20,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var cancellables = Set<AnyCancellable>()
   var windowLayoutStore: WindowLayoutStore!
   private var windowLayoutCoordinator: WindowLayoutCoordinator!
+  private var permissionsCoordinator: PermissionsCoordinator!
+
+  func applicationDidBecomeActive(_ notification: Notification) {
+    permissionsCoordinator?.checkAndPrompt()
+  }
+
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    // Fires when the user launches the app while it's already running — the
+    // natural recovery gesture when the hotkey is dead because a permission
+    // is missing. Re-check and prompt right away.
+    permissionsCoordinator?.checkAndPrompt()
+    return true
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     spaceNameStore = SpaceNameStore()
@@ -50,6 +63,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     keyInterceptor.delegate = self
     keyInterceptor.keyBindings = appSettings.keyBindings
     keyInterceptor.start()
+
+    // Check permissions at launch and prompt for anything missing. Re-checked on
+    // every activation/reopen (see applicationDidBecomeActive / ShouldHandleReopen)
+    // so a lost grant — e.g. a TCC reset after the app is re-signed — is surfaced
+    // immediately instead of the hotkey and window titles failing silently.
+    permissionsCoordinator = PermissionsCoordinator(
+      isAccessibilityTrusted: { AXIsProcessTrusted() },
+      promptAccessibility: { SpaceManager.ensureAccessibilityTrusted() },
+      hasScreenRecording: { CGPreflightScreenCaptureAccess() },
+      promptScreenRecording: { CGRequestScreenCaptureAccess() }
+    )
+    permissionsCoordinator.checkAndPrompt()
 
     appSettings.$keyBindings
       .dropFirst()
@@ -563,9 +588,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: KeyInterceptorDelegate {
   func keyInterceptorReady() {
-    if !CGPreflightScreenCaptureAccess() {
-      CGRequestScreenCaptureAccess()
-    }
+    // The tap just came up (Accessibility granted) — re-check the rest.
+    permissionsCoordinator?.checkAndPrompt()
   }
 
   func keyInterceptorShowPanel() {

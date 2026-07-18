@@ -11,6 +11,10 @@ struct MockDataSource: SystemDataSource {
   var windowList: [[String: Any]] = []
   var onScreenWindowList: [[String: Any]]?
   var windowSpaces: [Int: [UInt64]] = [:]
+  /// Live AX window IDs per pid. A pid absent from this map returns `nil`
+  /// (AX unavailable → conservative keep); map to an explicit set (possibly
+  /// empty) to simulate a queryable app.
+  var liveWindowIDsByPID: [Int: Set<CGWindowID>] = [:]
 
   func fetchManagedDisplaySpaces() -> [[String: Any]] {
     displaySpaces
@@ -26,6 +30,10 @@ struct MockDataSource: SystemDataSource {
 
   func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] {
     windowSpaces[windowID] ?? []
+  }
+
+  func liveAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? {
+    liveWindowIDsByPID[Int(pid)]
   }
 }
 
@@ -456,6 +464,240 @@ struct WindowFilteringTests {
     let ds = MockDataSource()
     let manager = SpaceManager(dataSource: ds)
     #expect(manager.getAllWindows().isEmpty)
+  }
+}
+
+// MARK: - Closed (Lingering) Window Filtering Tests
+
+/// A window closed in a still-running app lingers in CGWindowListCopyWindowInfo(.optionAll),
+/// still mapped to its Space (ordered out, not destroyed). It's indistinguishable from a
+/// minimized window in the window-server list — both are off-screen with identical fields —
+/// so the only reliable discriminator is Accessibility liveness (kAXWindowsAttribute lists
+/// minimized windows, not closed ones). These tests pin down that filtering behavior.
+@Suite("Closed Window Filtering")
+struct ClosedWindowFilteringTests {
+
+  /// One display whose current space is `currentSpaceID`, plus one other desktop space.
+  private func singleDisplay(currentSpaceID: Int, otherSpaceID: Int) -> [[String: Any]] {
+    [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: currentSpaceID, uuid: "space-current"),
+          makeSpaceDict(id: otherSpaceID, uuid: "space-other"),
+        ],
+        currentSpaceID: currentSpaceID)
+    ]
+  }
+
+  @Test("Drops an off-screen current-space window that AX no longer lists (closed)")
+  func dropsClosedWindowOnCurrentSpace() {
+    var ds = MockDataSource()
+    ds.displaySpaces = singleDisplay(currentSpaceID: 10, otherSpaceID: 11)
+    ds.windowList = [
+      makeWindowDict(id: 1, ownerName: "App", name: "Alive", pid: 100, isOnscreen: true),
+      makeWindowDict(id: 2, ownerName: "App", name: "Closed", pid: 100, isOnscreen: false),
+    ]
+    ds.windowSpaces = [1: [10], 2: [10]]
+    ds.liveWindowIDsByPID = [100: [1]]  // window 2 was closed → absent from AX
+
+    let windows = SpaceManager(dataSource: ds).getAllWindows()
+
+    #expect(windows.map(\.id) == [1])
+  }
+
+  @Test("Keeps a minimized current-space window that AX still lists")
+  func keepsMinimizedWindowOnCurrentSpace() {
+    var ds = MockDataSource()
+    ds.displaySpaces = singleDisplay(currentSpaceID: 10, otherSpaceID: 11)
+    ds.windowList = [
+      makeWindowDict(id: 1, ownerName: "App", name: "Alive", pid: 100, isOnscreen: true),
+      makeWindowDict(id: 2, ownerName: "App", name: "Minimized", pid: 100, isOnscreen: false),
+    ]
+    ds.windowSpaces = [1: [10], 2: [10]]
+    ds.liveWindowIDsByPID = [100: [1, 2]]  // minimized window is still a live AX window
+
+    let windows = SpaceManager(dataSource: ds).getAllWindows()
+
+    #expect(Set(windows.map(\.id)) == [1, 2])
+  }
+
+  @Test("Keeps an off-screen window on another (non-current) Space without consulting AX")
+  func keepsOffScreenWindowOnOtherSpace() {
+    var ds = MockDataSource()
+    ds.displaySpaces = singleDisplay(currentSpaceID: 10, otherSpaceID: 11)
+    ds.windowList = [
+      makeWindowDict(id: 3, ownerName: "App", name: "OtherSpace", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [3: [11]]  // on the non-current space; AX can't see other Spaces
+    ds.liveWindowIDsByPID = [100: []]  // even an empty AX set must not drop it
+
+    let windows = SpaceManager(dataSource: ds).getAllWindows()
+
+    #expect(windows.map(\.id) == [3])
+  }
+
+  @Test("Keeps an off-screen current-space window when AX liveness is unavailable")
+  func keepsWindowWhenAXUnavailable() {
+    var ds = MockDataSource()
+    ds.displaySpaces = singleDisplay(currentSpaceID: 10, otherSpaceID: 11)
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "App", name: "Unknown", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [10]]
+    // pid 100 absent from liveWindowIDsByPID → liveAXWindowIDs returns nil (unknown)
+
+    let windows = SpaceManager(dataSource: ds).getAllWindows()
+
+    #expect(windows.map(\.id) == [2])
+  }
+
+  @Test("Keeps an on-screen window even when AX does not list it")
+  func keepsOnScreenWindowRegardlessOfAX() {
+    var ds = MockDataSource()
+    ds.displaySpaces = singleDisplay(currentSpaceID: 10, otherSpaceID: 11)
+    ds.windowList = [
+      makeWindowDict(id: 1, ownerName: "App", name: "Front", pid: 100, isOnscreen: true)
+    ]
+    ds.windowSpaces = [1: [10]]
+    ds.liveWindowIDsByPID = [100: []]  // on-screen fast path wins regardless
+
+    let windows = SpaceManager(dataSource: ds).getAllWindows()
+
+    #expect(windows.map(\.id) == [1])
+  }
+}
+
+// MARK: - Closed Window Tombstone Tests
+
+/// Reference-type mock so a test can mutate system state between calls on the
+/// same SpaceManager (e.g. simulate a space switch between two refreshes).
+final class MutableCoreMockDataSource: SystemDataSource {
+  var displaySpaces: [[String: Any]] = []
+  var windowList: [[String: Any]] = []
+  var windowSpaces: [Int: [UInt64]] = [:]
+  var liveWindowIDsByPID: [Int: Set<CGWindowID>] = [:]
+
+  func fetchManagedDisplaySpaces() -> [[String: Any]] { displaySpaces }
+  func fetchWindowList() -> [[String: Any]] { windowList }
+  func fetchOnScreenWindowList() -> [[String: Any]] { windowList }
+  func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] { windowSpaces[windowID] ?? [] }
+  func liveAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? { liveWindowIDsByPID[Int(pid)] }
+}
+
+/// A window confirmed closed via AX must STAY hidden after its Space stops being
+/// current. Without a remembered verdict, the ghost is only masked while its
+/// Space is current and reappears on every Space switch.
+@Suite("Closed Window Tombstones")
+struct ClosedWindowTombstoneTests {
+
+  private func makeDataSource(currentSpaceID: Int) -> MutableCoreMockDataSource {
+    let ds = MutableCoreMockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 10, uuid: "space-a"), makeSpaceDict(id: 11, uuid: "space-b")],
+        currentSpaceID: currentSpaceID)
+    ]
+    return ds
+  }
+
+  @Test("Window confirmed closed stays hidden after switching away from its space")
+  func closedWindowStaysHiddenAcrossSpaceSwitch() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "App", name: "Ghost", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [10]]
+    ds.liveWindowIDsByPID = [100: []]  // AX: window 2 is dead
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().isEmpty)  // confirmed closed while space 10 is current
+
+    // Switch to space 11 — the ghost's space is no longer current, so AX can no
+    // longer vouch. The remembered verdict must keep it hidden.
+    ds.displaySpaces = makeDataSource(currentSpaceID: 11).displaySpaces
+    #expect(manager.getAllWindows().isEmpty)
+  }
+
+  @Test("Tombstoned window is unhidden if AX later reports it alive")
+  func tombstoneIsRevertedWhenAXReportsAlive() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "App", name: "Flaky", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [10]]
+    ds.liveWindowIDsByPID = [100: []]  // transient AX glitch: reported dead
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().isEmpty)
+
+    // AX recovers and lists the window again (still on the current space).
+    ds.liveWindowIDsByPID = [100: [2]]
+    #expect(manager.getAllWindows().map(\.id) == [2])
+
+    // And the tombstone is truly gone: switch away, window must remain visible.
+    ds.displaySpaces = makeDataSource(currentSpaceID: 11).displaySpaces
+    #expect(manager.getAllWindows().map(\.id) == [2])
+  }
+
+  @Test("markWindowClosed hides a window on a non-current Space without an AX verdict")
+  func markWindowClosedHidesCrossSpaceWindow() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    // Window lives on space 11, which is NOT current — AX can't interrogate it,
+    // so only the explicit mark can hide it.
+    ds.windowList = [
+      makeWindowDict(id: 5, ownerName: "App", name: "FarAway", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [5: [11]]
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().map(\.id) == [5])  // visible before the close
+
+    manager.markWindowClosed(id: 5)  // panel Cmd+W on the cross-Space row
+
+    #expect(manager.getAllWindows().isEmpty)
+  }
+
+  @Test("markWindowClosed is reverted when AX shows the window still alive (close failed)")
+  func markWindowClosedRevertsWhenCloseFailed() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 5, ownerName: "App", name: "Unsaved", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [5: [10]]
+    ds.liveWindowIDsByPID = [100: [5]]  // close was blocked (e.g. save dialog) — still live
+
+    let manager = SpaceManager(dataSource: ds)
+    manager.markWindowClosed(id: 5)
+
+    // AX contradicts the mark on the current Space → window comes back.
+    #expect(manager.getAllWindows().map(\.id) == [5])
+  }
+
+  @Test("Tombstone is pruned once the window leaves the window list")
+  func tombstoneIsPrunedWhenWindowDisappears() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "App", name: "Ghost", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [10]]
+    ds.liveWindowIDsByPID = [100: []]
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().isEmpty)  // tombstoned
+
+    // The window finally leaves CGWindowList (e.g. app quit) → tombstone pruned.
+    ds.windowList = []
+    #expect(manager.getAllWindows().isEmpty)
+
+    // A NEW window later reuses the same ID on a non-current space. The stale
+    // tombstone must not hide it.
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "Other", name: "Reused", pid: 200, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [11]]
+    #expect(manager.getAllWindows().map(\.id) == [2])
   }
 }
 
