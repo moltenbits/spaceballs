@@ -568,6 +568,105 @@ struct ClosedWindowFilteringTests {
   }
 }
 
+// MARK: - Closed Window Tombstone Tests
+
+/// Reference-type mock so a test can mutate system state between calls on the
+/// same SpaceManager (e.g. simulate a space switch between two refreshes).
+final class MutableCoreMockDataSource: SystemDataSource {
+  var displaySpaces: [[String: Any]] = []
+  var windowList: [[String: Any]] = []
+  var windowSpaces: [Int: [UInt64]] = [:]
+  var liveWindowIDsByPID: [Int: Set<CGWindowID>] = [:]
+
+  func fetchManagedDisplaySpaces() -> [[String: Any]] { displaySpaces }
+  func fetchWindowList() -> [[String: Any]] { windowList }
+  func fetchOnScreenWindowList() -> [[String: Any]] { windowList }
+  func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] { windowSpaces[windowID] ?? [] }
+  func liveAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? { liveWindowIDsByPID[Int(pid)] }
+}
+
+/// A window confirmed closed via AX must STAY hidden after its Space stops being
+/// current. Without a remembered verdict, the ghost is only masked while its
+/// Space is current and reappears on every Space switch.
+@Suite("Closed Window Tombstones")
+struct ClosedWindowTombstoneTests {
+
+  private func makeDataSource(currentSpaceID: Int) -> MutableCoreMockDataSource {
+    let ds = MutableCoreMockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [makeSpaceDict(id: 10, uuid: "space-a"), makeSpaceDict(id: 11, uuid: "space-b")],
+        currentSpaceID: currentSpaceID)
+    ]
+    return ds
+  }
+
+  @Test("Window confirmed closed stays hidden after switching away from its space")
+  func closedWindowStaysHiddenAcrossSpaceSwitch() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "App", name: "Ghost", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [10]]
+    ds.liveWindowIDsByPID = [100: []]  // AX: window 2 is dead
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().isEmpty)  // confirmed closed while space 10 is current
+
+    // Switch to space 11 — the ghost's space is no longer current, so AX can no
+    // longer vouch. The remembered verdict must keep it hidden.
+    ds.displaySpaces = makeDataSource(currentSpaceID: 11).displaySpaces
+    #expect(manager.getAllWindows().isEmpty)
+  }
+
+  @Test("Tombstoned window is unhidden if AX later reports it alive")
+  func tombstoneIsRevertedWhenAXReportsAlive() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "App", name: "Flaky", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [10]]
+    ds.liveWindowIDsByPID = [100: []]  // transient AX glitch: reported dead
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().isEmpty)
+
+    // AX recovers and lists the window again (still on the current space).
+    ds.liveWindowIDsByPID = [100: [2]]
+    #expect(manager.getAllWindows().map(\.id) == [2])
+
+    // And the tombstone is truly gone: switch away, window must remain visible.
+    ds.displaySpaces = makeDataSource(currentSpaceID: 11).displaySpaces
+    #expect(manager.getAllWindows().map(\.id) == [2])
+  }
+
+  @Test("Tombstone is pruned once the window leaves the window list")
+  func tombstoneIsPrunedWhenWindowDisappears() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "App", name: "Ghost", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [10]]
+    ds.liveWindowIDsByPID = [100: []]
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().isEmpty)  // tombstoned
+
+    // The window finally leaves CGWindowList (e.g. app quit) → tombstone pruned.
+    ds.windowList = []
+    #expect(manager.getAllWindows().isEmpty)
+
+    // A NEW window later reuses the same ID on a non-current space. The stale
+    // tombstone must not hide it.
+    ds.windowList = [
+      makeWindowDict(id: 2, ownerName: "Other", name: "Reused", pid: 200, isOnscreen: false)
+    ]
+    ds.windowSpaces = [2: [11]]
+    #expect(manager.getAllWindows().map(\.id) == [2])
+  }
+}
+
 // MARK: - Window-to-Space Grouping Tests
 
 @Suite("Window-to-Space Grouping")
