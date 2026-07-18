@@ -701,6 +701,155 @@ struct ClosedWindowTombstoneTests {
   }
 }
 
+// MARK: - Stable Point Polling Tests
+
+/// `awaitStablePoint` waits for Mission Control's spaces-bar animation to settle
+/// by polling until two consecutive position reads agree, replacing a fixed
+/// worst-case sleep. These tests drive it with scripted read sequences.
+@Suite("Await Stable Point")
+struct AwaitStablePointTests {
+
+  /// Runs the helper over a scripted sequence of reads with a no-op delay.
+  private func run(
+    _ reads: [CGPoint?], tolerance: CGFloat = 2, maxAttempts: Int = 15
+  ) -> (point: CGPoint, isStable: Bool)? {
+    var script = reads
+    return SpaceManager.awaitStablePoint(
+      tolerance: tolerance, maxAttempts: maxAttempts,
+      read: { script.isEmpty ? nil : script.removeFirst() },
+      delay: {}
+    )
+  }
+
+  @Test("Returns the point once two consecutive reads agree within tolerance")
+  func stabilizesOnAgreement() {
+    let result = run([
+      CGPoint(x: 100, y: 50),  // still animating
+      CGPoint(x: 140, y: 50),  // still animating
+      CGPoint(x: 160, y: 50),
+      CGPoint(x: 161, y: 50),  // within tolerance of previous → stable
+      CGPoint(x: 999, y: 99),  // must never be read
+    ])
+    #expect(result?.point == CGPoint(x: 161, y: 50))
+    #expect(result?.isStable == true)
+  }
+
+  @Test("A failed read breaks the consecutive-agreement streak")
+  func nilReadBreaksStreak() {
+    let result = run(
+      [
+        CGPoint(x: 100, y: 50),
+        nil,  // bar mid-relayout: button momentarily missing
+        CGPoint(x: 100, y: 50),  // agrees with first read, but not consecutively
+        CGPoint(x: 100, y: 50),  // now stable
+      ], maxAttempts: 4)
+    #expect(result?.point == CGPoint(x: 100, y: 50))
+    #expect(result?.isStable == true)
+  }
+
+  @Test("Returns the last seen point unstable when attempts run out")
+  func exhaustionReturnsLastSeen() {
+    let result = run(
+      [
+        CGPoint(x: 100, y: 50),
+        CGPoint(x: 200, y: 50),
+        CGPoint(x: 300, y: 50),  // never settles
+      ], maxAttempts: 3)
+    #expect(result?.point == CGPoint(x: 300, y: 50))
+    #expect(result?.isStable == false)
+  }
+
+  @Test("Returns nil when every read fails")
+  func allNilReturnsNil() {
+    #expect(run([nil, nil, nil], maxAttempts: 3) == nil)
+  }
+}
+
+// MARK: - Homing Drag Tests
+
+/// `homingDrag` drives one continuous cursor motion that re-reads the target
+/// position as it travels and bends toward the latest reading — used so the MC
+/// move drag heads straight for the target tile and adapts as the spaces bar
+/// expands and shifts, instead of dragging between fixed waypoints.
+@Suite("Homing Drag")
+struct HomingDragTests {
+
+  @Test("Static target: straight monotonic approach, arrives exactly on target")
+  func staticTargetStraightLine() {
+    var moves: [CGPoint] = []
+    let target = CGPoint(x: 100, y: 0)
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 40, readEvery: 3, maxSteps: 200,
+      read: { target },
+      move: { moves.append($0) }
+    )
+    #expect(arrival == target)
+    #expect(moves.last == target)
+    // Straight line along y == 0, x strictly increasing
+    #expect(moves.allSatisfy { $0.y == 0 })
+    #expect(zip(moves, moves.dropFirst()).allSatisfy { $0.x < $1.x })
+  }
+
+  @Test("Moving target: path bends and arrival is the latest reading")
+  func retargetsMidFlight() {
+    var moves: [CGPoint] = []
+    var reads = 0
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 10, readEvery: 2, maxSteps: 200,
+      read: {
+        reads += 1
+        // Tile shifts right after the bar re-layout, mid-flight
+        return reads < 3 ? CGPoint(x: 100, y: 0) : CGPoint(x: 160, y: 40)
+      },
+      move: { moves.append($0) }
+    )
+    #expect(arrival == CGPoint(x: 160, y: 40))
+    #expect(moves.last == CGPoint(x: 160, y: 40))
+  }
+
+  @Test("Failed re-reads keep homing on the last known target")
+  func nilReadsKeepLastAim() {
+    var reads = 0
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 25, readEvery: 1, maxSteps: 200,
+      read: {
+        reads += 1
+        return reads == 1 ? CGPoint(x: 50, y: 50) : nil  // vanishes mid-relayout
+      },
+      move: { _ in }
+    )
+    #expect(arrival == CGPoint(x: 50, y: 50))
+  }
+
+  @Test("Returns nil without moving when the target is never readable")
+  func nilInitialReadReturnsNil() {
+    var moves: [CGPoint] = []
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 40, readEvery: 3, maxSteps: 200,
+      read: { nil },
+      move: { moves.append($0) }
+    )
+    #expect(arrival == nil)
+    #expect(moves.isEmpty)
+  }
+
+  @Test("Step cap halts an endless chase and reports the current position")
+  func maxStepsHalts() {
+    var reads = 0
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 10, readEvery: 1, maxSteps: 5,
+      read: {
+        reads += 1
+        // Target runs away faster than the cursor can travel
+        return CGPoint(x: CGFloat(reads) * 100, y: 0)
+      },
+      move: { _ in }
+    )
+    #expect(arrival != nil)
+    #expect(arrival.map { $0.x < 100 } == true)  // never caught up, halted early
+  }
+}
+
 // MARK: - Window-to-Space Grouping Tests
 
 @Suite("Window-to-Space Grouping")

@@ -1554,6 +1554,16 @@ public class SpaceManager {
     Thread.sleep(forTimeInterval: 0.1)
   }
 
+  /// Posts a single mouseDragged event (mouse must already be down).
+  static func postMouseDragEvent(at point: CGPoint) {
+    if let drag = CGEvent(
+      mouseEventSource: nil, mouseType: .leftMouseDragged,
+      mouseCursorPosition: point, mouseButton: .left)
+    {
+      drag.post(tap: .cghidEventTap)
+    }
+  }
+
   /// Posts mouseDragged events in steps from one point to another (mouse must already be down).
   static func postMouseDragToPoint(from: CGPoint, to: CGPoint, steps: Int = 15) {
     for i in 1...steps {
@@ -1562,14 +1572,83 @@ public class SpaceManager {
         x: from.x + (to.x - from.x) * t,
         y: from.y + (to.y - from.y) * t
       )
-      if let drag = CGEvent(
-        mouseEventSource: nil, mouseType: .leftMouseDragged,
-        mouseCursorPosition: point, mouseButton: .left)
-      {
-        drag.post(tap: .cghidEventTap)
-      }
+      postMouseDragEvent(at: point)
       Thread.sleep(forTimeInterval: 0.008)
     }
+  }
+
+  /// Drives a homing drag: steps the cursor toward the latest target reading,
+  /// re-reading every `readEvery` steps, so the path bends as the target moves.
+  ///
+  /// Used for the Mission Control move drag — the target tile's final position
+  /// doesn't exist until the drag reaches the spaces bar (arrival triggers
+  /// expansion + placeholder insertion, shifting every tile), so a fixed-endpoint
+  /// drag either aims at a stale coordinate or needs a visible dog-leg through a
+  /// neutral waypoint. Homing yields one continuous, straight-then-bending path.
+  ///
+  /// Returns the arrival point (the last aim reached), the current position if
+  /// `maxSteps` runs out before catching the target, or `nil` (without moving)
+  /// if the target was never readable. A failed re-read keeps the last known aim.
+  static func homingDrag(
+    from start: CGPoint, stepLength: CGFloat = 40, readEvery: Int = 3, maxSteps: Int = 200,
+    read: () -> CGPoint?, move: (CGPoint) -> Void
+  ) -> CGPoint? {
+    guard var aim = read() else { return nil }
+    var current = start
+    var stepsSinceRead = 0
+    for _ in 0..<maxSteps {
+      if stepsSinceRead >= readEvery {
+        if let latest = read() { aim = latest }
+        stepsSinceRead = 0
+      }
+      let dx = aim.x - current.x
+      let dy = aim.y - current.y
+      let distance = (dx * dx + dy * dy).squareRoot()
+      if distance <= stepLength {
+        current = aim
+        move(current)
+        return current
+      }
+      current = CGPoint(
+        x: current.x + dx / distance * stepLength,
+        y: current.y + dy / distance * stepLength
+      )
+      move(current)
+      stepsSinceRead += 1
+    }
+    return current
+  }
+
+  /// Polls `read` until two consecutive readings agree within `tolerance` points,
+  /// calling `delay` between attempts. Used to wait for Mission Control's
+  /// spaces-bar animation to settle instead of sleeping a fixed worst case —
+  /// typically ~3× faster, and the returned coordinate is guaranteed
+  /// post-animation.
+  ///
+  /// Returns the settled point, or the last successful read flagged unstable if
+  /// `maxAttempts` runs out, or `nil` if every read failed. A `nil` read (element
+  /// missing mid-relayout) breaks the consecutive-agreement streak.
+  static func awaitStablePoint(
+    tolerance: CGFloat = 2, maxAttempts: Int = 15,
+    read: () -> CGPoint?, delay: () -> Void
+  ) -> (point: CGPoint, isStable: Bool)? {
+    var previous: CGPoint?
+    var lastSeen: CGPoint?
+    for attempt in 0..<maxAttempts {
+      if attempt > 0 { delay() }
+      guard let point = read() else {
+        previous = nil
+        continue
+      }
+      if let previous,
+        abs(previous.x - point.x) <= tolerance, abs(previous.y - point.y) <= tolerance
+      {
+        return (point, true)
+      }
+      previous = point
+      lastSeen = point
+    }
+    return lastSeen.map { ($0, false) }
   }
 
   /// Posts a mouseUp event at the given point.
@@ -1635,10 +1714,15 @@ public class SpaceManager {
     )
 
     // 3. Activate the window to switch to its space.
+    // When the window is already on a current Space there is no space-switch
+    // animation to wait out — only a brief settle for the activation itself.
+    let currentSpaceIDs = Set(allSpaces.filter(\.isCurrent).map(\.id))
+    let sourceSpaceIDs = dataSource.fetchSpacesForWindow(windowID)
+    let needsSpaceSwitch = !sourceSpaceIDs.contains(where: { currentSpaceIDs.contains($0) })
     try activateWindow(id: windowID)
 
     // 4. Wait for the space switch animation to complete.
-    Thread.sleep(forTimeInterval: 0.8)
+    Thread.sleep(forTimeInterval: needsSpaceSwitch ? 0.8 : 0.25)
 
     // 5. Perform the MC drag. Pass target display so the space button is found
     //    on the correct display (supports cross-display moves).
@@ -1782,23 +1866,22 @@ public class SpaceManager {
         displaySearchOrder = allDisplays
       }
 
-      // Find the approximate location of the target spaces bar BEFORE dragging
-      // (needed to know where to drag toward to trigger placeholder insertion)
-      var spacesBarCenter: CGPoint?
+      // Locate the spaces bar that contains the target space.
+      var barList: AXUIElement?
       for display in displaySearchOrder {
         guard let mcSpaces = Self.axChildWithIdentifier(display, identifier: "mc.spaces"),
           let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
         else { continue }
         let buttons = Self.axChildren(mcSpacesList)
-        if let match = buttons.first(where: {
+        if buttons.contains(where: {
           Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
         }) {
-          spacesBarCenter = Self.axCenter(match)
+          barList = mcSpacesList
           break
         }
       }
 
-      guard let spacesBarCenter else {
+      guard let barList else {
         print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found on any display")
         Self.dismissMissionControl()
         return
@@ -1809,42 +1892,52 @@ public class SpaceManager {
       let nudge = CGPoint(x: windowCenter.x, y: windowCenter.y - 15)
       Self.postMouseDragToPoint(from: windowCenter, to: nudge, steps: 3)
 
-      // Drag toward the target spaces bar to trigger placeholder insertion
-      Self.postMouseDragToPoint(from: nudge, to: spacesBarCenter)
-      Thread.sleep(forTimeInterval: 0.5)
-
-      // Re-query the exact target space position now that the placeholder has
-      // shifted the buttons. AX references are live so re-reading children gives
-      // the current layout.
+      // Homing glide: one continuous motion that re-reads the tile's position
+      // every few steps and bends toward the latest reading. The path heads
+      // straight for the tile's pre-drag position; when the drag crosses into
+      // the bar, MC expands it and shifts every tile, and the re-reads bend the
+      // path onto the tile's new center. AX references are live, so re-reading
+      // the bar's children reflects the current layout.
       var targetButton: AXUIElement?
-      var targetCenter: CGPoint?
-      for display in displaySearchOrder {
-        guard let mcSpaces = Self.axChildWithIdentifier(display, identifier: "mc.spaces"),
-          let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
-        else { continue }
-        let buttons = Self.axChildren(mcSpacesList)
-        if let match = buttons.first(where: {
-          Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
-        }) {
-          targetButton = match
-          targetCenter = Self.axCenter(match)
-          break
-        }
+      let readTargetCenter: () -> CGPoint? = {
+        let buttons = Self.axChildren(barList)
+        guard
+          let match = buttons.first(where: {
+            Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
+          })
+        else { return nil }
+        targetButton = match
+        return Self.axCenter(match)
       }
-
-      guard let targetButton, let targetCenter else {
-        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found after drag")
-        Self.postMouseUp(at: spacesBarCenter)
+      let arrival = Self.homingDrag(
+        from: nudge,
+        read: readTargetCenter,
+        move: { point in
+          Self.postMouseDragEvent(at: point)
+          Thread.sleep(forTimeInterval: 0.008)
+        }
+      )
+      guard let arrival, let targetButton else {
+        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found during drag")
+        Self.postMouseUp(at: nudge)
         Self.dismissMissionControl()
         return
       }
 
-      if verbose { print("  Target: \"\(targetSpaceTitle)\" at \(targetCenter)") }
+      if verbose { print("  Target: \"\(targetSpaceTitle)\" at \(arrival)") }
 
-      // Drag to the exact target space position and drop
-      Self.postMouseDragToPoint(from: spacesBarCenter, to: targetCenter)
-      Thread.sleep(forTimeInterval: 0.2)
-      Self.postMouseUp(at: targetCenter)
+      // Hold until the bar's relayout fully settles, following any residual
+      // shift so the drop lands dead-center.
+      var dropPoint = arrival
+      if let settled = Self.awaitStablePoint(
+        read: readTargetCenter, delay: { Thread.sleep(forTimeInterval: 0.04) }),
+        abs(settled.point.x - dropPoint.x) > 2 || abs(settled.point.y - dropPoint.y) > 2
+      {
+        Self.postMouseDragToPoint(from: dropPoint, to: settled.point, steps: 4)
+        dropPoint = settled.point
+      }
+      Thread.sleep(forTimeInterval: 0.05)
+      Self.postMouseUp(at: dropPoint)
 
       // Click the target space to switch to it (also dismisses MC)
       Thread.sleep(forTimeInterval: 0.3)

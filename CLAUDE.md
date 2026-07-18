@@ -137,15 +137,15 @@ Sources/
 
 Native CGS/SkyLight move APIs (`SLSMoveWindowsToManagedSpace`, `CGSAddWindowsToSpaces`) are blocked on macOS 14.5+ by `connection_holds_rights_on_window` checks. Spaceballs works around this by simulating the drag that a user would perform manually in Mission Control:
 
-1. `activateWindow(id:)` — switch to the window's space (800ms delay for cross-space transitions)
+1. `activateWindow(id:)` — switch to the window's space (800ms delay for cross-space transitions; 250ms when the window is already on a current space)
 2. `CoreDockSendNotification("com.apple.expose.awake")` — open Mission Control
 3. `MissionControlContext` — navigate the Dock's AX hierarchy to find `mc.windows` (window thumbnails) and `mc.spaces.list` (space buttons)
 4. Match the target window by `AXTitle` in `mc.windows`
 5. `postMouseMoveAndGrab()` — hover + mouseDown on thumbnail center
 6. `postMouseDragToPoint()` — nudge 15px to initiate drag state
-7. Wait 500ms for MC to adjust spaces bar, then re-query `mc.spaces.list` positions (they shift during drag)
-8. Match target space by title ("Desktop N"), drag directly to its center
-9. `postMouseUp()` — drop the window
+7. `homingDrag()` — one continuous glide toward the target tile (matched by title "Desktop N"), re-reading its center every few steps and bending toward the latest reading. The path heads for the tile's pre-drag position; when the drag crosses into the bar, MC expands it and shifts every tile, and the re-reads bend the path onto the new center. (Tiles shift on arrival, so any fixed pre-drag coordinate would be stale.)
+8. `awaitStablePoint()` — after arrival, poll the tile's center (~40ms intervals, 600ms cap) until two consecutive reads agree, following any residual shift so the drop is dead-center
+9. `postMouseUp()` — drop the window dead-center on the tile
 10. `AXUIElementPerformAction(kAXPressAction)` on target space button — switch to it
 11. `activateWindow(id:)` — bring the moved window to front
 
