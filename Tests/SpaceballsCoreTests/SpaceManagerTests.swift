@@ -641,6 +641,40 @@ struct ClosedWindowTombstoneTests {
     #expect(manager.getAllWindows().map(\.id) == [2])
   }
 
+  @Test("markWindowClosed hides a window on a non-current Space without an AX verdict")
+  func markWindowClosedHidesCrossSpaceWindow() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    // Window lives on space 11, which is NOT current — AX can't interrogate it,
+    // so only the explicit mark can hide it.
+    ds.windowList = [
+      makeWindowDict(id: 5, ownerName: "App", name: "FarAway", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [5: [11]]
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().map(\.id) == [5])  // visible before the close
+
+    manager.markWindowClosed(id: 5)  // panel Cmd+W on the cross-Space row
+
+    #expect(manager.getAllWindows().isEmpty)
+  }
+
+  @Test("markWindowClosed is reverted when AX shows the window still alive (close failed)")
+  func markWindowClosedRevertsWhenCloseFailed() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 5, ownerName: "App", name: "Unsaved", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [5: [10]]
+    ds.liveWindowIDsByPID = [100: [5]]  // close was blocked (e.g. save dialog) — still live
+
+    let manager = SpaceManager(dataSource: ds)
+    manager.markWindowClosed(id: 5)
+
+    // AX contradicts the mark on the current Space → window comes back.
+    #expect(manager.getAllWindows().map(\.id) == [5])
+  }
+
   @Test("Tombstone is pruned once the window leaves the window list")
   func tombstoneIsPrunedWhenWindowDisappears() {
     let ds = makeDataSource(currentSpaceID: 10)

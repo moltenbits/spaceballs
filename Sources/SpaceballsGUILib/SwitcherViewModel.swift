@@ -1161,6 +1161,9 @@ public final class SwitcherViewModel: ObservableObject {
       }
       windowMRUHistory.removeAll { $0 == windowID }
       pendingCloseWindowIDs.insert(windowID)
+      // Own windows also linger in the window server, and AX can't inspect the
+      // current process — tombstone directly so the row stays gone durably.
+      spaceManager.markWindowClosed(id: windowID)
       removeWindowFromSections(windowID)
       return
     }

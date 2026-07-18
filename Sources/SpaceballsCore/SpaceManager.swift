@@ -61,6 +61,15 @@ public class SpaceManager {
   private var closedWindowTombstones = Set<Int>()
   private let tombstoneLock = NSLock()
 
+  /// Records that a window was just closed by Spaceballs itself, so it is hidden
+  /// immediately and durably — including windows on non-current Spaces, which the
+  /// AX liveness check can't reach. Subject to the same self-correction as
+  /// AX-derived tombstones: if the close turns out to have failed (AX lists the
+  /// window alive, or it shows up on-screen), the verdict is reverted.
+  public func markWindowClosed(id windowID: Int) {
+    tombstoneLock.withLock { _ = closedWindowTombstones.insert(windowID) }
+  }
+
   /// Bundle IDs of `.regular` apps the user wants hidden from Spaceballs.
   public var excludedBundleIDs: Set<String> = []
 
@@ -1303,7 +1312,12 @@ public class SpaceManager {
 
       let result = AXUIElementPerformAction(
         closeButton as! AXUIElement, kAXPressAction as CFString)
-      if result != .success {
+      if result == .success {
+        // The close was delivered — tombstone the ID so the window is hidden
+        // durably even if it lives on a non-current Space (where the window
+        // server will keep listing it and AX can't be consulted).
+        markWindowClosed(id: windowID)
+      } else {
         print("closeWindow: kAXPressAction failed (\(result.rawValue)) for window \(windowID)")
       }
     }
