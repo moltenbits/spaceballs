@@ -143,12 +143,11 @@ Native CGS/SkyLight move APIs (`SLSMoveWindowsToManagedSpace`, `CGSAddWindowsToS
 4. Match the target window by `AXTitle` in `mc.windows`
 5. `postMouseMoveAndGrab()` — hover + mouseDown on thumbnail center
 6. `postMouseDragToPoint()` — nudge 15px to initiate drag state
-7. Drag to the spaces bar's midpoint (NOT a pre-read button position — tiles shift the moment the drag reaches the bar, so any pre-drag button coordinate is stale on arrival)
-8. `awaitStablePoint()` — poll the target button's center (~40ms intervals, 600ms cap) until two consecutive reads agree, i.e. the bar's relayout has settled
-9. Match target space by title ("Desktop N"), glide to its settled center; re-read once and micro-correct if the bar shifted again mid-glide
-10. `postMouseUp()` — drop the window dead-center on the tile
-11. `AXUIElementPerformAction(kAXPressAction)` on target space button — switch to it
-12. `activateWindow(id:)` — bring the moved window to front
+7. `homingDrag()` — one continuous glide toward the target tile (matched by title "Desktop N"), re-reading its center every few steps and bending toward the latest reading. The path heads for the tile's pre-drag position; when the drag crosses into the bar, MC expands it and shifts every tile, and the re-reads bend the path onto the new center. (Tiles shift on arrival, so any fixed pre-drag coordinate would be stale.)
+8. `awaitStablePoint()` — after arrival, poll the tile's center (~40ms intervals, 600ms cap) until two consecutive reads agree, following any residual shift so the drop is dead-center
+9. `postMouseUp()` — drop the window dead-center on the tile
+10. `AXUIElementPerformAction(kAXPressAction)` on target space button — switch to it
+11. `activateWindow(id:)` — bring the moved window to front
 
 **Key details:**
 - Window thumbnails in MC are `AXButton` children of `mc.windows` with `AXTitle` = window title, `AXPosition`/`AXSize` = screen coordinates

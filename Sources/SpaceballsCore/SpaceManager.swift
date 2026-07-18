@@ -1554,6 +1554,16 @@ public class SpaceManager {
     Thread.sleep(forTimeInterval: 0.1)
   }
 
+  /// Posts a single mouseDragged event (mouse must already be down).
+  static func postMouseDragEvent(at point: CGPoint) {
+    if let drag = CGEvent(
+      mouseEventSource: nil, mouseType: .leftMouseDragged,
+      mouseCursorPosition: point, mouseButton: .left)
+    {
+      drag.post(tap: .cghidEventTap)
+    }
+  }
+
   /// Posts mouseDragged events in steps from one point to another (mouse must already be down).
   static func postMouseDragToPoint(from: CGPoint, to: CGPoint, steps: Int = 15) {
     for i in 1...steps {
@@ -1562,14 +1572,51 @@ public class SpaceManager {
         x: from.x + (to.x - from.x) * t,
         y: from.y + (to.y - from.y) * t
       )
-      if let drag = CGEvent(
-        mouseEventSource: nil, mouseType: .leftMouseDragged,
-        mouseCursorPosition: point, mouseButton: .left)
-      {
-        drag.post(tap: .cghidEventTap)
-      }
+      postMouseDragEvent(at: point)
       Thread.sleep(forTimeInterval: 0.008)
     }
+  }
+
+  /// Drives a homing drag: steps the cursor toward the latest target reading,
+  /// re-reading every `readEvery` steps, so the path bends as the target moves.
+  ///
+  /// Used for the Mission Control move drag — the target tile's final position
+  /// doesn't exist until the drag reaches the spaces bar (arrival triggers
+  /// expansion + placeholder insertion, shifting every tile), so a fixed-endpoint
+  /// drag either aims at a stale coordinate or needs a visible dog-leg through a
+  /// neutral waypoint. Homing yields one continuous, straight-then-bending path.
+  ///
+  /// Returns the arrival point (the last aim reached), the current position if
+  /// `maxSteps` runs out before catching the target, or `nil` (without moving)
+  /// if the target was never readable. A failed re-read keeps the last known aim.
+  static func homingDrag(
+    from start: CGPoint, stepLength: CGFloat = 40, readEvery: Int = 3, maxSteps: Int = 200,
+    read: () -> CGPoint?, move: (CGPoint) -> Void
+  ) -> CGPoint? {
+    guard var aim = read() else { return nil }
+    var current = start
+    var stepsSinceRead = 0
+    for _ in 0..<maxSteps {
+      if stepsSinceRead >= readEvery {
+        if let latest = read() { aim = latest }
+        stepsSinceRead = 0
+      }
+      let dx = aim.x - current.x
+      let dy = aim.y - current.y
+      let distance = (dx * dx + dy * dy).squareRoot()
+      if distance <= stepLength {
+        current = aim
+        move(current)
+        return current
+      }
+      current = CGPoint(
+        x: current.x + dx / distance * stepLength,
+        y: current.y + dy / distance * stepLength
+      )
+      move(current)
+      stepsSinceRead += 1
+    }
+    return current
   }
 
   /// Polls `read` until two consecutive readings agree within `tolerance` points,
@@ -1819,13 +1866,8 @@ public class SpaceManager {
         displaySearchOrder = allDisplays
       }
 
-      // Locate the spaces bar that contains the target space. The drag's first
-      // leg aims at the BAR's midpoint, not the button: the moment the dragged
-      // window reaches the bar, MC expands it and inserts a placeholder,
-      // shifting every tile — any pre-drag button coordinate is stale on
-      // arrival (the old behavior, which visibly "hovered off the corner").
+      // Locate the spaces bar that contains the target space.
       var barList: AXUIElement?
-      var barHoverPoint: CGPoint?
       for display in displaySearchOrder {
         guard let mcSpaces = Self.axChildWithIdentifier(display, identifier: "mc.spaces"),
           let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
@@ -1835,12 +1877,11 @@ public class SpaceManager {
           Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
         }) {
           barList = mcSpacesList
-          barHoverPoint = Self.axCenter(mcSpacesList)
           break
         }
       }
 
-      guard let barList, let barHoverPoint else {
+      guard let barList else {
         print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found on any display")
         Self.dismissMissionControl()
         return
@@ -1851,13 +1892,12 @@ public class SpaceManager {
       let nudge = CGPoint(x: windowCenter.x, y: windowCenter.y - 15)
       Self.postMouseDragToPoint(from: windowCenter, to: nudge, steps: 3)
 
-      // Leg 1: into the bar, triggering expansion + placeholder insertion
-      Self.postMouseDragToPoint(from: nudge, to: barHoverPoint)
-
-      // Wait for the bar's relayout to settle by polling the target button's
-      // position until consecutive reads agree (typically 100-300ms), instead
-      // of sleeping the fixed 500ms worst case. AX references are live, so
-      // re-reading the bar's children reflects the current layout.
+      // Homing glide: one continuous motion that re-reads the tile's position
+      // every few steps and bends toward the latest reading. The path heads
+      // straight for the tile's pre-drag position; when the drag crosses into
+      // the bar, MC expands it and shifts every tile, and the re-reads bend the
+      // path onto the tile's new center. AX references are live, so re-reading
+      // the bar's children reflects the current layout.
       var targetButton: AXUIElement?
       let readTargetCenter: () -> CGPoint? = {
         let buttons = Self.axChildren(barList)
@@ -1869,31 +1909,32 @@ public class SpaceManager {
         targetButton = match
         return Self.axCenter(match)
       }
-      let settled = Self.awaitStablePoint(
+      let arrival = Self.homingDrag(
+        from: nudge,
         read: readTargetCenter,
-        delay: { Thread.sleep(forTimeInterval: 0.04) }
+        move: { point in
+          Self.postMouseDragEvent(at: point)
+          Thread.sleep(forTimeInterval: 0.008)
+        }
       )
-      guard let settled, let targetButton else {
-        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found after drag")
-        Self.postMouseUp(at: barHoverPoint)
+      guard let arrival, let targetButton else {
+        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found during drag")
+        Self.postMouseUp(at: nudge)
         Self.dismissMissionControl()
         return
       }
 
-      if verbose { print("  Target: \"\(targetSpaceTitle)\" at \(settled.point)") }
+      if verbose { print("  Target: \"\(targetSpaceTitle)\" at \(arrival)") }
 
-      // Leg 2: glide onto the tile's settled center
-      Self.postMouseDragToPoint(from: barHoverPoint, to: settled.point)
-
-      // Micro-correction: the bar can shift again while the cursor crosses it
-      // (e.g. hover highlights). Re-read once and nudge if drifted, so the drop
-      // is dead-center every time.
-      var dropPoint = settled.point
-      if let corrected = readTargetCenter(),
-        abs(corrected.x - dropPoint.x) > 4 || abs(corrected.y - dropPoint.y) > 4
+      // Hold until the bar's relayout fully settles, following any residual
+      // shift so the drop lands dead-center.
+      var dropPoint = arrival
+      if let settled = Self.awaitStablePoint(
+        read: readTargetCenter, delay: { Thread.sleep(forTimeInterval: 0.04) }),
+        abs(settled.point.x - dropPoint.x) > 2 || abs(settled.point.y - dropPoint.y) > 2
       {
-        Self.postMouseDragToPoint(from: dropPoint, to: corrected, steps: 6)
-        dropPoint = corrected
+        Self.postMouseDragToPoint(from: dropPoint, to: settled.point, steps: 4)
+        dropPoint = settled.point
       }
       Thread.sleep(forTimeInterval: 0.05)
       Self.postMouseUp(at: dropPoint)

@@ -765,6 +765,91 @@ struct AwaitStablePointTests {
   }
 }
 
+// MARK: - Homing Drag Tests
+
+/// `homingDrag` drives one continuous cursor motion that re-reads the target
+/// position as it travels and bends toward the latest reading — used so the MC
+/// move drag heads straight for the target tile and adapts as the spaces bar
+/// expands and shifts, instead of dragging between fixed waypoints.
+@Suite("Homing Drag")
+struct HomingDragTests {
+
+  @Test("Static target: straight monotonic approach, arrives exactly on target")
+  func staticTargetStraightLine() {
+    var moves: [CGPoint] = []
+    let target = CGPoint(x: 100, y: 0)
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 40, readEvery: 3, maxSteps: 200,
+      read: { target },
+      move: { moves.append($0) }
+    )
+    #expect(arrival == target)
+    #expect(moves.last == target)
+    // Straight line along y == 0, x strictly increasing
+    #expect(moves.allSatisfy { $0.y == 0 })
+    #expect(zip(moves, moves.dropFirst()).allSatisfy { $0.x < $1.x })
+  }
+
+  @Test("Moving target: path bends and arrival is the latest reading")
+  func retargetsMidFlight() {
+    var moves: [CGPoint] = []
+    var reads = 0
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 10, readEvery: 2, maxSteps: 200,
+      read: {
+        reads += 1
+        // Tile shifts right after the bar re-layout, mid-flight
+        return reads < 3 ? CGPoint(x: 100, y: 0) : CGPoint(x: 160, y: 40)
+      },
+      move: { moves.append($0) }
+    )
+    #expect(arrival == CGPoint(x: 160, y: 40))
+    #expect(moves.last == CGPoint(x: 160, y: 40))
+  }
+
+  @Test("Failed re-reads keep homing on the last known target")
+  func nilReadsKeepLastAim() {
+    var reads = 0
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 25, readEvery: 1, maxSteps: 200,
+      read: {
+        reads += 1
+        return reads == 1 ? CGPoint(x: 50, y: 50) : nil  // vanishes mid-relayout
+      },
+      move: { _ in }
+    )
+    #expect(arrival == CGPoint(x: 50, y: 50))
+  }
+
+  @Test("Returns nil without moving when the target is never readable")
+  func nilInitialReadReturnsNil() {
+    var moves: [CGPoint] = []
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 40, readEvery: 3, maxSteps: 200,
+      read: { nil },
+      move: { moves.append($0) }
+    )
+    #expect(arrival == nil)
+    #expect(moves.isEmpty)
+  }
+
+  @Test("Step cap halts an endless chase and reports the current position")
+  func maxStepsHalts() {
+    var reads = 0
+    let arrival = SpaceManager.homingDrag(
+      from: CGPoint(x: 0, y: 0), stepLength: 10, readEvery: 1, maxSteps: 5,
+      read: {
+        reads += 1
+        // Target runs away faster than the cursor can travel
+        return CGPoint(x: CGFloat(reads) * 100, y: 0)
+      },
+      move: { _ in }
+    )
+    #expect(arrival != nil)
+    #expect(arrival.map { $0.x < 100 } == true)  // never caught up, halted early
+  }
+}
+
 // MARK: - Window-to-Space Grouping Tests
 
 @Suite("Window-to-Space Grouping")
