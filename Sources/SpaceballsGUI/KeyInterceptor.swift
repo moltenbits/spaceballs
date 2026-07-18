@@ -92,9 +92,8 @@ final class KeyInterceptor {
     if AXIsProcessTrusted() {
       createEventTap()
     } else {
-      // Prompt the user to grant Accessibility permission
-      let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-      AXIsProcessTrustedWithOptions(options)
+      // Prompting is owned by PermissionsCoordinator (launch + every activation);
+      // this just waits for the grant and brings the tap up.
       print(
         "Waiting for Accessibility permission... Grant access in System Settings → Privacy & Security → Accessibility."
       )
