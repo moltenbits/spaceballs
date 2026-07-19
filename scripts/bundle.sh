@@ -52,6 +52,21 @@ stamp_version() {
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$plist_path"
 }
 
+# Dev builds get their own bundle identifier (.dev suffix) and display name so
+# they never share TCC permission records with the notarized release build.
+# TCC keys grants by bundle id + the code-signing requirement captured at grant
+# time; reusing one id across different signatures (ad-hoc / "Spacebar Dev" /
+# Developer ID) leaves stale mismatched entries that suppress prompts and can
+# even block the app from launching until the entries are manually removed.
+stamp_dev_identity() {
+    local plist_path="$1"
+    local bundle_id bundle_name
+    bundle_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist_path")"
+    bundle_name="$(/usr/libexec/PlistBuddy -c "Print :CFBundleName" "$plist_path")"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${bundle_id}.dev" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName ${bundle_name} Dev" "$plist_path"
+}
+
 create_bundle() {
     local app_name="$1"
     local product_name="$2"
@@ -69,6 +84,9 @@ create_bundle() {
     cp "$BUILD_DIR/$BUILD_CONFIG/$product_name" "$macos_dir/spaceballs"
     cp "$RESOURCES_DIR/$plist_name" "$contents_dir/Info.plist"
     stamp_version "$contents_dir/Info.plist"
+    if [[ "$DISTRIBUTION_SIGNING" != true ]]; then
+        stamp_dev_identity "$contents_dir/Info.plist"
+    fi
     echo -n "APPL????" > "$contents_dir/PkgInfo"
 }
 
