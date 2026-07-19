@@ -114,11 +114,24 @@ sign_bundle() {
     codesign --verify --deep --strict --verbose=2 "$app_bundle"
 }
 
-GUI_APP="$BUILD_DIR/$BUILD_CONFIG/Spaceballs.app"
-CLI_APP="$BUILD_DIR/$BUILD_CONFIG/Spaceballs-CLI.app"
+# Dev builds are a fully separate app from the notarized release: distinct
+# bundle name ("Spaceballs Dev.app"), bundle identifier (.dev), and therefore
+# TCC records, settings domain, and Launch Services entry. The permission panes
+# label rows by app name, so the two are visually unambiguous, and both can be
+# installed side by side.
+if [[ "$DISTRIBUTION_SIGNING" == true ]]; then
+    GUI_APP_NAME="Spaceballs"
+    CLI_APP_NAME="Spaceballs-CLI"
+else
+    GUI_APP_NAME="Spaceballs Dev"
+    CLI_APP_NAME="Spaceballs-CLI Dev"
+fi
 
-create_bundle "Spaceballs" "spaceballs-gui" "Info.plist"
-create_bundle "Spaceballs-CLI" "spaceballs" "Info-CLI.plist"
+GUI_APP="$BUILD_DIR/$BUILD_CONFIG/$GUI_APP_NAME.app"
+CLI_APP="$BUILD_DIR/$BUILD_CONFIG/$CLI_APP_NAME.app"
+
+create_bundle "$GUI_APP_NAME" "spaceballs-gui" "Info.plist"
+create_bundle "$CLI_APP_NAME" "spaceballs" "Info-CLI.plist"
 
 COMPLETIONS_DIR="$CLI_APP/Contents/Resources/completions"
 mkdir -p "$COMPLETIONS_DIR"

@@ -8,8 +8,11 @@ PREFIX ?= /usr/local
 APP_INSTALL_PATH ?= /Applications
 BIN_INSTALL_PATH = $(PREFIX)/bin
 LIB_INSTALL_PATH = $(PREFIX)/lib/spaceballs
-GUI_APP_RELEASE = .build/release/Spaceballs.app
-CLI_APP_RELEASE = .build/release/Spaceballs-CLI.app
+# Local (non-distribution) bundles are a separate "Dev" app — distinct name,
+# bundle id, TCC records, and settings from the notarized release, which can
+# be installed alongside it. CI/release paths use the plain names.
+GUI_APP_RELEASE = .build/release/Spaceballs Dev.app
+CLI_APP_RELEASE = .build/release/Spaceballs-CLI Dev.app
 
 help: ## This help screen
 	@IFS=$$'\n' ; \
@@ -60,7 +63,7 @@ notarize: dist
 
 everything: ## Kill + release bundle + install + open the installed GUI app
 everything: kill install
-	@open -n "$(APP_INSTALL_PATH)/Spaceballs.app"
+	@open -n "$(APP_INSTALL_PATH)/Spaceballs Dev.app"
 
 run: ## Build + run CLI (text output)
 	swift build $(DEBUG_FLAGS) --product spaceballs
@@ -70,8 +73,8 @@ run.json: ## Build + run CLI (JSON output)
 	swift build $(DEBUG_FLAGS) --product spaceballs
 	swift run $(SWIFT_BUILD_FLAGS) spaceballs --json
 
-kill: ## Kill running Spaceballs.app
-	@pkill -INT -f "Spaceballs.app" 2>/dev/null || true
+kill: ## Kill the running dev app
+	@pkill -INT -f "Spaceballs Dev.app" 2>/dev/null || true
 	@sleep 1
 
 clean: ## Remove build artifacts
@@ -87,28 +90,28 @@ format: ## Format code
 lint: ## Lint code
 	swift-format lint -r Sources/ Tests/
 
-install: ## Install app bundles and CLI symlink (may require sudo)
+install: ## Install dev app bundles and CLI symlink (may require sudo)
 install: bundle-release
-	@echo "Installing Spaceballs.app to $(APP_INSTALL_PATH)..."
+	@echo "Installing Spaceballs Dev.app to $(APP_INSTALL_PATH)..."
 	@if [ -w "$(APP_INSTALL_PATH)" ]; then \
-		rm -rf "$(APP_INSTALL_PATH)/Spaceballs.app"; \
+		rm -rf "$(APP_INSTALL_PATH)/Spaceballs Dev.app"; \
 		cp -R "$(GUI_APP_RELEASE)" "$(APP_INSTALL_PATH)/"; \
 	else \
-		sudo rm -rf "$(APP_INSTALL_PATH)/Spaceballs.app"; \
+		sudo rm -rf "$(APP_INSTALL_PATH)/Spaceballs Dev.app"; \
 		sudo cp -R "$(GUI_APP_RELEASE)" "$(APP_INSTALL_PATH)/"; \
 	fi
-	@echo "Installing Spaceballs-CLI.app to $(LIB_INSTALL_PATH)..."
+	@echo "Installing Spaceballs-CLI Dev.app to $(LIB_INSTALL_PATH)..."
 	@if [ -w "$(PREFIX)" ]; then \
 		mkdir -p "$(LIB_INSTALL_PATH)"; \
-		rm -rf "$(LIB_INSTALL_PATH)/Spaceballs-CLI.app"; \
+		rm -rf "$(LIB_INSTALL_PATH)/Spaceballs-CLI Dev.app"; \
 		cp -R "$(CLI_APP_RELEASE)" "$(LIB_INSTALL_PATH)/"; \
 		mkdir -p "$(BIN_INSTALL_PATH)"; \
-		ln -sf "$(LIB_INSTALL_PATH)/Spaceballs-CLI.app/Contents/MacOS/spaceballs" "$(BIN_INSTALL_PATH)/spaceballs"; \
+		ln -sf "$(LIB_INSTALL_PATH)/Spaceballs-CLI Dev.app/Contents/MacOS/spaceballs" "$(BIN_INSTALL_PATH)/spaceballs"; \
 	else \
 		sudo mkdir -p "$(LIB_INSTALL_PATH)" "$(BIN_INSTALL_PATH)"; \
-		sudo rm -rf "$(LIB_INSTALL_PATH)/Spaceballs-CLI.app"; \
+		sudo rm -rf "$(LIB_INSTALL_PATH)/Spaceballs-CLI Dev.app"; \
 		sudo cp -R "$(CLI_APP_RELEASE)" "$(LIB_INSTALL_PATH)/"; \
-		sudo ln -sf "$(LIB_INSTALL_PATH)/Spaceballs-CLI.app/Contents/MacOS/spaceballs" "$(BIN_INSTALL_PATH)/spaceballs"; \
+		sudo ln -sf "$(LIB_INSTALL_PATH)/Spaceballs-CLI Dev.app/Contents/MacOS/spaceballs" "$(BIN_INSTALL_PATH)/spaceballs"; \
 	fi
 	@echo "Installed! Run 'hash -r' to refresh your shell, then 'spaceballs --help' to get started."
 
