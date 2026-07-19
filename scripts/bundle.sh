@@ -129,6 +129,14 @@ mkdir -p "$COMPLETIONS_DIR"
 sign_bundle "$GUI_APP"
 sign_bundle "$CLI_APP"
 
+# Keep the build products out of Launch Services: they exist only to be copied
+# to /Applications by `make install`. If they stay registered, Spotlight and
+# launchers (Raycast, etc.) can resolve and launch the .build copy — a
+# different path with its own TCC attribution — instead of the installed app.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+"$LSREGISTER" -u "$GUI_APP" >/dev/null 2>&1 || true
+"$LSREGISTER" -u "$CLI_APP" >/dev/null 2>&1 || true
+
 echo ""
 echo "Bundles created:"
 echo "  $GUI_APP"
