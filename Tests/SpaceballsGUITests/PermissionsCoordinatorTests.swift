@@ -31,12 +31,28 @@ private final class Harness {
 @Suite("Permissions Coordinator")
 struct PermissionsCoordinatorTests {
 
-  @Test("Prompts for both permissions when both are missing")
-  func promptsBothWhenMissing() {
+  @Test("Prompts ONLY Accessibility when both are missing")
+  func promptsOnlyAccessibilityWhenBothMissing() {
+    // macOS shows the Screen Recording consent dialog at most once per process,
+    // and a request made while another TCC dialog is up is silently dropped —
+    // firing both at once wastes the one SR prompt and forces a relaunch.
     let h = Harness()
     let coordinator = h.makeCoordinator()
 
     coordinator.checkAndPrompt()
+
+    #expect(h.accessibilityPrompts == 1)
+    #expect(h.screenRecordingPrompts == 0)
+  }
+
+  @Test("Prompts Screen Recording once Accessibility is granted, no relaunch needed")
+  func screenRecordingFollowsAccessibilityGrant() {
+    let h = Harness()
+    let coordinator = h.makeCoordinator()
+
+    coordinator.checkAndPrompt()  // AX prompted, SR held back
+    h.accessibilityTrusted = true  // user grants AX
+    coordinator.checkAndPrompt()  // re-check (keyInterceptorReady / activation)
 
     #expect(h.accessibilityPrompts == 1)
     #expect(h.screenRecordingPrompts == 1)
@@ -55,19 +71,41 @@ struct PermissionsCoordinatorTests {
     #expect(h.screenRecordingPrompts == 0)
   }
 
-  @Test("Screen Recording is prompted even when Accessibility is missing")
-  func screenRecordingNotGatedOnAccessibility() {
-    // Regression guard: the old flow requested Screen Recording only after the
-    // event tap existed (i.e. after Accessibility was granted), so a machine
-    // missing both never registered in the Screen Recording pane.
+  @Test("Grant detection fires exactly once after SR was seen missing then granted")
+  func screenRecordingGrantDetectedOnce() {
     let h = Harness()
-    h.accessibilityTrusted = false
-    h.screenRecordingGranted = false
+    h.accessibilityTrusted = true
+    let coordinator = h.makeCoordinator()
+
+    coordinator.checkAndPrompt()  // SR missing, observed + prompted
+    #expect(coordinator.didScreenRecordingJustBecomeGranted() == false)  // still missing
+
+    h.screenRecordingGranted = true  // user toggles it on in System Settings
+    #expect(coordinator.didScreenRecordingJustBecomeGranted() == true)  // one-shot
+    #expect(coordinator.didScreenRecordingJustBecomeGranted() == false)  // consumed
+  }
+
+  @Test("Grant detection never fires when SR was granted from the start")
+  func grantDetectionSilentWhenAlwaysGranted() {
+    let h = Harness()
+    h.accessibilityTrusted = true
+    h.screenRecordingGranted = true
     let coordinator = h.makeCoordinator()
 
     coordinator.checkAndPrompt()
+    #expect(coordinator.didScreenRecordingJustBecomeGranted() == false)
+  }
 
-    #expect(h.screenRecordingPrompts == 1)
+  @Test("Grant detection observes SR missing even while Accessibility gates the prompt")
+  func grantDetectionObservesWhileGatedOnAccessibility() {
+    // Both missing: SR isn't prompted yet (sequenced behind AX), but the
+    // missing state is still recorded so a later grant triggers the restart.
+    let h = Harness()
+    let coordinator = h.makeCoordinator()
+
+    coordinator.checkAndPrompt()  // AX prompted; SR observed missing, not prompted
+    h.screenRecordingGranted = true
+    #expect(coordinator.didScreenRecordingJustBecomeGranted() == true)
   }
 
   @Test("Prompts only for the permission that is missing")
@@ -85,6 +123,7 @@ struct PermissionsCoordinatorTests {
   @Test("Repeated checks within the prompt interval do not re-prompt")
   func debouncesWithinInterval() {
     let h = Harness()
+    h.accessibilityTrusted = true  // isolate the SR debounce
     let coordinator = h.makeCoordinator(promptInterval: 60)
 
     coordinator.checkAndPrompt()
@@ -93,7 +132,6 @@ struct PermissionsCoordinatorTests {
     h.advance(by: 30)
     coordinator.checkAndPrompt()
 
-    #expect(h.accessibilityPrompts == 1)
     #expect(h.screenRecordingPrompts == 1)
   }
 
@@ -107,7 +145,7 @@ struct PermissionsCoordinatorTests {
     coordinator.checkAndPrompt()
 
     #expect(h.accessibilityPrompts == 2)
-    #expect(h.screenRecordingPrompts == 2)
+    #expect(h.screenRecordingPrompts == 0)  // still sequenced behind AX
   }
 
   @Test("Prompts again immediately when a permission is lost after being granted")
