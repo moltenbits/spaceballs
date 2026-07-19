@@ -432,6 +432,11 @@ public class SpaceManager {
       return
     }
 
+    // Snapshot UUIDs before creating: the new spaces are identified by diff,
+    // never by list position (getAllSpaces enumerates display-by-display, so a
+    // new space lands mid-list on multi-display setups).
+    let beforeUUIDs = Set(getAllSpaces().map(\.uuid))
+
     createSpace(count: missingNames.count) { [weak self] result in
       guard let self else {
         completion(0)
@@ -445,13 +450,10 @@ public class SpaceManager {
         return
       }
 
-      // Wait for macOS to settle, then assign names to new unnamed spaces
+      // Wait for macOS to settle, then name exactly the spaces that appeared
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-        let allSpaces = self.getAllSpaces().filter { $0.type == .desktop }
-        let alreadyNamed = Set(spaceNameStore.allCustomNames().keys)
-        let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
-
-        for (name, space) in zip(missingNames, unnamedSpaces.suffix(created)) {
+        let newSpaces = Self.newlyCreatedSpaces(before: beforeUUIDs, after: self.getAllSpaces())
+        for (name, space) in zip(missingNames, newSpaces) {
           spaceNameStore.setCustomName(name, forSpaceUUID: space.uuid)
         }
 
@@ -474,32 +476,38 @@ public class SpaceManager {
     let missingNames = defaultNames.filter { !existingNames.contains($0) }
     guard !missingNames.isEmpty else { return 0 }
 
+    let beforeUUIDs = Set(getAllSpaces().map(\.uuid))
     try createSpaceSync(count: missingNames.count)
     Thread.sleep(forTimeInterval: 1.0)
 
-    let allSpaces = getAllSpaces().filter { $0.type == .desktop }
-    let alreadyNamed = Set(spaceNameStore.allCustomNames().keys)
-    let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
-
-    for (name, space) in zip(missingNames, unnamedSpaces.suffix(missingNames.count)) {
+    let newSpaces = Self.newlyCreatedSpaces(before: beforeUUIDs, after: getAllSpaces())
+    for (name, space) in zip(missingNames, newSpaces) {
       spaceNameStore.setCustomName(name, forSpaceUUID: space.uuid)
     }
 
-    return missingNames.count
+    return newSpaces.count
   }
 
   /// Creates a single space and assigns a name to it.
   public func createNamedSpaceSync(name: String, spaceNameStore: SpaceNameStoring) throws {
+    let beforeUUIDs = Set(getAllSpaces().map(\.uuid))
     try createSpaceSync(count: 1)
     Thread.sleep(forTimeInterval: 1.0)
 
-    let allSpaces = getAllSpaces().filter { $0.type == .desktop }
-    let alreadyNamed = Set(spaceNameStore.allCustomNames().keys)
-    let unnamedSpaces = allSpaces.filter { !alreadyNamed.contains($0.uuid) }
-
-    if let newSpace = unnamedSpaces.last {
+    if let newSpace = Self.newlyCreatedSpaces(before: beforeUUIDs, after: getAllSpaces()).first {
       spaceNameStore.setCustomName(name, forSpaceUUID: newSpace.uuid)
     }
+  }
+
+  /// Returns the desktop spaces in `after` whose UUIDs are not in `before` —
+  /// i.e. the spaces created between the two snapshots — in enumeration order.
+  ///
+  /// This is the only safe way to identify a just-created space: enumeration is
+  /// display-by-display, so a new space appears at the end of its own display's
+  /// sub-list (mid-list globally), and position-based guesses ("last unnamed
+  /// space") assign workspace names to unrelated spaces on other displays.
+  static func newlyCreatedSpaces(before: Set<String>, after: [SpaceInfo]) -> [SpaceInfo] {
+    after.filter { $0.type == .desktop && !before.contains($0.uuid) }
   }
 
   /// Closes a space by ID and removes its name mapping.
@@ -530,11 +538,14 @@ public class SpaceManager {
 
   // MARK: - Space Creation
 
-  /// Creates a new desktop Space on the focused display via the Dock's
-  /// accessibility interface. Opens Mission Control, finds the "Add Desktop"
-  /// button in the Spaces Bar, and clicks it.
+  /// Creates a new desktop Space via the Dock's accessibility interface.
+  /// Opens Mission Control, finds the "Add Desktop" button in the Spaces Bar,
+  /// and clicks it.
   ///
   /// - Parameter count: Number of spaces to create (default 1).
+  /// - Parameter screenNumber: Display to create the space on. Defaults to the
+  ///   PRIMARY display — spaces on external displays are destroyed when the
+  ///   display disconnects, collapsing their windows into a surviving space.
   /// - Parameter completion: Called on the main queue when done, with success/failure.
   public func createSpace(
     count: Int = 1, screenNumber: CGDirectDisplayID? = nil,
@@ -579,14 +590,20 @@ public class SpaceManager {
       Thread.sleep(forTimeInterval: 0.3)
 
       // Find the add button in the Spaces Bar on the target display.
+      // With no explicit display, target the PRIMARY display (the menu-bar
+      // display, normally the built-in one): spaces created on an external
+      // display are destroyed when that display disconnects and macOS dumps
+      // their windows into a surviving space, so workspace/default spaces must
+      // never live on removable displays.
       let addButton: AXUIElement? = {
-        // If a specific display is requested, find its mc.display first
+        let requestedScreen = screenNumber ?? CGMainDisplayID()
         let displayElements: [AXUIElement]
-        if let screenNumber,
-          let targetDisplay = Self.axChildMatchingDisplay(mcGroup, screenNumber: screenNumber)
+        if let targetDisplay = Self.axChildMatchingDisplay(
+          mcGroup, screenNumber: requestedScreen)
         {
           displayElements = [targetDisplay]
         } else {
+          // Fall back to scanning every display's bar if the AX match fails.
           displayElements = Self.axChildren(mcGroup).filter {
             Self.axStringAttribute($0, name: "AXIdentifier") == "mc.display"
           }
