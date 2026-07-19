@@ -136,6 +136,18 @@ jobs:
             app "Spaceballs.app"
             binary "Spaceballs-CLI.app/Contents/MacOS/spaceballs"
 
+            # Quit the running instance before brew replaces the bundle on
+            # upgrade/uninstall — otherwise the old version keeps running from
+            # its memory-mapped (deleted) binary until manually restarted.
+            uninstall quit: "com.moltenbits.spaceballs"
+
+            # Relaunch after install/upgrade (-g: without stealing focus), so
+            # an upgrade is quit -> replace -> relaunch with no manual step.
+            postflight do
+              system_command "/usr/bin/open",
+                             args: ["-g", "-a", "#{appdir}/Spaceballs.app"]
+            end
+
             caveats <<~EOS
               Spaceballs requires Accessibility and Screen Recording permissions.
               Enable them in System Settings > Privacy & Security after installation.
