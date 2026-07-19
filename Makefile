@@ -63,7 +63,7 @@ notarize: dist
 
 everything: ## Kill + release bundle + install + open the installed GUI app
 everything: kill install
-	@open -n "$(APP_INSTALL_PATH)/Spaceballs Dev.app"
+	@open "$(APP_INSTALL_PATH)/Spaceballs Dev.app"
 
 run: ## Build + run CLI (text output)
 	swift build $(DEBUG_FLAGS) --product spaceballs
