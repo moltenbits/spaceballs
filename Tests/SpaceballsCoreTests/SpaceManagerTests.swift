@@ -850,6 +850,64 @@ struct HomingDragTests {
   }
 }
 
+// MARK: - Newly Created Space Detection Tests
+
+/// After creating a Space, the workspace-name assignment must identify the NEW
+/// space by UUID diff (snapshot before vs. enumeration after) — never by list
+/// position. `getAllSpaces()` enumerates display-by-display, so a new space
+/// lands at the end of its own display's sub-list, mid-list globally; the old
+/// "last unnamed space" heuristic assigned workspace names to unrelated spaces
+/// on later-enumerated displays.
+@Suite("Newly Created Space Detection")
+struct NewlyCreatedSpaceTests {
+
+  private func space(_ uuid: String, id: UInt64, type: CGSSpaceType = .desktop) -> SpaceInfo {
+    SpaceInfo(id: id, uuid: uuid, type: type, displayUUID: "display", isCurrent: false)
+  }
+
+  @Test("Identifies a mid-list new space, not pre-existing unnamed spaces after it")
+  func identifiesMidListNewSpace() {
+    // Display 1: [A, NEW], Display 2: [B], Display 3: [C] — enumeration order.
+    // The old suffix-based heuristic would have picked C (last in list).
+    let before: Set<String> = ["A", "B", "C"]
+    let after = [
+      space("A", id: 1), space("NEW", id: 130),
+      space("B", id: 2), space("C", id: 128),
+    ]
+    let created = SpaceManager.newlyCreatedSpaces(before: before, after: after)
+    #expect(created.map(\.uuid) == ["NEW"])
+  }
+
+  @Test("Returns empty when no space was actually created")
+  func emptyWhenNothingNew() {
+    let before: Set<String> = ["A", "B"]
+    let after = [space("A", id: 1), space("B", id: 2)]
+    #expect(SpaceManager.newlyCreatedSpaces(before: before, after: after).isEmpty)
+  }
+
+  @Test("Multiple new spaces are returned in enumeration order")
+  func multipleNewSpacesInOrder() {
+    let before: Set<String> = ["A"]
+    let after = [
+      space("A", id: 1), space("N1", id: 10), space("N2", id: 11),
+    ]
+    let created = SpaceManager.newlyCreatedSpaces(before: before, after: after)
+    #expect(created.map(\.uuid) == ["N1", "N2"])
+  }
+
+  @Test("Ignores non-desktop spaces (e.g. a fullscreen space that appeared)")
+  func ignoresNonDesktopSpaces() {
+    let before: Set<String> = ["A"]
+    let after = [
+      space("A", id: 1),
+      space("FS", id: 20, type: .fullscreen),
+      space("NEW", id: 21),
+    ]
+    let created = SpaceManager.newlyCreatedSpaces(before: before, after: after)
+    #expect(created.map(\.uuid) == ["NEW"])
+  }
+}
+
 // MARK: - Window-to-Space Grouping Tests
 
 @Suite("Window-to-Space Grouping")

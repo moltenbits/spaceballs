@@ -52,6 +52,21 @@ stamp_version() {
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$plist_path"
 }
 
+# Dev builds get their own bundle identifier (.dev suffix) and display name so
+# they never share TCC permission records with the notarized release build.
+# TCC keys grants by bundle id + the code-signing requirement captured at grant
+# time; reusing one id across different signatures (ad-hoc / "Spacebar Dev" /
+# Developer ID) leaves stale mismatched entries that suppress prompts and can
+# even block the app from launching until the entries are manually removed.
+stamp_dev_identity() {
+    local plist_path="$1"
+    local bundle_id bundle_name
+    bundle_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist_path")"
+    bundle_name="$(/usr/libexec/PlistBuddy -c "Print :CFBundleName" "$plist_path")"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${bundle_id}.dev" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName ${bundle_name} Dev" "$plist_path"
+}
+
 create_bundle() {
     local app_name="$1"
     local product_name="$2"
@@ -69,6 +84,9 @@ create_bundle() {
     cp "$BUILD_DIR/$BUILD_CONFIG/$product_name" "$macos_dir/spaceballs"
     cp "$RESOURCES_DIR/$plist_name" "$contents_dir/Info.plist"
     stamp_version "$contents_dir/Info.plist"
+    if [[ "$DISTRIBUTION_SIGNING" != true ]]; then
+        stamp_dev_identity "$contents_dir/Info.plist"
+    fi
     echo -n "APPL????" > "$contents_dir/PkgInfo"
 }
 
@@ -96,11 +114,24 @@ sign_bundle() {
     codesign --verify --deep --strict --verbose=2 "$app_bundle"
 }
 
-GUI_APP="$BUILD_DIR/$BUILD_CONFIG/Spaceballs.app"
-CLI_APP="$BUILD_DIR/$BUILD_CONFIG/Spaceballs-CLI.app"
+# Dev builds are a fully separate app from the notarized release: distinct
+# bundle name ("Spaceballs Dev.app"), bundle identifier (.dev), and therefore
+# TCC records, settings domain, and Launch Services entry. The permission panes
+# label rows by app name, so the two are visually unambiguous, and both can be
+# installed side by side.
+if [[ "$DISTRIBUTION_SIGNING" == true ]]; then
+    GUI_APP_NAME="Spaceballs"
+    CLI_APP_NAME="Spaceballs-CLI"
+else
+    GUI_APP_NAME="Spaceballs Dev"
+    CLI_APP_NAME="Spaceballs-CLI Dev"
+fi
 
-create_bundle "Spaceballs" "spaceballs-gui" "Info.plist"
-create_bundle "Spaceballs-CLI" "spaceballs" "Info-CLI.plist"
+GUI_APP="$BUILD_DIR/$BUILD_CONFIG/$GUI_APP_NAME.app"
+CLI_APP="$BUILD_DIR/$BUILD_CONFIG/$CLI_APP_NAME.app"
+
+create_bundle "$GUI_APP_NAME" "spaceballs-gui" "Info.plist"
+create_bundle "$CLI_APP_NAME" "spaceballs" "Info-CLI.plist"
 
 COMPLETIONS_DIR="$CLI_APP/Contents/Resources/completions"
 mkdir -p "$COMPLETIONS_DIR"
@@ -110,6 +141,14 @@ mkdir -p "$COMPLETIONS_DIR"
 
 sign_bundle "$GUI_APP"
 sign_bundle "$CLI_APP"
+
+# Keep the build products out of Launch Services: they exist only to be copied
+# to /Applications by `make install`. If they stay registered, Spotlight and
+# launchers (Raycast, etc.) can resolve and launch the .build copy — a
+# different path with its own TCC attribution — instead of the installed app.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+"$LSREGISTER" -u "$GUI_APP" >/dev/null 2>&1 || true
+"$LSREGISTER" -u "$CLI_APP" >/dev/null 2>&1 || true
 
 echo ""
 echo "Bundles created:"

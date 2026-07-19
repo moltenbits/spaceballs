@@ -44,9 +44,10 @@ struct WindowCommand: ParsableCommand {
   /// Sends a distributed notification to the running GUI and waits for a reply.
   /// Returns true if the GUI handled it, false if the GUI isn't running.
   private func delegateToRunningGUI() throws -> Bool {
-    let guiApps = NSRunningApplication.runningApplications(
-      withBundleIdentifier: "com.moltenbits.spaceballs"
-    )
+    // Dev builds carry a ".dev"-suffixed bundle identifier (separate TCC
+    // identity from the notarized release) — accept either GUI.
+    let guiApps = ["com.moltenbits.spaceballs", "com.moltenbits.spaceballs.dev"]
+      .flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
     guard !guiApps.isEmpty else { return false }
 
     let center = DistributedNotificationCenter.default()

@@ -42,14 +42,16 @@ jobs:
       - name: Release bundle + CLI smoke test
         run: |
           chmod +x scripts/*.sh
+          # CI has no distribution credentials, so bundle.sh produces the dev
+          # bundle names — the same artifact a local `make bundle-release` makes.
           ./scripts/bundle.sh release
-          test -x .build/release/Spaceballs.app/Contents/MacOS/spaceballs
-          test -x .build/release/Spaceballs-CLI.app/Contents/MacOS/spaceballs
-          test -f .build/release/Spaceballs-CLI.app/Contents/Resources/completions/_spaceballs
-          codesign --verify --deep --strict .build/release/Spaceballs.app
-          codesign --verify --deep --strict .build/release/Spaceballs-CLI.app
-          .build/release/Spaceballs-CLI.app/Contents/MacOS/spaceballs --version
-          .build/release/Spaceballs-CLI.app/Contents/MacOS/spaceballs --help
+          test -x ".build/release/Spaceballs Dev.app/Contents/MacOS/spaceballs"
+          test -x ".build/release/Spaceballs-CLI Dev.app/Contents/MacOS/spaceballs"
+          test -f ".build/release/Spaceballs-CLI Dev.app/Contents/Resources/completions/_spaceballs"
+          codesign --verify --deep --strict ".build/release/Spaceballs Dev.app"
+          codesign --verify --deep --strict ".build/release/Spaceballs-CLI Dev.app"
+          ".build/release/Spaceballs-CLI Dev.app/Contents/MacOS/spaceballs" --version
+          ".build/release/Spaceballs-CLI Dev.app/Contents/MacOS/spaceballs" --help
 
   lint:
     name: Lint

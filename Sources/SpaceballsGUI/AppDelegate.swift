@@ -21,9 +21,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   var windowLayoutStore: WindowLayoutStore!
   private var windowLayoutCoordinator: WindowLayoutCoordinator!
   private var permissionsCoordinator: PermissionsCoordinator!
+  private var permissionsGrantTimer: Timer?
 
   func applicationDidBecomeActive(_ notification: Notification) {
     permissionsCoordinator?.checkAndPrompt()
+  }
+
+  /// Relaunches the app: spawns a detached shell that waits for this process
+  /// to exit, then reopens the bundle, and terminates. Used after a Screen
+  /// Recording grant, which only applies to a fresh process.
+  private static func relaunchFromBundle() {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [
+      "-c", "sleep 1.5; /usr/bin/open \"\(Bundle.main.bundlePath)\"",
+    ]
+    try? process.run()
+    NSApp.terminate(nil)
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
@@ -75,6 +89,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       promptScreenRecording: { CGRequestScreenCaptureAccess() }
     )
     permissionsCoordinator.checkAndPrompt()
+
+    // A Screen Recording grant only takes effect on a fresh WindowServer
+    // connection, and the system's "Quit & Reopen" reliably quits but often
+    // never reopens. Watch for the grant and relaunch ourselves instead.
+    permissionsGrantTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) {
+      [weak self] _ in
+      guard let self, self.permissionsCoordinator.didScreenRecordingJustBecomeGranted() else {
+        return
+      }
+      self.permissionsGrantTimer?.invalidate()
+      self.permissionsGrantTimer = nil
+      self.statusHUD.show(message: "Screen Recording granted — restarting Spaceballs…")
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+        Self.relaunchFromBundle()
+      }
+    }
 
     appSettings.$keyBindings
       .dropFirst()

@@ -38,20 +38,45 @@ public final class PermissionsCoordinator {
     self.now = now
   }
 
-  /// Checks both permissions, prompting for each missing one (subject to the
-  /// per-permission debounce). Each permission is evaluated independently —
-  /// notably, Screen Recording is requested even while Accessibility is missing.
+  /// True once Screen Recording has been observed missing by a check; armed for
+  /// `didScreenRecordingJustBecomeGranted`.
+  private var sawScreenRecordingMissing = false
+
+  /// Checks both permissions and prompts for the FIRST missing one, in order
+  /// (Accessibility, then Screen Recording), subject to the per-permission
+  /// debounce.
+  ///
+  /// Sequencing is deliberate: macOS shows the Screen Recording consent dialog
+  /// at most once per process, and a request made while another TCC dialog is
+  /// up is silently dropped — so requesting SR while the Accessibility dialog
+  /// is pending wastes the one prompt and forces an app relaunch to ever see
+  /// it. SR is requested on the first check after Accessibility is granted
+  /// (the tap-ready callback and app activations both re-check).
   public func checkAndPrompt() {
+    if !hasScreenRecording() {
+      sawScreenRecordingMissing = true
+    }
     if !isAccessibilityTrusted() {
       lastAccessibilityPrompt = promptIfDue(lastPrompt: lastAccessibilityPrompt) {
         promptAccessibility()
       }
+      return
     }
     if !hasScreenRecording() {
       lastScreenRecordingPrompt = promptIfDue(lastPrompt: lastScreenRecordingPrompt) {
         promptScreenRecording()
       }
     }
+  }
+
+  /// One-shot: returns `true` the first time Screen Recording is granted after
+  /// a check observed it missing. Used to self-relaunch the app — the grant
+  /// only takes effect on a fresh WindowServer connection, and the system's
+  /// own "Quit & Reopen" reliably quits but often never reopens.
+  public func didScreenRecordingJustBecomeGranted() -> Bool {
+    guard sawScreenRecordingMissing, hasScreenRecording() else { return false }
+    sawScreenRecordingMissing = false
+    return true
   }
 
   /// Runs `prompt` unless one already ran within `promptInterval`. Returns the
