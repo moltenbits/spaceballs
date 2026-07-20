@@ -29,6 +29,17 @@ struct GeneralPane: View {
           .foregroundStyle(.secondary)
       }
 
+      Section {
+        Toggle(
+          "Move pointer to the activated window",
+          isOn: $settings.warpCursorOnActivation)
+        Text(
+          "When switching to a window on another display, the pointer jumps to the center of that window so it's easy to find. Only applies with multiple displays."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
       Section("Import & Export") {
         HStack(spacing: 12) {
           Button("Export Settings...") {

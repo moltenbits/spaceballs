@@ -271,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     Diagnostics.log("panel", "switcher show")
     viewModel.overrideDisplayUUID = nil
     viewModel.showEmptySpaces = appSettings.showEmptySpaces
+    viewModel.warpCursorOnActivation = appSettings.warpCursorOnActivation
 
     let multiPanel = isMultiPanelPerDisplay
     let screens = targetScreens()

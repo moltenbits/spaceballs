@@ -187,6 +187,11 @@ public final class SwitcherViewModel: ObservableObject {
   /// When true, spaces with no windows are included in the switcher.
   public var showEmptySpaces: Bool = true
 
+  /// When true, activating something whose Space is on a different display
+  /// than the cursor warps the cursor to that display's center (issue #17).
+  /// Synced from AppSettings by the app delegate.
+  public var warpCursorOnActivation: Bool = false
+
   /// How to order sections: MRU, desktop number, or alphabetical.
   public var spaceSortOrder: SpaceSortOrder = .mru
 
@@ -1011,9 +1016,15 @@ public final class SwitcherViewModel: ObservableObject {
     switch selectedItem {
     case .windowRow(let id):
       windowID = id
+      let targetDisplay = filteredSections.first(where: {
+        $0.windows.contains(where: { $0.id == id })
+      })?.displayUUID
+      warpCursorIfNeeded(targetDisplayUUID: targetDisplay, windowID: id)
     case .spaceHeader(let spaceID):
       guard let section = filteredSections.first(where: { $0.id == spaceID })
       else { return }
+      warpCursorIfNeeded(
+        targetDisplayUUID: section.displayUUID, windowID: section.windows.first?.id)
       if let firstWindow = section.windows.first {
         // Activate the first window in this space to trigger space switch
         windowID = firstWindow.id
@@ -1039,6 +1050,27 @@ public final class SwitcherViewModel: ObservableObject {
       try spaceManager.activateWindow(id: windowID)
     } catch {
       print("Failed to activate window \(windowID): \(error)")
+    }
+  }
+
+  /// Warps the cursor onto the activated window when the cursor-warp setting
+  /// applies (issue #17). Cursor position is global and display-scoped, not
+  /// Space-scoped, so this needn't wait out any Space-switch animation.
+  private func warpCursorIfNeeded(targetDisplayUUID: String?, windowID: Int?) {
+    guard
+      CursorWarpPlanner.shouldWarp(
+        enabled: warpCursorOnActivation,
+        displayCount: NSScreen.screens.count,
+        cursorDisplayUUID: SpaceManager.cursorDisplayUUID(),
+        targetDisplayUUID: targetDisplayUUID),
+      let targetDisplayUUID
+    else { return }
+    // Center on the activated window itself; fall back to the display center
+    // when there's no window (empty space) or its frame is unknown.
+    if let windowID, let bounds = spaceManager.windowBounds(forWindowID: windowID) {
+      SpaceManager.warpCursor(to: CGPoint(x: bounds.midX, y: bounds.midY))
+    } else if let displayID = SpaceManager.displayIDForUUID(targetDisplayUUID) {
+      SpaceManager.warpCursorToDisplayCenter(displayID)
     }
   }
 

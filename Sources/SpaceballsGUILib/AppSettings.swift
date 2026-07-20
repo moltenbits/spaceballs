@@ -167,6 +167,15 @@ public final class AppSettings: ObservableObject {
     didSet { defaults.set(rememberWindowLayouts, forKey: "rememberWindowLayouts") }
   }
 
+  // MARK: - Cursor Warp
+
+  /// When on (default off), activating a window whose Space is on a different
+  /// display than the cursor warps the cursor to that display's center so it's
+  /// easy to locate. Inert on single-display setups.
+  @Published public var warpCursorOnActivation: Bool {
+    didSet { defaults.set(warpCursorOnActivation, forKey: "warpCursorOnActivation") }
+  }
+
   // MARK: - Diagnostics
 
   /// Master switch. When off, `Diagnostics.log(...)` calls are no-ops. Default off.
@@ -204,6 +213,7 @@ public final class AppSettings: ObservableObject {
       "resizeGridRows": 12,
       "resizeMargins": 0.0,
       "rememberWindowLayouts": true,
+      "warpCursorOnActivation": false,
     ])
 
     self.showAppIcons = defaults.bool(forKey: "showAppIcons")
@@ -218,6 +228,7 @@ public final class AppSettings: ObservableObject {
     self.showEmptySpaces = defaults.bool(forKey: "showEmptySpaces")
     self.spaceSortOrder =
       SpaceSortOrder(rawValue: defaults.string(forKey: "spaceSortOrder") ?? "") ?? .mru
+    self.warpCursorOnActivation = defaults.bool(forKey: "warpCursorOnActivation")
 
     // Load workspaces (with migration from old customSpaceNames format)
     if let data = defaults.data(forKey: "workspaces"),
