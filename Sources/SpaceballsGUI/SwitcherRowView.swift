@@ -5,6 +5,10 @@ struct SwitcherRowView: View {
   let row: SwitcherRow
   let isSelected: Bool
   var isMoveMode: Bool = false
+  /// True when this row's space is marked in space-move mode — the whole
+  /// section gets the dimmed accent so the "grabbed" space is visible as it
+  /// jumps between display panels.
+  var isMarkedForSpaceMove: Bool = false
   var showAppIcon: Bool = true
   var textSize: CGFloat = 13
   var iconSize: CGFloat = 20
@@ -64,10 +68,12 @@ struct SwitcherRowView: View {
     .padding(.horizontal, 10)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
-      isSelected
-        ? RoundedRectangle(cornerRadius: 6).fill(
-          Color.accentColor.opacity(isMoveMode ? 0.35 : 0.8))
-        : nil
+      isMarkedForSpaceMove
+        ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.35))
+        : isSelected
+          ? RoundedRectangle(cornerRadius: 6).fill(
+            Color.accentColor.opacity(isMoveMode ? 0.35 : 0.8))
+          : nil
     )
     .contentShape(Rectangle())
   }

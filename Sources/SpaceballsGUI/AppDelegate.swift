@@ -371,6 +371,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if viewModel.moveMode {
       viewModel.cancelMoveMode()
     }
+    if viewModel.spaceMoveMode {
+      viewModel.cancelSpaceMoveMode()
+    }
     if viewModel.isRenaming {
       viewModel.cancelRename()
       keyInterceptor.setRenameMode(false)
@@ -631,6 +634,8 @@ extension AppDelegate: KeyInterceptorDelegate {
       viewModel.moveCreateSelectionDown()
     } else if viewModel.moveMode {
       viewModel.moveMarkedWindowToNextSpace()
+    } else if viewModel.spaceMoveMode {
+      viewModel.moveMarkedSpaceToNextDisplay()
     } else {
       viewModel.moveSelectionDown()
     }
@@ -641,6 +646,8 @@ extension AppDelegate: KeyInterceptorDelegate {
       viewModel.moveCreateSelectionUp()
     } else if viewModel.moveMode {
       viewModel.moveMarkedWindowToPreviousSpace()
+    } else if viewModel.spaceMoveMode {
+      viewModel.moveMarkedSpaceToPreviousDisplay()
     } else {
       viewModel.moveSelectionUp()
     }
@@ -654,6 +661,12 @@ extension AppDelegate: KeyInterceptorDelegate {
     // Move mode: execute the move instead of normal activation
     if viewModel.moveMode {
       if viewModel.executeMoveWindow() {
+        hidePanel()
+      }
+      return
+    }
+    if viewModel.spaceMoveMode {
+      if viewModel.executeMoveSpace() {
         hidePanel()
       }
       return
@@ -680,6 +693,11 @@ extension AppDelegate: KeyInterceptorDelegate {
     }
     if viewModel.moveMode {
       viewModel.cancelMoveMode()
+      return
+    }
+    if viewModel.spaceMoveMode {
+      viewModel.cancelSpaceMoveMode()
+      viewModel.refresh()
       return
     }
     hidePanel()
@@ -710,6 +728,8 @@ extension AppDelegate: KeyInterceptorDelegate {
       viewModel.moveCreateSelectionDown()
     } else if viewModel.moveMode {
       viewModel.moveMarkedWindowToNextSpace()
+    } else if viewModel.spaceMoveMode {
+      viewModel.moveMarkedSpaceToNextDisplay()
     } else {
       viewModel.moveToNextSpace()
     }
@@ -720,6 +740,8 @@ extension AppDelegate: KeyInterceptorDelegate {
       viewModel.moveCreateSelectionUp()
     } else if viewModel.moveMode {
       viewModel.moveMarkedWindowToPreviousSpace()
+    } else if viewModel.spaceMoveMode {
+      viewModel.moveMarkedSpaceToPreviousDisplay()
     } else {
       viewModel.moveToPreviousSpace()
     }
@@ -734,6 +756,10 @@ extension AppDelegate: KeyInterceptorDelegate {
 
   func keyInterceptorToggleMoveMode() {
     viewModel.toggleMoveMode()
+  }
+
+  func keyInterceptorToggleSpaceMoveMode() {
+    viewModel.toggleSpaceMoveMode()
   }
 
   func keyInterceptorCycleSortOrder() {

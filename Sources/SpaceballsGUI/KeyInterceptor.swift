@@ -21,6 +21,7 @@ protocol KeyInterceptorDelegate: AnyObject {
   func keyInterceptorCycleSortOrder()
   func keyInterceptorCloseSpace()
   func keyInterceptorToggleMoveMode()
+  func keyInterceptorToggleSpaceMoveMode()
   func keyInterceptorToggleCreateMenu()
   func keyInterceptorShowResize()
   func keyInterceptorResizeCommit()
@@ -393,8 +394,14 @@ private func keyInterceptorCallback(
       return nil  // consume
     }
 
-    // Move window to another space
+    // Move window to another space (Cmd+M) or space to another display (Cmd+Shift+M)
     if cmdHeld && keyCode == Int64(bindings.moveWindow) && interceptor.panelVisible {
+      if flags.contains(.maskShift) {
+        DispatchQueue.main.async {
+          interceptor.delegate?.keyInterceptorToggleSpaceMoveMode()
+        }
+        return nil  // consume
+      }
       DispatchQueue.main.async {
         interceptor.delegate?.keyInterceptorToggleMoveMode()
       }
