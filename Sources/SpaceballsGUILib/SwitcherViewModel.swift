@@ -88,6 +88,22 @@ public final class SwitcherViewModel: ObservableObject {
   /// The space ID that the marked window currently belongs to (for UI highlighting).
   @Published public var markedWindowSpaceID: UInt64? = nil
 
+  // MARK: - Space Move Mode
+
+  /// When true, the user has marked a Space for moving to another display.
+  @Published public var spaceMoveMode: Bool = false
+
+  /// The space ID marked for moving between displays.
+  @Published public var markedSpaceID: UInt64? = nil
+
+  /// The display the marked space was on when space-move mode was entered
+  /// (for no-op detection and UI highlighting).
+  @Published public var markedSpaceOriginDisplayUUID: String? = nil
+
+  /// The ordered display cycle captured at mode entry (CGS display order, so
+  /// it matches the CLI's display ordinals).
+  private var spaceMoveDisplays: [(uuid: String, name: String)] = []
+
   // MARK: - Create Space Menu
 
   public enum PanelMode {
@@ -1036,6 +1052,7 @@ public final class SwitcherViewModel: ObservableObject {
     }
 
     guard case .windowRow(let windowID) = selectedItem else { return }
+    if spaceMoveMode { cancelSpaceMoveMode() }
 
     let spaceID = filteredSections.first(where: {
       $0.windows.contains(where: { $0.id == windowID })
@@ -1142,6 +1159,128 @@ public final class SwitcherViewModel: ObservableObject {
     moveMode = false
     markedWindowID = nil
     markedWindowSpaceID = nil
+  }
+
+  // MARK: - Move Space to Display
+
+  /// Toggles space-move mode. Marks the selected space header's space — or the
+  /// space containing the selected window row — for moving to another display.
+  /// No-op when fewer than two displays exist or the space is not a desktop.
+  public func toggleSpaceMoveMode() {
+    if spaceMoveMode {
+      cancelSpaceMoveMode()
+      return
+    }
+
+    let spaceID: UInt64?
+    switch selectedItem {
+    case .spaceHeader(let id):
+      spaceID = id
+    case .windowRow(let windowID):
+      spaceID =
+        filteredSections.first(where: {
+          $0.windows.contains(where: { $0.id == windowID })
+        })?.id
+    default:
+      spaceID = nil
+    }
+
+    guard let spaceID,
+      let section = sections.first(where: { $0.id == spaceID })
+    else { return }
+
+    // Only desktop spaces can be moved; the display cycle needs somewhere to go.
+    let allSpaces = spaceManager.getAllSpaces()
+    guard allSpaces.first(where: { $0.id == spaceID })?.type == .desktop else { return }
+
+    let nameByUUID = Dictionary(
+      sections.map { ($0.displayUUID, $0.displayName) },
+      uniquingKeysWith: { first, _ in first })
+    var displays: [(uuid: String, name: String)] = []
+    for space in allSpaces where !displays.contains(where: { $0.uuid == space.displayUUID }) {
+      displays.append((space.displayUUID, nameByUUID[space.displayUUID] ?? ""))
+    }
+    guard displays.count > 1 else { return }
+
+    if moveMode { cancelMoveMode() }
+    markedSpaceID = spaceID
+    markedSpaceOriginDisplayUUID = section.displayUUID
+    spaceMoveDisplays = displays
+    spaceMoveMode = true
+    selectedItem = .spaceHeader(spaceID)
+  }
+
+  /// Visually retargets the marked space to the next display in the cycle.
+  public func moveMarkedSpaceToNextDisplay() {
+    retargetMarkedSpace(offset: 1)
+  }
+
+  /// Visually retargets the marked space to the previous display in the cycle.
+  public func moveMarkedSpaceToPreviousDisplay() {
+    retargetMarkedSpace(offset: -1)
+  }
+
+  /// Retags the marked section with the adjacent display in the cycle. The
+  /// per-display panels filter sections by `displayUUID`, so retagging is what
+  /// visually moves the section between displays.
+  private func retargetMarkedSpace(offset: Int) {
+    guard spaceMoveMode, let spaceID = markedSpaceID,
+      let sectionIndex = sections.firstIndex(where: { $0.id == spaceID }),
+      !spaceMoveDisplays.isEmpty,
+      let position = spaceMoveDisplays.firstIndex(where: {
+        $0.uuid == sections[sectionIndex].displayUUID
+      })
+    else { return }
+
+    let count = spaceMoveDisplays.count
+    let next = spaceMoveDisplays[(position + offset + count) % count]
+
+    let old = sections[sectionIndex]
+    sections[sectionIndex] = SwitcherSection(
+      id: old.id,
+      spaceUUID: old.spaceUUID,
+      displayUUID: next.uuid,
+      displayName: next.name,
+      label: old.label,
+      isCurrent: old.isCurrent,
+      ordinalLabel: old.ordinalLabel,
+      windows: old.windows)
+    selectedItem = .spaceHeader(spaceID)
+  }
+
+  /// Executes the move: relocates the marked space to whatever display its
+  /// section is currently shown on. Returns `true` if a move was initiated.
+  @discardableResult
+  public func executeMoveSpace() -> Bool {
+    guard spaceMoveMode, let spaceID = markedSpaceID,
+      let section = sections.first(where: { $0.id == spaceID })
+    else { return false }
+
+    let targetDisplayUUID = section.displayUUID
+    let originDisplayUUID = markedSpaceOriginDisplayUUID
+    cancelSpaceMoveMode()
+
+    guard targetDisplayUUID != originDisplayUUID else { return false }
+
+    DispatchQueue.global(qos: .userInteractive).async { [spaceManager] in
+      do {
+        try spaceManager.moveSpaceToDisplay(
+          spaceID: spaceID, targetDisplayUUID: targetDisplayUUID)
+      } catch {
+        print("Failed to move space \(spaceID) to display \(targetDisplayUUID): \(error)")
+      }
+    }
+
+    return true
+  }
+
+  /// Cancels space-move mode and clears all related state. Any visual retag is
+  /// restored on the next refresh, matching window-move-mode behavior.
+  public func cancelSpaceMoveMode() {
+    spaceMoveMode = false
+    markedSpaceID = nil
+    markedSpaceOriginDisplayUUID = nil
+    spaceMoveDisplays = []
   }
 
   // MARK: - Close / Quit
