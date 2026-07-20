@@ -1075,6 +1075,58 @@ public final class SwitcherViewModel: ObservableObject {
     moveMarkedWindowToAdjacentSpace(forward: false, windowID: windowID)
   }
 
+  /// Visually moves the marked window to the first section of the next display.
+  /// Display-cycle counterpart to moveMarkedWindowToNextSpace, so Cmd+Left/Right
+  /// stay usable inside move mode (issue #18).
+  public func moveMarkedWindowToNextDisplay() {
+    moveMarkedWindowToAdjacentDisplay(forward: true)
+  }
+
+  /// Visually moves the marked window to the first section of the previous display.
+  public func moveMarkedWindowToPreviousDisplay() {
+    moveMarkedWindowToAdjacentDisplay(forward: false)
+  }
+
+  private func moveMarkedWindowToAdjacentDisplay(forward: Bool) {
+    guard moveMode, let windowID = markedWindowID,
+      let sourceIdx = sections.firstIndex(where: {
+        $0.windows.contains(where: { $0.id == windowID })
+      })
+    else { return }
+    let currentDisplay = sections[sourceIdx].displayUUID
+
+    // Display cycle in CGS order — the same cycle space-move mode uses.
+    var displays: [String] = []
+    for space in spaceManager.getAllSpaces() where !displays.contains(space.displayUUID) {
+      displays.append(space.displayUUID)
+    }
+    guard displays.count > 1, let position = displays.firstIndex(of: currentDisplay)
+    else { return }
+
+    // First display in cycle order (skipping any with no visible section)
+    // that can actually receive the row.
+    let step = forward ? 1 : -1
+    var targetIdx: Int?
+    for i in 1..<displays.count {
+      let candidate = displays[
+        ((position + i * step) % displays.count + displays.count) % displays.count]
+      if let idx = sections.firstIndex(where: { $0.displayUUID == candidate }) {
+        targetIdx = idx
+        break
+      }
+    }
+    guard let targetIdx,
+      let rowIdx = sections[sourceIdx].windows.firstIndex(where: { $0.id == windowID })
+    else { return }
+
+    var updated = sections
+    let row = updated[sourceIdx].windows.remove(at: rowIdx)
+    updated[targetIdx].windows.insert(row, at: 0)
+    sections = updated
+
+    selectedItem = .windowRow(windowID)
+  }
+
   private func moveMarkedWindowToAdjacentSpace(forward: Bool, windowID: Int) {
     // Use the same navigation as moveToNextSpace/moveToPreviousSpace:
     // scan through flatSelectableItems to find the next/previous space,

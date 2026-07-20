@@ -424,6 +424,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func cycleDisplay(forward: Bool) {
+    // Never cycle panel content while a move is pending — refresh() would wipe
+    // the visual relocation and the marked item's context (issue #18). The
+    // delegate methods route these keys to the marked-item movers instead;
+    // this guard is belt-and-braces for any other caller.
+    guard !viewModel.moveMode && !viewModel.spaceMoveMode else { return }
     guard appSettings.filterSpacesByDisplay else { return }
     let screens = NSScreen.screens
     guard screens.count > 1 else { return }
@@ -658,17 +663,18 @@ extension AppDelegate: KeyInterceptorDelegate {
       confirmCreateMenuSelection()
       return
     }
-    // Move mode: execute the move instead of normal activation
+    // Move mode: execute the move instead of normal activation. The panel is
+    // dismissed either way — a no-op move (item back on its origin) should
+    // end the interaction like any other confirm, not leave the panel
+    // stranded with the mode silently cancelled (issue #18).
     if viewModel.moveMode {
-      if viewModel.executeMoveWindow() {
-        hidePanel()
-      }
+      _ = viewModel.executeMoveWindow()
+      hidePanel()
       return
     }
     if viewModel.spaceMoveMode {
-      if viewModel.executeMoveSpace() {
-        hidePanel()
-      }
+      _ = viewModel.executeMoveSpace()
+      hidePanel()
       return
     }
     switch viewModel.selectedItem {
@@ -716,11 +722,23 @@ extension AppDelegate: KeyInterceptorDelegate {
   }
 
   func keyInterceptorCycleDisplayLeft() {
-    cycleDisplay(forward: false)
+    if viewModel.moveMode {
+      viewModel.moveMarkedWindowToPreviousDisplay()
+    } else if viewModel.spaceMoveMode {
+      viewModel.moveMarkedSpaceToPreviousDisplay()
+    } else {
+      cycleDisplay(forward: false)
+    }
   }
 
   func keyInterceptorCycleDisplayRight() {
-    cycleDisplay(forward: true)
+    if viewModel.moveMode {
+      viewModel.moveMarkedWindowToNextDisplay()
+    } else if viewModel.spaceMoveMode {
+      viewModel.moveMarkedSpaceToNextDisplay()
+    } else {
+      cycleDisplay(forward: true)
+    }
   }
 
   func keyInterceptorJumpToNextSpace() {

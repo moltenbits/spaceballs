@@ -1869,3 +1869,87 @@ struct SpaceMoveModeTests {
     #expect(vm.moveMode)
   }
 }
+
+// MARK: - Window Move Across Displays (issue #18)
+
+@Suite("Window Move Across Displays")
+struct WindowMoveAcrossDisplaysTests {
+
+  private func makeViewModel() -> SwitcherViewModel {
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: makeTwoDisplayDataSource()),
+      spaceNameStore: MockSpaceNameStore())
+    vm.showEmptySpaces = true
+    vm.refresh()
+    return vm
+  }
+
+  @Test("Next display relocates the marked window to the adjacent display's first section")
+  func nextDisplayRelocates() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)  // window 20 lives on space 2 (display-1)
+    vm.toggleMoveMode()
+
+    vm.moveMarkedWindowToNextDisplay()
+
+    let section = vm.sections.first(where: { $0.windows.contains(where: { $0.id == 20 }) })
+    #expect(section?.displayUUID == "display-2")
+    #expect(vm.selectedItem == .windowRow(20))
+    #expect(vm.moveMode)
+  }
+
+  @Test("Next display wraps back to the origin display")
+  func nextDisplayWraps() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)
+    vm.toggleMoveMode()
+
+    vm.moveMarkedWindowToNextDisplay()
+    vm.moveMarkedWindowToNextDisplay()
+
+    let section = vm.sections.first(where: { $0.windows.contains(where: { $0.id == 20 }) })
+    #expect(section?.displayUUID == "display-1")
+  }
+
+  @Test("Previous display wraps backward")
+  func previousDisplayWraps() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)
+    vm.toggleMoveMode()
+
+    vm.moveMarkedWindowToPreviousDisplay()
+
+    let section = vm.sections.first(where: { $0.windows.contains(where: { $0.id == 20 }) })
+    #expect(section?.displayUUID == "display-2")
+  }
+
+  @Test("Cross-display relocation counts as a displacement for executeMoveWindow")
+  func crossDisplayRelocationIsExecutable() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)
+    vm.toggleMoveMode()
+    vm.moveMarkedWindowToNextDisplay()
+
+    // Window 20 started on space 2 (display-1); it now sits in a display-2
+    // section, so execute must see a real move rather than a no-op. Assert the
+    // displacement predicate executeMoveWindow checks rather than calling it —
+    // its true path dispatches a real activation, which would raise the AX
+    // permission prompt from the test runner.
+    let visibleSpaceID = vm.sections.first(where: {
+      $0.windows.contains(where: { $0.id == 20 })
+    })?.id
+    #expect(visibleSpaceID != nil)
+    #expect(visibleSpaceID != vm.markedWindowSpaceID)
+  }
+
+  @Test("No-op when move mode is not active")
+  func noOpOutsideMoveMode() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)
+
+    vm.moveMarkedWindowToNextDisplay()
+
+    let section = vm.sections.first(where: { $0.windows.contains(where: { $0.id == 20 }) })
+    #expect(section?.displayUUID == "display-1")
+  }
+}
