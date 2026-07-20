@@ -155,6 +155,23 @@ Native CGS/SkyLight move APIs (`SLSMoveWindowsToManagedSpace`, `CGSAddWindowsToS
 - Space buttons are matched by title ("Desktop N"), not index, because placeholder insertion shifts indices.
 - The `move` CLI subcommand accepts window titles or IDs, and space names or IDs.
 
+### Moving Spaces Between Displays via Mission Control Drag
+
+`SpaceManager.moveSpaceToDisplay` relocates an entire Space to another display using the same MC drag simulation, but the grabbed element is a **Space tile** in the source display's `mc.spaces.list` and the drop target is the **destination display's bar**:
+
+1. `SpaceMovePlanner.plan` (pure, unit-tested) — resolves the global "Desktop N" tile title, guards (desktop-only, target display exists, not already there), and picks a sibling to pre-switch to when the space is current
+2. If the space is its display's **only** desktop space, a sibling is created there first (`createSpace` on that display, identified by UUID diff), then re-planned — a display must always retain ≥1 space
+3. If the space is **current** on its display, `switchToSpace` moves the display off it first (MC refuses to drag the active Space), verified by polling CGS `isCurrent` — never a blind sleep
+4. `moveSpaceInMC` — hover the source bar first (`postMouseMove` + `awaitStablePoint`) so it expands: tile AX frames are stale until expansion settles. Grab, nudge **downward** out of the bar (in-bar motion reads as reordering), then `homingDrag` toward the destination bar's append position (past the last tile's trailing edge, clamped inside the bar frame)
+5. Drop, wait ~0.5s for MC to commit, then dismiss MC **without pressing any tile** — a tile press would switch the destination display's active Space. The move deliberately leaves both displays' current Spaces unchanged
+6. Verified by polling `getAllSpaces()` until the space's `displayUUID` matches the target
+
+**Key details:**
+- Requires ≥2 `mc.display` elements (fails early under mirroring / "Displays have separate Spaces" off)
+- MC dismissal is guarded: `com.apple.expose.awake` TOGGLES Mission Control, so it is only re-sent when the `mc` AX group is still present
+- The `move-space <space> <display>` CLI subcommand accepts space IDs/names/"Desktop N" and display name substrings/UUIDs/1-based ordinals (`DisplayArgumentResolver`); DEBUG builds add `mc-move-space-test` for raw drag tuning
+- GUI: **Cmd+Shift+M** enters space-move mode (Cmd+M remains window-move); arrows cycle the marked space between displays, Enter executes, Esc cancels
+
 ### Cross-Space Window Activation Requires .app Bundle
 
 `_SLPSSetFrontProcessWithOptions` requires a process registered with WindowServer as a proper application. A bare CLI executable doesn't get this registration. The `.app` bundle with `LSUIElement=true` in `Info.plist` and `NSApplication.setActivationPolicy(.accessory)` provides the necessary registration while remaining invisible in the Dock.
