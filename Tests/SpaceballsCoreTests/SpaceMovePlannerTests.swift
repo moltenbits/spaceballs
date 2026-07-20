@@ -34,7 +34,7 @@ struct SpaceMovePlannerTests {
     desktop(4, display: "display-B"),
   ]
 
-  @Test("Non-current space plans a direct move with global tile numbering")
+  @Test("Non-current space plans a direct move with its per-display tile index")
   func directMove() throws {
     let outcome = try SpaceMovePlanner.plan(
       spaceID: 4, targetDisplayUUID: "display-A", spaces: twoDisplays
@@ -45,20 +45,20 @@ struct SpaceMovePlannerTests {
       return
     }
     #expect(plan.spaceID == 4)
-    #expect(plan.sourceTileTitle == "Desktop 4")
+    #expect(plan.sourceSpaceIndex == 1)  // display-B desktops: 3, 4 → index 1
     #expect(plan.sourceDisplayUUID == "display-B")
     #expect(plan.targetDisplayUUID == "display-A")
     #expect(plan.preSwitch == nil)
   }
 
-  @Test("Global tile numbering skips fullscreen spaces")
-  func numberingSkipsFullscreen() throws {
+  @Test("Tile index skips fullscreen spaces on the same display")
+  func indexSkipsFullscreen() throws {
     let spaces: [SpaceInfo] = [
       desktop(1, display: "display-A", current: true),
-      fullscreen(90, display: "display-A"),
-      desktop(2, display: "display-A"),
       desktop(3, display: "display-B", current: true),
+      fullscreen(90, display: "display-B"),
       desktop(4, display: "display-B"),
+      desktop(2, display: "display-A"),
     ]
 
     let outcome = try SpaceMovePlanner.plan(
@@ -69,8 +69,8 @@ struct SpaceMovePlannerTests {
       Issue.record("expected .ready, got \(outcome)")
       return
     }
-    // 4 is the 4th desktop space (fullscreen 90 doesn't count).
-    #expect(plan.sourceTileTitle == "Desktop 4")
+    // Fullscreen 90 sits between 3 and 4 on display-B but has no desktop tile.
+    #expect(plan.sourceSpaceIndex == 1)
   }
 
   @Test("Unknown space ID fails with spaceNotFound")
@@ -156,8 +156,8 @@ struct SpaceMovePlannerTests {
     #expect(preSwitch.spaceIndex == 0)
   }
 
-  @Test("Pre-switch index is the per-display ordinal, not the global one")
-  func preSwitchIndexIsPerDisplay() throws {
+  @Test("Indices are per-display ordinals, not global ones")
+  func indicesArePerDisplay() throws {
     // Source display enumerates second; its desktops are 5, 6, 7 with 6 current.
     let spaces: [SpaceInfo] = [
       desktop(1, display: "display-A", current: true),
@@ -175,7 +175,7 @@ struct SpaceMovePlannerTests {
       Issue.record("expected .ready, got \(outcome)")
       return
     }
-    #expect(plan.sourceTileTitle == "Desktop 4")  // global: 1,2,5,6 → 4th
+    #expect(plan.sourceSpaceIndex == 1)  // display-B desktops: 5,6,7 → index 1, not global 3
     let preSwitch = try #require(plan.preSwitch)
     #expect(preSwitch.toSpaceID == 7)
     #expect(preSwitch.spaceIndex == 2)  // display-B desktops: 5,6,7 → index 2

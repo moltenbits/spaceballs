@@ -7,9 +7,13 @@ import Foundation
 /// `getAllSpaces()` snapshot; consumed by `SpaceManager.moveSpaceToDisplay`.
 public struct SpaceMovePlan: Equatable {
   public let spaceID: UInt64
-  /// The tile title Mission Control shows for the space ("Desktop N").
-  /// MC numbers desktops globally across all displays, not per display.
-  public let sourceTileTitle: String
+  /// Index of the space among its display's desktop spaces — the position of
+  /// its tile in that display's MC spaces bar. Tiles are located by
+  /// per-display position, never by "Desktop N" title: MC numbers desktops in
+  /// display-arrangement order (built-in first) while CGS enumerates displays
+  /// in an order that can vary between calls, so a globally computed title is
+  /// unreliable.
+  public let sourceSpaceIndex: Int
   public let sourceDisplayUUID: String
   public let targetDisplayUUID: String
   /// Set when the space is its display's current space: Mission Control will
@@ -59,17 +63,13 @@ public enum SpaceMovePlanner {
       return .success(.createSiblingFirst(onDisplayUUID: space.displayUUID))
     }
 
-    let allDesktops = spaces.filter { $0.type == .desktop }
-    guard let globalOrdinal = allDesktops.firstIndex(where: { $0.id == spaceID }) else {
+    guard let displayOrdinal = displayDesktops.firstIndex(where: { $0.id == spaceID })
+    else {
       return .failure(.spaceNotFound(spaceID: spaceID))
     }
 
     var preSwitch: SpaceMovePlan.PreSwitch?
     if space.isCurrent {
-      guard let displayOrdinal = displayDesktops.firstIndex(where: { $0.id == spaceID })
-      else {
-        return .failure(.spaceNotFound(spaceID: spaceID))
-      }
       // Prefer the next sibling; fall back to the previous when the moving
       // space is last on its display. Either way the visual jump is minimal.
       let siblingIndex =
@@ -82,7 +82,7 @@ public enum SpaceMovePlanner {
       .ready(
         SpaceMovePlan(
           spaceID: spaceID,
-          sourceTileTitle: "Desktop \(globalOrdinal + 1)",
+          sourceSpaceIndex: displayOrdinal,
           sourceDisplayUUID: space.displayUUID,
           targetDisplayUUID: targetDisplayUUID,
           preSwitch: preSwitch)))

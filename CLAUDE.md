@@ -159,18 +159,21 @@ Native CGS/SkyLight move APIs (`SLSMoveWindowsToManagedSpace`, `CGSAddWindowsToS
 
 `SpaceManager.moveSpaceToDisplay` relocates an entire Space to another display using the same MC drag simulation, but the grabbed element is a **Space tile** in the source display's `mc.spaces.list` and the drop target is the **destination display's bar**:
 
-1. `SpaceMovePlanner.plan` (pure, unit-tested) — resolves the global "Desktop N" tile title, guards (desktop-only, target display exists, not already there), and picks a sibling to pre-switch to when the space is current
+1. `SpaceMovePlanner.plan` (pure, unit-tested) — resolves the space's **per-display tile index**, guards (desktop-only, target display exists, not already there), and picks a sibling to pre-switch to when the space is current
 2. If the space is its display's **only** desktop space, a sibling is created there first (`createSpace` on that display, identified by UUID diff), then re-planned — a display must always retain ≥1 space
 3. If the space is **current** on its display, `switchToSpace` moves the display off it first (MC refuses to drag the active Space), verified by polling CGS `isCurrent` — never a blind sleep
-4. `moveSpaceInMC` — hover the source bar first (`postMouseMove` + `awaitStablePoint`) so it expands: tile AX frames are stale until expansion settles. Grab, nudge **downward** out of the bar (in-bar motion reads as reordering), then `homingDrag` toward the destination bar's append position (past the last tile's trailing edge, clamped inside the bar frame)
-5. Drop, wait ~0.5s for MC to commit, then dismiss MC **without pressing any tile** — a tile press would switch the destination display's active Space. The move deliberately leaves both displays' current Spaces unchanged
+4. `moveSpaceInMC` — hover the source bar first (`postMouseMove` + `awaitStablePoint`) so it expands: tile AX frames are stale until expansion settles. Grab, nudge **downward** out of the bar (in-bar motion reads as reordering), then `homingDrag` toward the **center of the destination bar's frame**
+5. Dwell ~0.6s over the bar (stationary drag events keep the session alive), drop, wait ~0.5s for MC to commit, then dismiss MC **without pressing any tile** — a tile press would switch the destination display's active Space. The move deliberately leaves both displays' current Spaces unchanged
 6. Verified by polling `getAllSpaces()` until the space's `displayUUID` matches the target
 
 **Key details:**
+- **Tiles are located by per-display index, never by "Desktop N" title.** MC numbers desktops in display-arrangement order (built-in first), while `CGSCopyManagedDisplaySpaces` enumerates displays in an order that can VARY between calls — a CGS-derived global title matches MC only by luck. Per-display CGS space order does match the bar's tile order (the invariant `switchToSpace(spaceIndex:screenNumber:)` relies on). ⚠️ `moveWindowToSpace` still derives its target tile title from CGS global order — same latent unreliability, unfixed.
+- **The drop aims at the bar frame's center, not at tile coordinates.** Collapsed-state tiles can report frames *above* the bar (observed on portrait displays); a stale read overshoots to the display's top edge, MC shows the spring-load-into-space effect, and the drop snaps back. Tiles are laid out centered in the bar, so the frame center is a clean insertion point. (Final position within the destination bar is therefore not guaranteed.)
 - Requires ≥2 `mc.display` elements (fails early under mirroring / "Displays have separate Spaces" off)
 - MC dismissal is guarded: `com.apple.expose.awake` TOGGLES Mission Control, so it is only re-sent when the `mc` AX group is still present
-- The `move-space <space> <display>` CLI subcommand accepts space IDs/names/"Desktop N" and display name substrings/UUIDs/1-based ordinals (`DisplayArgumentResolver`); DEBUG builds add `mc-move-space-test` for raw drag tuning
+- The `move-space <space> <display>` CLI subcommand accepts space IDs/names/"Desktop N" and display name substrings/UUIDs/1-based ordinals (`DisplayArgumentResolver`); DEBUG builds add `mc-move-space-test <sourceDisplay> <index> <targetDisplay>` for raw drag tuning
 - GUI: **Cmd+Shift+M** enters space-move mode (Cmd+M remains window-move); arrows cycle the marked space between displays, Enter executes, Esc cancels
+- Verified live on a 4-display setup in all directions: external → built-in, built-in → external, external → external, including pre-switch off an active Space
 
 ### Cross-Space Window Activation Requires .app Bundle
 
