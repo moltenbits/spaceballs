@@ -348,6 +348,49 @@ public class SpaceManager {
     screenForUUID(uuid)?.localizedName
   }
 
+  /// Returns a window's frame in global CG coordinates (top-left origin), or
+  /// nil when CGS has no record of the window or its bounds.
+  public func windowBounds(forWindowID windowID: Int) -> CGRect? {
+    guard
+      let entry = dataSource.fetchWindowList().first(where: {
+        ($0[kCGWindowNumber as String] as? Int) == windowID
+      }),
+      let boundsRef = entry[kCGWindowBounds as String]
+    else { return nil }
+    var bounds = CGRect.zero
+    let boundsDict = boundsRef as CFTypeRef as! CFDictionary
+    guard CGRectMakeWithDictionaryRepresentation(boundsDict, &bounds) else { return nil }
+    return bounds
+  }
+
+  /// Warps the mouse cursor to a global point (CG coordinates, top-left
+  /// origin). Public CoreGraphics API — no extra permissions needed, and no
+  /// synthetic event that could interact with the key-interception tap.
+  public static func warpCursor(to point: CGPoint) {
+    CGWarpMouseCursorPosition(point)
+    // Warping starts a brief suppression interval for hardware mouse events;
+    // re-associate immediately so the pointer stays responsive.
+    CGAssociateMouseAndMouseCursorPosition(1)
+  }
+
+  /// Warps the mouse cursor to the center of the given display.
+  public static func warpCursorToDisplayCenter(_ displayID: CGDirectDisplayID) {
+    let bounds = CGDisplayBounds(displayID)
+    warpCursor(to: CGPoint(x: bounds.midX, y: bounds.midY))
+  }
+
+  /// Returns the display UUID currently containing the mouse cursor.
+  public static func cursorDisplayUUID() -> String? {
+    let location = NSEvent.mouseLocation  // global, bottom-left origin
+    guard
+      let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }),
+      let screenNumber = screen.deviceDescription[
+        NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+      let cfUUID = CGDisplayCreateUUIDFromDisplayID(screenNumber)?.takeUnretainedValue()
+    else { return nil }
+    return CFUUIDCreateString(nil, cfUUID) as String
+  }
+
   private static func screenForUUID(_ uuid: String) -> NSScreen? {
     for screen in NSScreen.screens {
       guard

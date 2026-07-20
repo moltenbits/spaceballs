@@ -1139,3 +1139,30 @@ struct MoveSpaceGuardTests {
     }
   }
 }
+
+// MARK: - Window Bounds Lookup
+
+@Suite("Window Bounds Lookup")
+struct WindowBoundsLookupTests {
+
+  @Test("Returns the window's frame from the window list")
+  func returnsBounds() {
+    var ds = MockDataSource()
+    ds.windowList = [
+      makeWindowDict(
+        id: 42, ownerName: "Safari",
+        bounds: makeBoundsDict(x: 100, y: 200, width: 800, height: 600))
+    ]
+    let manager = SpaceManager(dataSource: ds)
+
+    #expect(
+      manager.windowBounds(forWindowID: 42)
+        == CGRect(x: 100, y: 200, width: 800, height: 600))
+  }
+
+  @Test("Returns nil for an unknown window ID")
+  func unknownWindow() {
+    let manager = SpaceManager(dataSource: MockDataSource())
+    #expect(manager.windowBounds(forWindowID: 99) == nil)
+  }
+}
