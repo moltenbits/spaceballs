@@ -421,6 +421,7 @@ struct SwitcherView: View {
           row: row,
           isSelected: viewModel.selectedItem == .windowRow(row.id),
           isMoveMode: viewModel.moveMode,
+          isMarkedForSpaceMove: viewModel.spaceMoveMode && viewModel.markedSpaceID == section.id,
           showAppIcon: appSettings.showAppIcons,
           textSize: CGFloat(appSettings.textSize),
           iconSize: appSettings.iconSize,
@@ -447,6 +448,7 @@ struct SwitcherView: View {
     _ section: SwitcherSection, isRenaming: Bool
   ) -> some View {
     let isSelected = viewModel.selectedItem == .spaceHeader(section.id)
+    let isMarkedForSpaceMove = viewModel.spaceMoveMode && viewModel.markedSpaceID == section.id
     let headerSize = round(CGFloat(appSettings.textSize) * 11.0 / 13.0)
     let noWindowsSize = round(CGFloat(appSettings.textSize) * 12.0 / 13.0)
     return HStack(spacing: 8) {
@@ -484,9 +486,11 @@ struct SwitcherView: View {
     .padding(.horizontal, 10)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
-      isSelected
-        ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
-        : nil
+      isMarkedForSpaceMove
+        ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.35))
+        : isSelected
+          ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.8))
+          : nil
     )
     .contentShape(Rectangle())
   }

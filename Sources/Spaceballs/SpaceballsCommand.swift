@@ -6,11 +6,12 @@ struct SpaceballsCommand: ParsableCommand {
     var subcommands: [ParsableCommand.Type] = [
       ListCommand.self, WindowCommand.self, RenameCommand.self, SwitchCommand.self,
       CreateCommand.self, CloseSpaceCommand.self, WorkspaceCommand.self, SettingsCommand.self,
-      MoveCommand.self, DiagnosticsCommand.self,
+      MoveCommand.self, MoveSpaceCommand.self, DiagnosticsCommand.self,
     ]
     #if DEBUG
       subcommands += [
-        MCDumpCommand.self, MCMoveTestCommand.self, MCDebugPositionsCommand.self,
+        MCDumpCommand.self, MCMoveTestCommand.self, MCMoveSpaceTestCommand.self,
+        MCDebugPositionsCommand.self,
       ]
     #endif
     return CommandConfiguration(

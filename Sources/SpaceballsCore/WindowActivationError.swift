@@ -68,6 +68,41 @@ public enum SpaceCloseError: Error, Equatable, LocalizedError {
   }
 }
 
+public enum SpaceMoveError: Error, Equatable, LocalizedError {
+  case spaceNotFound(spaceID: UInt64)
+  case notDesktopSpace(spaceID: UInt64)
+  case alreadyOnTargetDisplay(spaceID: UInt64)
+  case targetDisplayNotFound(displayUUID: String)
+  case displayNotResolvable(displayUUID: String)
+  case accessibilityNotTrusted
+  case spaceCreationFailed(displayUUID: String)
+  case preSwitchFailed(spaceID: UInt64)
+
+  public var errorDescription: String? {
+    switch self {
+    case .spaceNotFound(let spaceID):
+      return "No space found with ID \(spaceID). Use 'spaceballs list' to see available spaces."
+    case .notDesktopSpace(let spaceID):
+      return "Space \(spaceID) is a fullscreen space. Only desktop spaces can be moved."
+    case .alreadyOnTargetDisplay(let spaceID):
+      return "Space \(spaceID) is already on the target display."
+    case .targetDisplayNotFound(let displayUUID):
+      return "No display found with UUID \(displayUUID)."
+    case .displayNotResolvable(let displayUUID):
+      return "Could not resolve display for UUID \(displayUUID)."
+    case .accessibilityNotTrusted:
+      return
+        "Accessibility permission required. A system prompt should have appeared — grant access in System Settings and re-run the command."
+    case .spaceCreationFailed(let displayUUID):
+      return
+        "Could not create a sibling space on display \(displayUUID). A display's only space cannot be moved without one."
+    case .preSwitchFailed(let spaceID):
+      return
+        "Space \(spaceID) is the active space on its display and switching away from it failed. The active space cannot be moved."
+    }
+  }
+}
+
 public enum SpaceSwitchError: Error, Equatable, LocalizedError {
   case spaceNotFound(spaceID: UInt64)
   case displayNotFound(displayUUID: String)

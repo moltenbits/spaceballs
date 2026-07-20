@@ -1719,3 +1719,153 @@ struct SettingsExportTests {
     #expect(settings2.customSpaceNames == ["Work", "Play"])
   }
 }
+
+// MARK: - Space Move Mode Tests
+
+@Suite("Space Move Mode")
+struct SpaceMoveModeTests {
+
+  private func makeViewModel() -> SwitcherViewModel {
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: makeTwoDisplayDataSource()),
+      spaceNameStore: MockSpaceNameStore())
+    vm.showEmptySpaces = true
+    vm.refresh()
+    return vm
+  }
+
+  @Test("Toggle from a space header marks that space")
+  func toggleFromSpaceHeader() {
+    let vm = makeViewModel()
+    vm.selectedItem = .spaceHeader(3)
+
+    vm.toggleSpaceMoveMode()
+
+    #expect(vm.spaceMoveMode)
+    #expect(vm.markedSpaceID == 3)
+    #expect(vm.markedSpaceOriginDisplayUUID == "display-2")
+  }
+
+  @Test("Toggle from a window row marks the containing space")
+  func toggleFromWindowRow() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)  // window 20 lives on space 2 (display-1)
+
+    vm.toggleSpaceMoveMode()
+
+    #expect(vm.spaceMoveMode)
+    #expect(vm.markedSpaceID == 2)
+    #expect(vm.markedSpaceOriginDisplayUUID == "display-1")
+  }
+
+  @Test("Toggle while in space-move mode cancels it")
+  func toggleCancels() {
+    let vm = makeViewModel()
+    vm.selectedItem = .spaceHeader(3)
+    vm.toggleSpaceMoveMode()
+
+    vm.toggleSpaceMoveMode()
+
+    #expect(!vm.spaceMoveMode)
+    #expect(vm.markedSpaceID == nil)
+    #expect(vm.markedSpaceOriginDisplayUUID == nil)
+  }
+
+  @Test("Toggle is a no-op with a single display")
+  func singleDisplayNoOp() {
+    let vm = SwitcherViewModel(
+      spaceManager: SpaceManager(dataSource: makeTwoSpaceDataSource()),
+      spaceNameStore: MockSpaceNameStore())
+    vm.showEmptySpaces = true
+    vm.refresh()
+    vm.selectedItem = .spaceHeader(1)
+
+    vm.toggleSpaceMoveMode()
+
+    #expect(!vm.spaceMoveMode)
+    #expect(vm.markedSpaceID == nil)
+  }
+
+  @Test("Next display retags the marked section and keeps the header selected")
+  func nextDisplayRetags() {
+    let vm = makeViewModel()
+    vm.selectedItem = .spaceHeader(3)
+    vm.toggleSpaceMoveMode()
+
+    vm.moveMarkedSpaceToNextDisplay()
+
+    let section = vm.sections.first(where: { $0.id == 3 })
+    #expect(section?.displayUUID == "display-1")
+    #expect(vm.selectedItem == .spaceHeader(3))
+    #expect(vm.spaceMoveMode)
+  }
+
+  @Test("Next display wraps back to the origin display")
+  func nextDisplayWraps() {
+    let vm = makeViewModel()
+    vm.selectedItem = .spaceHeader(3)
+    vm.toggleSpaceMoveMode()
+
+    vm.moveMarkedSpaceToNextDisplay()
+    vm.moveMarkedSpaceToNextDisplay()
+
+    let section = vm.sections.first(where: { $0.id == 3 })
+    #expect(section?.displayUUID == "display-2")
+  }
+
+  @Test("Previous display wraps backward")
+  func previousDisplayWraps() {
+    let vm = makeViewModel()
+    vm.selectedItem = .spaceHeader(2)
+    vm.toggleSpaceMoveMode()
+
+    vm.moveMarkedSpaceToPreviousDisplay()
+
+    let section = vm.sections.first(where: { $0.id == 2 })
+    #expect(section?.displayUUID == "display-2")
+  }
+
+  @Test("Execute with the section back on its origin display cancels and returns false")
+  func executeOnOriginIsNoOp() {
+    let vm = makeViewModel()
+    vm.selectedItem = .spaceHeader(3)
+    vm.toggleSpaceMoveMode()
+    vm.moveMarkedSpaceToNextDisplay()
+    vm.moveMarkedSpaceToNextDisplay()  // wrapped back to display-2
+
+    #expect(!vm.executeMoveSpace())
+    #expect(!vm.spaceMoveMode)
+    #expect(vm.markedSpaceID == nil)
+  }
+
+  @Test("Entering space-move mode cancels window-move mode")
+  func spaceMoveCancelsWindowMove() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)
+    vm.toggleMoveMode()
+    #expect(vm.moveMode)
+
+    vm.toggleSpaceMoveMode()
+
+    #expect(!vm.moveMode)
+    #expect(vm.markedWindowID == nil)
+    #expect(vm.spaceMoveMode)
+  }
+
+  @Test("Entering window-move mode cancels space-move mode")
+  func windowMoveCancelsSpaceMove() {
+    let vm = makeViewModel()
+    vm.selectedItem = .windowRow(20)
+    vm.toggleSpaceMoveMode()
+    #expect(vm.spaceMoveMode)
+
+    // Entering space-move mode moved selection to the space header; re-select
+    // the row the way a user would before invoking window-move mode.
+    vm.selectedItem = .windowRow(20)
+    vm.toggleMoveMode()
+
+    #expect(!vm.spaceMoveMode)
+    #expect(vm.markedSpaceID == nil)
+    #expect(vm.moveMode)
+  }
+}

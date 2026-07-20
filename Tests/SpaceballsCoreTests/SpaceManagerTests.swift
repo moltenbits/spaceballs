@@ -1096,3 +1096,46 @@ struct AppFilteringTests {
     #expect(windows.count == 1)
   }
 }
+
+// MARK: - Move Space to Display (headless guards)
+
+@Suite("Move Space Guards")
+struct MoveSpaceGuardTests {
+
+  private func makeManager() -> SpaceManager {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-A",
+        spaces: [
+          makeSpaceDict(id: 1, uuid: "uuid-1"),
+          makeSpaceDict(id: 2, uuid: "uuid-2"),
+        ],
+        currentSpaceID: 1),
+      makeDisplayDict(
+        displayUUID: "display-B",
+        spaces: [
+          makeSpaceDict(id: 3, uuid: "uuid-3"),
+          makeSpaceDict(id: 4, uuid: "uuid-4"),
+        ],
+        currentSpaceID: 3),
+    ]
+    return SpaceManager(dataSource: ds)
+  }
+
+  @Test("Unknown space throws spaceNotFound before any AX interaction")
+  func unknownSpaceThrows() {
+    let manager = makeManager()
+    #expect(throws: SpaceMoveError.spaceNotFound(spaceID: 99)) {
+      try manager.moveSpaceToDisplay(spaceID: 99, targetDisplayUUID: "display-A")
+    }
+  }
+
+  @Test("Same-display move throws alreadyOnTargetDisplay before any AX interaction")
+  func sameDisplayThrows() {
+    let manager = makeManager()
+    #expect(throws: SpaceMoveError.alreadyOnTargetDisplay(spaceID: 4)) {
+      try manager.moveSpaceToDisplay(spaceID: 4, targetDisplayUUID: "display-B")
+    }
+  }
+}
