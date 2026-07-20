@@ -2332,7 +2332,7 @@ public class SpaceManager {
       // An immediate drop can snap the tile back to its source display — MC
       // needs a beat with the tile hovering over the bar to accept the drop.
       // Stationary drag events (not a bare sleep) keep the drag session alive.
-      for _ in 0..<12 {
+      for _ in 0..<7 {
         Self.postMouseDragEvent(at: dropPoint)
         Thread.sleep(forTimeInterval: 0.05)
       }
