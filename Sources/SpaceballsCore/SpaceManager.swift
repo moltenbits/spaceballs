@@ -2296,8 +2296,14 @@ public class SpaceManager {
         return CGPoint(x: barPos.x + barSize.width / 2, y: barPos.y + barSize.height / 2)
       }
 
+      // Cross-display paths span thousands of points on large displays, so
+      // stride much longer than the window-move glide (40) — the tile doesn't
+      // need pixel-accurate tracking mid-flight, and homingDrag lands exactly
+      // on the aim for the final step. The settle + dwell at the bar are
+      // unchanged.
       let arrival = Self.homingDrag(
         from: nudge,
+        stepLength: 160,
         read: readDropTarget,
         move: { point in
           Self.postMouseDragEvent(at: point)
