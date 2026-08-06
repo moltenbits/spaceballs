@@ -179,6 +179,28 @@ struct ActivationDiagnosticsTests {
     #expect(manager.spaceWakeFallbackTargetForActivation(windowID: 3) == nil)
     #expect(manager.spaceWakeFallbackTargetForActivation(windowID: 4) == nil)
   }
+
+  @Test("Instant window activation succeeds only after the target becomes current")
+  func instantWindowActivationVerifiesTargetSpace() {
+    let ds = MutableSpaceSwitchDataSource()
+    let switcher = InstantSpaceSwitchingSpy(result: .switched) { target in
+      ds.currentSpaceID = Int(target.id)
+    }
+    let manager = SpaceManager(dataSource: ds, instantSpaceSwitcher: switcher)
+
+    #expect(manager.prepareInstantWindowActivation(windowID: 42, timeout: 0.01))
+    #expect(switcher.targetSpaceIDs == [11])
+  }
+
+  @Test("Instant window activation preserves the native fallback when unconfirmed")
+  func instantWindowActivationRequiresConfirmation() {
+    let ds = MutableSpaceSwitchDataSource()
+    let switcher = InstantSpaceSwitchingSpy(result: .switched)
+    let manager = SpaceManager(dataSource: ds, instantSpaceSwitcher: switcher)
+
+    #expect(!manager.prepareInstantWindowActivation(windowID: 42, timeout: 0))
+    #expect(switcher.targetSpaceIDs == [11])
+  }
 }
 
 @Suite("Space Parsing")
@@ -358,6 +380,24 @@ struct SpaceSwitchingTests {
     return SpaceManager(dataSource: ds)
   }
 
+  private func makeManager(
+    currentSpaceID: Int, instantSpaceSwitcher: any InstantSpaceSwitching
+  ) -> SpaceManager {
+    var ds = MockDataSource()
+    ds.displaySpaces = [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 1, uuid: "uuid-1"),
+          makeSpaceDict(id: 2, uuid: "uuid-2"),
+          makeSpaceDict(id: 3, uuid: "uuid-3", type: 4),
+        ],
+        currentSpaceID: currentSpaceID
+      )
+    ]
+    return SpaceManager(dataSource: ds, instantSpaceSwitcher: instantSpaceSwitcher)
+  }
+
   @Test("Switching to the already-current space is a no-op")
   func switchToCurrentSpaceIsNoOp() throws {
     // Must return before requiring Accessibility trust or a live display —
@@ -375,11 +415,67 @@ struct SpaceSwitchingTests {
     }
   }
 
+  @Test("A successful instant switch bypasses the Mission Control fallback")
+  func instantSwitchBypassesFallback() throws {
+    let switcher = InstantSpaceSwitchingSpy(result: .switched)
+    let manager = makeManager(currentSpaceID: 2, instantSpaceSwitcher: switcher)
+
+    try manager.switchToSpace(id: 1)
+
+    #expect(switcher.targetSpaceIDs == [1])
+  }
+
   @Test("A current fullscreen space still throws notDesktopSpace")
   func currentFullscreenSpaceStillThrows() {
     #expect(throws: SpaceSwitchError.notDesktopSpace(spaceID: 3)) {
       try makeManager(currentSpaceID: 3).switchToSpace(id: 3)
     }
+  }
+}
+
+private final class InstantSpaceSwitchingSpy: InstantSpaceSwitching {
+  let result: InstantSpaceSwitchResult
+  let onSwitch: ((SpaceInfo) -> Void)?
+  var targetSpaceIDs: [UInt64] = []
+
+  init(
+    result: InstantSpaceSwitchResult,
+    onSwitch: ((SpaceInfo) -> Void)? = nil
+  ) {
+    self.result = result
+    self.onSwitch = onSwitch
+  }
+
+  func switchToSpace(_ target: SpaceInfo, among spaces: [SpaceInfo])
+    -> InstantSpaceSwitchResult
+  {
+    targetSpaceIDs.append(target.id)
+    onSwitch?(target)
+    return result
+  }
+}
+
+private final class MutableSpaceSwitchDataSource: SystemDataSource {
+  var currentSpaceID = 10
+
+  func fetchManagedDisplaySpaces() -> [[String: Any]] {
+    [
+      makeDisplayDict(
+        displayUUID: "display-1",
+        spaces: [
+          makeSpaceDict(id: 10, uuid: "space-current"),
+          makeSpaceDict(id: 11, uuid: "space-target"),
+        ],
+        currentSpaceID: currentSpaceID)
+    ]
+  }
+
+  func fetchWindowList() -> [[String: Any]] { [] }
+
+  func fetchOnScreenWindowList() -> [[String: Any]] { [] }
+
+  func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] {
+    windowID == 42 ? [11] : []
   }
 }
 

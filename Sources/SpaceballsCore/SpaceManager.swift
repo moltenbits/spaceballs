@@ -52,6 +52,7 @@ public struct WindowInfo {
 
 public class SpaceManager {
   private let dataSource: SystemDataSource
+  private let instantSpaceSwitcher: any InstantSpaceSwitching
   private let selfPID = ProcessInfo.processInfo.processIdentifier
 
   /// Window IDs confirmed closed via an AX liveness check while their Space was
@@ -79,6 +80,15 @@ public class SpaceManager {
 
   public init(dataSource: SystemDataSource = CGSDataSource()) {
     self.dataSource = dataSource
+    self.instantSpaceSwitcher = DockSwipeSpaceSwitcher()
+  }
+
+  init(
+    dataSource: SystemDataSource,
+    instantSpaceSwitcher: any InstantSpaceSwitching
+  ) {
+    self.dataSource = dataSource
+    self.instantSpaceSwitcher = instantSpaceSwitcher
   }
 
   private typealias AppInfo = (policy: NSApplication.ActivationPolicy, bundleID: String?)
@@ -442,10 +452,10 @@ public class SpaceManager {
 
   /// Switches to a space by its ManagedSpaceID.
   ///
-  /// Enumerates all spaces, finds the one with the given ID, computes its
-  /// ordinal index among desktop spaces on the same display, resolves the
-  /// display UUID to a CGDirectDisplayID, and calls
-  /// `switchToSpace(spaceIndex:screenNumber:)`.
+  /// Prefers a synthetic high-velocity DockSwipe, which performs the real
+  /// transition without its slide animation. If that private path cannot be
+  /// prepared safely, falls back to pressing the target tile through Mission
+  /// Control's Accessibility hierarchy.
   public func switchToSpace(id spaceID: UInt64) throws {
     let allSpaces = getAllSpaces()
     guard let targetSpace = allSpaces.first(where: { $0.id == spaceID }) else {
@@ -459,6 +469,16 @@ public class SpaceManager {
     // Already the active Space on its display — switching would only flash
     // Mission Control (the empty-space path) for a no-op.
     guard !targetSpace.isCurrent else { return }
+
+    switch instantSpaceSwitcher.switchToSpace(targetSpace, among: allSpaces) {
+    case .switched:
+      Diagnostics.log("space-switch", "space \(spaceID) path=dock-swipe")
+      return
+    case .alreadyThere:
+      return
+    case .declined:
+      break
+    }
 
     guard Self.ensureAccessibilityTrusted() else {
       throw SpaceSwitchError.accessibilityNotTrusted
@@ -487,9 +507,9 @@ public class SpaceManager {
   }
 
   /// Activates a Space the way the switcher panel does: by activating a
-  /// window on it when one exists — a plain window activation carries the
-  /// space switch with it, no Mission Control involved — and only falling
-  /// back to the Dock's Mission Control interface for empty Spaces.
+  /// window on it when one exists — with an instant, verified DockSwipe
+  /// pre-switch where supported — and only falling back to the direct Space
+  /// switching path when the Space is empty.
   /// Returns true when the fast windowed path succeeded.
   @discardableResult
   public func activateSpace(id spaceID: UInt64) throws -> Bool {
@@ -1090,12 +1110,14 @@ public class SpaceManager {
   /// Activates (brings to front) the window with the given CGWindowID.
   ///
   /// Uses the same approach as AltTab:
-  /// 1. Find the target window's AXUIElement via brute-force enumeration
+  /// 1. Resolve the target window's owning process
+  /// 2. Verify AX trust and pre-switch a uniquely mapped off-Space desktop
+  ///    with DockSwipe
+  /// 3. Find the target window's AXUIElement via standard or brute-force lookup
   ///    (kAXWindowsAttribute cannot see windows on other Spaces)
-  /// 2. `_SLPSSetFrontProcessWithOptions` — targets the specific CGWindowID,
-  ///    triggering macOS's automatic space-switch animation
-  /// 3. `SLPSPostEventRecordTo` — synthetic key-window events
-  /// 4. `AXUIElementPerformAction(kAXRaiseAction)` — z-order raise
+  /// 4. `_SLPSSetFrontProcessWithOptions` and `SLPSPostEventRecordTo` — target
+  ///    the specific CGWindowID and synthesize key-window events
+  /// 5. `AXUIElementPerformAction(kAXRaiseAction)` — z-order raise
   ///
   /// Requires Accessibility permission to be granted to the calling process.
   public func activateWindow(id windowID: Int) throws {
@@ -1128,7 +1150,7 @@ public class SpaceManager {
 
     let pid = pid_t(rawPID)
     let targetCGWindowID = CGWindowID(windowID)
-    let spaceWakeFallbackTarget = spaceWakeFallbackTargetForActivation(windowID: windowID)
+    var spaceWakeFallbackTarget = spaceWakeFallbackTargetForActivation(windowID: windowID)
 
     Diagnostics.log(
       "activate",
@@ -1150,6 +1172,10 @@ public class SpaceManager {
           app: ownerName)
       }
       return
+    }
+
+    if prepareInstantWindowActivation(windowID: windowID, timeout: 0.5) {
+      spaceWakeFallbackTarget = nil
     }
 
     // 3. Try the standard kAXWindowsAttribute first (fast, works for same-space windows).
@@ -2990,6 +3016,28 @@ public class SpaceManager {
       return nil
     }
     return targetSpace
+  }
+
+  /// Moves to an off-Space window's unique desktop with a DockSwipe before
+  /// activating it. Once CGS confirms the target is current, the ordinary
+  /// SkyLight/AX activation no longer triggers macOS's slide animation.
+  /// Returns false when the target is sticky/current/unsupported, the instant
+  /// path declines, or WindowServer does not confirm the switch in time.
+  func prepareInstantWindowActivation(
+    windowID: Int, timeout: TimeInterval
+  ) -> Bool {
+    guard let target = spaceWakeFallbackTargetForActivation(windowID: windowID) else {
+      return false
+    }
+    let spaces = getAllSpaces()
+    guard instantSpaceSwitcher.switchToSpace(target, among: spaces) == .switched else {
+      return false
+    }
+    let switched = waitForCurrentSpace(target.id, timeout: timeout)
+    Diagnostics.log(
+      "activate",
+      "windowID=\(windowID) path=dock-swipe targetSpaceID=\(target.id) verified=\(switched)")
+    return switched
   }
 
   private func currentSpacesForActivationDiagnostics() -> String {

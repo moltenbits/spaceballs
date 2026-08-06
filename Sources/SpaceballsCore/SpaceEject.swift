@@ -165,15 +165,14 @@ extension SpaceManager {
     guard !moves.isEmpty else { return [] }
 
     // MC refuses to drag a display's current space, so FIRST park each
-    // affected display on a staying space. switchToSpace presses a tile in
-    // its own Mission Control appearance — and the awake notification that
-    // opens MC is a TOGGLE — so the switches run strictly one at a time,
-    // each verified via CGS and waited out until Mission Control is fully
-    // gone, before the next switch (or the drag session) opens MC again.
+    // affected display on a staying space. The instant path avoids Mission
+    // Control; its fallback presses a tile after sending an awake notification
+    // that behaves as a TOGGLE. Run switches strictly one at a time, verify
+    // each via CGS, and wait out any fallback Mission Control appearance
+    // before the next switch or drag session.
     for preSwitch in preSwitches {
-      // The same activation the switcher panel uses: a window on the target
-      // Space carries the switch with it — no Mission Control round at all.
-      // Only an empty Space needs the Dock's MC interface.
+      // Use the same activation path as the switcher panel. It prefers a
+      // verified DockSwipe and retains the existing native/MC fallbacks.
       do {
         try activateSpace(id: preSwitch.toSpaceID)
       } catch {
@@ -245,9 +244,9 @@ extension SpaceManager {
   }
 
   /// Reactivates the space that was active on each display at eject time,
-  /// once that space is back home. switchToSpace presses a Mission Control
-  /// tile (and the awake that opens MC is a toggle), so reactivations run
-  /// strictly one at a time, each waited out until MC is fully gone.
+  /// once that space is back home. Reactivations run strictly one at a time;
+  /// instant switches have nothing to dismiss, while the fallback's Mission
+  /// Control appearance is fully waited out before continuing.
   /// Records for spaces that no longer exist are dropped; records whose
   /// space or display isn't back yet are kept for a later restore.
   private func reactivateRecordedActiveSpaces(ejectStore: EjectRecordStoring) {

@@ -82,7 +82,7 @@ public final class WorkspaceRestorer {
       // switching to ensure apps open on the correct display.
       do {
         try spaceManager.switchToSpace(id: spaceID)
-        Thread.sleep(forTimeInterval: 2.0)  // Wait for space switch animation
+        Thread.sleep(forTimeInterval: 2.0)  // Let focus and any fallback transition settle
         spaceManager.clickDesktopOnDisplay(forSpaceID: spaceID)
         Thread.sleep(forTimeInterval: 0.5)
       } catch {
