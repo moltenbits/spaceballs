@@ -6,6 +6,7 @@ This file provides repository guidance for coding agents. Follow it when inspect
 
 - [What This Is](#what-this-is)
 - [Build & Run Commands](#build--run-commands)
+- [Pull Requests](#pull-requests)
 - [Architecture](#architecture)
   - [Package Structure](#package-structure)
   - [Source Layout](#source-layout)
@@ -50,6 +51,10 @@ make clean        # Remove .build/ and dist/
 Underlying tool: Swift Package Manager (`swift build`, `swift test`, etc.).
 
 **After finishing any requested code change, automatically run `make everything` to install it.**
+
+## Pull Requests
+
+Every PR body must follow `.github/pull_request_template.md`: fill in its sections (Fixes, Related, TLDR, Summarized Work, Operational Impact) and write "None" in a section that has nothing rather than dropping it. `gh pr create --body`/`--body-file` bypasses the template, so read the file and reproduce its structure yourself before opening or editing a PR. Prefix each issue under Fixes with `Fixes` so it closes on merge, and cite the abbreviated commit SHAs (plain text, not inline code) that contributed to each Summarized Work item.
 
 ## Architecture
 
