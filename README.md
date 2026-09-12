@@ -238,7 +238,9 @@ spaceballs workspace list               # Show configured workspaces and their l
 spaceballs workspace restore            # Create missing spaces and launch configured apps
 ```
 
-Workspaces are configured in Settings and included in settings export/import.
+Workspaces are configured in Settings → Workspaces and included in settings export/import.
+Open Workspaces in the switcher to launch a configured workspace, or choose All Workspaces to restore them all.
+New Space creates an empty macOS Space.
 
 ### CLI
 

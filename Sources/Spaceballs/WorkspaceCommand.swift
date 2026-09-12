@@ -38,7 +38,7 @@ struct RestoreWorkspaceCommand: ParsableCommand {
     }
 
     guard !workspaces.isEmpty else {
-      print("No workspaces configured. Add them in Settings > Spaces.")
+      print("No workspaces configured. Add them in Settings > Workspaces.")
       return
     }
 

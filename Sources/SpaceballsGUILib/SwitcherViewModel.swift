@@ -171,7 +171,7 @@ public final class SwitcherViewModel: ObservableObject {
     if !workspaces.isEmpty {
       items.append(
         CreateMenuItem(
-          id: workspaces.count + 2, label: "All Spaces",
+          id: workspaces.count + 2, label: "All Workspaces",
           workspaceIndex: Self.allSpacesWorkspaceIndex))
     }
     createMenuItems = items

@@ -30,7 +30,7 @@ struct CreateCommand: ParsableCommand {
       let settings = AppSettings()
       let defaultNames = settings.customSpaceNames
       guard !defaultNames.isEmpty else {
-        print("No default space names defined. Add them in Settings > Spaces.")
+        print("No default space names defined. Add them in Settings > Workspaces.")
         return
       }
 

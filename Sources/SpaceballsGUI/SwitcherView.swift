@@ -349,7 +349,7 @@ struct SwitcherView: View {
           .frame(width: iconSize, height: iconSize)
           .frame(width: iconFrame, height: iconFrame)
           .foregroundStyle(isSelected ? .white : .secondary)
-        Text("Spaces")
+        Text("Workspaces")
           .font(.system(size: CGFloat(appSettings.textSize)))
           .foregroundStyle(isSelected ? .white : .secondary)
       }

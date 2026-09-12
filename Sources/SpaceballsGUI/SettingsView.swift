@@ -7,7 +7,7 @@ import SwiftUI
 enum SettingsPane: String, CaseIterable, Identifiable {
   case general
   case appearance
-  case spaces
+  case workspaces
   case resize
   case shortcuts
   case timing
@@ -20,7 +20,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   var label: String {
     switch self {
     case .general: "General"
-    case .spaces: "Spaces"
+    case .workspaces: "Workspaces"
     case .shortcuts: "Shortcuts"
     case .timing: "Timing"
     case .resize: "Resize"
@@ -34,7 +34,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
   var icon: String {
     switch self {
     case .general: "gearshape"
-    case .spaces: "square.grid.2x2"
+    case .workspaces: "square.grid.2x2"
     case .shortcuts: "keyboard"
     case .timing: "timer"
     case .resize: "rectangle.split.3x3"
@@ -84,8 +84,8 @@ struct SettingsView: View {
     switch selectedPane {
     case .general:
       GeneralPane(settings: appSettings)
-    case .spaces:
-      SpacesPane(settings: appSettings)
+    case .workspaces:
+      WorkspacesPane(settings: appSettings)
     case .shortcuts:
       ShortcutsPane(settings: appSettings)
     case .timing:

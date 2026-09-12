@@ -2,7 +2,7 @@ import SpaceballsCore
 import SpaceballsGUILib
 import SwiftUI
 
-struct SpacesPane: View {
+struct WorkspacesPane: View {
   @ObservedObject var settings: AppSettings
   @State private var selection: Int? = nil
   @State private var editingIndex: Int? = nil
@@ -13,10 +13,10 @@ struct SpacesPane: View {
   private let footerBg = Color(nsColor: .windowBackgroundColor)
 
   var body: some View {
-    spacesListView
+    workspacesListView
   }
 
-  private var spacesListView: some View {
+  private var workspacesListView: some View {
     VStack(spacing: 0) {
       // Description
       Text(
@@ -37,7 +37,7 @@ struct SpacesPane: View {
         Rectangle()
           .fill(Color.primary.opacity(0.05))
           .frame(height: 1)
-        SpaceNameRow(
+        WorkspaceRow(
           name: workspace.name,
           launcherCount: workspace.launchers.count,
           isSelected: selection == index,
@@ -243,7 +243,7 @@ struct SpacesPane: View {
 
 // MARK: - Row
 
-private struct SpaceNameRow: View {
+private struct WorkspaceRow: View {
   let name: String
   let launcherCount: Int
   let isSelected: Bool
