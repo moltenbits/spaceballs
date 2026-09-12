@@ -241,7 +241,8 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .previousDisplay: "Moves to the display on the left (Shift optional)"
     case .renameSpace: "Starts renaming the selected space"
     case .cycleSortOrder: "Cycles through space sort orders"
-    case .createSpace: "Opens the Workspaces menu to launch a workspace or create an empty macOS Space"
+    case .createSpace:
+      "Opens the Workspaces menu to launch a workspace or create an empty macOS Space"
     case .closeWindow: "Closes the selected window (Shift closes the space)"
     case .minimizeWindow:
       "Minimizes the selected window (Shift minimizes every window in its Space)"

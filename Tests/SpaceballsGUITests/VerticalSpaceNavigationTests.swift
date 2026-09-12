@@ -162,7 +162,8 @@ struct VerticalSpaceNavigationTests {
     #expect(vm.selectedItem == firstItem(of: lower[lower.count - 1]))
   }
 
-  @Test("Down from the meta display's last space visits Workspaces, Settings, Eject, then crosses on")
+  @Test(
+    "Down from the meta display's last space visits Workspaces, Settings, Eject, then crosses on")
   func downThroughMetaRows() {
     let vm = makeViewModel(arranged: true)
     vm.metaRowsDisplayUUID = "display-lower"
