@@ -9,7 +9,7 @@ struct CreateCommand: ParsableCommand {
     abstract: "Create new desktop Space(s)"
   )
 
-  @Flag(name: .long, help: "Create missing spaces from your default space names list")
+  @Flag(name: .long, help: "Create missing spaces from your configured workspaces")
   var defaults = false
 
   @Argument(
@@ -30,7 +30,7 @@ struct CreateCommand: ParsableCommand {
       let settings = AppSettings()
       let defaultNames = settings.customSpaceNames
       guard !defaultNames.isEmpty else {
-        print("No default space names defined. Add them in Settings > Spaces.")
+        print("No workspaces configured. Add them in Settings > Workspaces.")
         return
       }
 
@@ -39,7 +39,7 @@ struct CreateCommand: ParsableCommand {
       if created > 0 {
         print("Created \(created) space\(created == 1 ? "" : "s")")
       } else {
-        print("All default spaces already exist.")
+        print("All configured workspace spaces already exist.")
       }
     } else if let arg = argument, Int(arg) == nil {
       try manager.createNamedSpaceSync(name: arg, spaceNameStore: store)

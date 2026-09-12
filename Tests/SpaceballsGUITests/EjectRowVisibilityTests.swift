@@ -129,7 +129,7 @@ struct EjectRowVisibilityTests {
     #expect(!vm.ejectAvailable)
   }
 
-  @Test("Flat navigation cycles Spaces and Settings only when Eject is hidden")
+  @Test("Flat navigation cycles Workspaces and Settings only when Eject is hidden")
   func flatCycleSkipsHiddenEject() {
     let vm = makeBuiltinOnlyViewModel()
 
@@ -162,7 +162,7 @@ struct EjectRowVisibilityTests {
     #expect(vm.selectedItem == .settings)
   }
 
-  @Test("Mode 3 single display: vertical wrap visits Spaces and Settings only")
+  @Test("Mode 3 single display: vertical wrap visits Workspaces and Settings only")
   func mode3SingleDisplayWrapSkipsEject() {
     let vm = makeBuiltinOnlyViewModel()
     vm.displayArrangement = DisplayArrangement(displays: [
@@ -171,7 +171,7 @@ struct EjectRowVisibilityTests {
     vm.metaRowsDisplayUUID = "display-builtin"
     vm.displayOrder = ["display-builtin"]
 
-    // Down from the last space wraps through Spaces → Settings → first space.
+    // Down from the last space wraps through Workspaces → Settings → first space.
     vm.selectedItem = .windowRow(20)
     vm.moveToNextSpace()
     #expect(vm.selectedItem == .spaces)

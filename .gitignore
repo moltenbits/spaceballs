@@ -42,3 +42,4 @@ dist/
 *~
 .claude
 .env
+/.codex/hooks.json

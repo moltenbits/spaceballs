@@ -93,7 +93,7 @@ way while building Spaceballs:
   configurable presets (pressing a preset again cycles it across screens)
 - **Keyboard-driven** — Cmd+Tab to cycle, Cmd+\` to go back; all shortcuts customizable in Settings
 - **Window management** — Cmd+M minimizes a window while keeping the panel open; Cmd+Shift+M minimizes every window in the selected Space. Minimized windows move to the bottom of their Space and display a faded icon. Cmd+W closes a window, and Cmd+Q quits an app
-- **Create and close spaces** - create new spaces (Cmd+N) or close existing ones (Cmd+Shift+W)
+- **Create and close spaces** - open the Workspaces menu to launch a workspace or create a new Space (Cmd+N), or close an existing Space (Cmd+Shift+W)
 - **Custom space names** — select a Space and press Cmd+R to rename inline (names are local to Spaceballs; macOS does not expose Space names to apps)
 - **Multi-display** — show the panel on the active display, primary display, or per display
 - **Workspaces** — define named Spaces with app launchers, then restore them all in one shot (`spaceballs workspace restore`)
@@ -144,7 +144,7 @@ Once running, the app lives in the background (no Dock icon). Keyboard shortcuts
 | Cmd+Shift+W | Close selected space |
 | Cmd+Q | Quit selected app |
 | Cmd+R | Rename selected space (Enter to save, Escape to cancel) |
-| Cmd+N | Create a new space |
+| Cmd+N | Open the Workspaces menu (launch a workspace or create a new Space) |
 | Cmd+S | Cycle sort order (MRU / Ordinal / Name) |
 | Cmd+E | Eject: move all external displays' non-default Spaces to the built-in display |
 | Cmd+Shift+E | Restore ejected Spaces to their original displays |
@@ -238,7 +238,9 @@ spaceballs workspace list               # Show configured workspaces and their l
 spaceballs workspace restore            # Create missing spaces and launch configured apps
 ```
 
-Workspaces are configured in Settings and included in settings export/import.
+Workspaces are configured in Settings → Workspaces and included in settings export/import.
+Open Workspaces in the switcher to launch a configured workspace, or choose All Workspaces to restore them all.
+New Space creates an empty macOS Space.
 
 ### CLI
 
@@ -253,7 +255,7 @@ spaceballs switch <space>             # Switch to a Space by ID or name
 spaceballs create                     # Create a new unnamed space
 spaceballs create "Work"              # Create a space and name it
 spaceballs create 3                   # Create 3 unnamed spaces
-spaceballs create --defaults          # Create missing spaces from your default space names list
+spaceballs create --defaults          # Create missing spaces from your configured workspaces
 spaceballs close <space>              # Close a Space by ID or name
 spaceballs rename <space-id> [name]   # Set or clear a custom Space name
 spaceballs workspace list             # Show configured workspaces and their launchers

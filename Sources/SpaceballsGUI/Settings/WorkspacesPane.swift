@@ -2,7 +2,7 @@ import SpaceballsCore
 import SpaceballsGUILib
 import SwiftUI
 
-struct SpacesPane: View {
+struct WorkspacesPane: View {
   @ObservedObject var settings: AppSettings
   @State private var selection: Int? = nil
   @State private var editingIndex: Int? = nil
@@ -13,14 +13,30 @@ struct SpacesPane: View {
   private let footerBg = Color(nsColor: .windowBackgroundColor)
 
   var body: some View {
-    spacesListView
+    VStack(alignment: .leading, spacing: 0) {
+      workspacesListView
+      Text(
+        "Due to quirks with how macOS manages Spaces when disconnecting/reconnecting external displays, "
+          + "opening a Workspace always opens on the primary display. Once opened, the Space can be moved "
+          + "to any other display using the Move Space feature "
+          + "(Cmd-Shift-\(KeyCodeNames.displayName(for: settings.keyBindings.moveWindow)) while the space is selected in Spaceballs) "
+          + "or traditional Mission Control."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      .padding(.horizontal)
+      .padding(.bottom)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
-  private var spacesListView: some View {
+  private var workspacesListView: some View {
     VStack(spacing: 0) {
       // Description
       Text(
-        "Define your workspaces. Each workspace maps to a macOS Space and can have apps configured to launch automatically."
+        "Workspaces are pre-defined Spaces configured to launch apps automatically. "
+          + "Workspaces defined here can be accessed and opened from the Workspaces submenu item on the primary display's panel."
       )
       .font(.subheadline)
       .foregroundStyle(.secondary)
@@ -37,7 +53,7 @@ struct SpacesPane: View {
         Rectangle()
           .fill(Color.primary.opacity(0.05))
           .frame(height: 1)
-        SpaceNameRow(
+        WorkspaceRow(
           name: workspace.name,
           launcherCount: workspace.launchers.count,
           isSelected: selection == index,
@@ -120,7 +136,7 @@ struct SpacesPane: View {
     .background(listBg)
     .clipShape(RoundedRectangle(cornerRadius: 10))
     .padding()
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .frame(maxWidth: .infinity, alignment: .top)
     .background {
       Color.clear
         .contentShape(Rectangle())
@@ -243,7 +259,7 @@ struct SpacesPane: View {
 
 // MARK: - Row
 
-private struct SpaceNameRow: View {
+private struct WorkspaceRow: View {
   let name: String
   let launcherCount: Int
   let isSelected: Bool
