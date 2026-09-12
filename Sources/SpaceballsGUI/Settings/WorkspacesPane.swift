@@ -13,14 +13,30 @@ struct WorkspacesPane: View {
   private let footerBg = Color(nsColor: .windowBackgroundColor)
 
   var body: some View {
-    workspacesListView
+    VStack(alignment: .leading, spacing: 0) {
+      workspacesListView
+      Text(
+        "Due to quirks with how macOS manages Spaces when disconnecting/reconnecting external displays, "
+          + "opening a Workspace always opens on the primary display. Once opened, the Space can be moved "
+          + "to any other display using the Move Space feature "
+          + "(Cmd-Shift-\(KeyCodeNames.displayName(for: settings.keyBindings.moveWindow)) while the space is selected in Spaceballs) "
+          + "or traditional Mission Control"
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      .padding(.horizontal)
+      .padding(.bottom)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   private var workspacesListView: some View {
     VStack(spacing: 0) {
       // Description
       Text(
-        "Define your workspaces. Each workspace maps to a macOS Space and can have apps configured to launch automatically."
+        "Workspaces are pre-defined Spaces configured to launch apps automatically. "
+          + "Workspaces defined here can be accessed and opened from the Workspaces submenu item on the primary displays panel."
       )
       .font(.subheadline)
       .foregroundStyle(.secondary)
@@ -120,7 +136,7 @@ struct WorkspacesPane: View {
     .background(listBg)
     .clipShape(RoundedRectangle(cornerRadius: 10))
     .padding()
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .frame(maxWidth: .infinity, alignment: .top)
     .background {
       Color.clear
         .contentShape(Rectangle())
