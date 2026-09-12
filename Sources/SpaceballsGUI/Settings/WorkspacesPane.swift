@@ -20,7 +20,7 @@ struct WorkspacesPane: View {
           + "opening a Workspace always opens on the primary display. Once opened, the Space can be moved "
           + "to any other display using the Move Space feature "
           + "(Cmd-Shift-\(KeyCodeNames.displayName(for: settings.keyBindings.moveWindow)) while the space is selected in Spaceballs) "
-          + "or traditional Mission Control"
+          + "or traditional Mission Control."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -36,7 +36,7 @@ struct WorkspacesPane: View {
       // Description
       Text(
         "Workspaces are pre-defined Spaces configured to launch apps automatically. "
-          + "Workspaces defined here can be accessed and opened from the Workspaces submenu item on the primary displays panel."
+          + "Workspaces defined here can be accessed and opened from the Workspaces submenu item on the primary display's panel."
       )
       .font(.subheadline)
       .foregroundStyle(.secondary)

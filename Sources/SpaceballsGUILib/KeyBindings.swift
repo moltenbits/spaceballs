@@ -246,7 +246,8 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .minimizeWindow:
       "Minimizes the selected window (Shift minimizes every window in its Space)"
     case .quitApp: "Quits the app owning the selected window"
-    case .moveWindow: "Marks the selected window for moving to another space"
+    case .moveWindow:
+      "Marks the selected window for moving to another space (Shift moves the selected Space to another display)"
     case .ejectSpaces:
       "Moves all external displays' Spaces to the built-in display for safe disconnect "
         + "(Shift restores them)"
