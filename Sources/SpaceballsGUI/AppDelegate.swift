@@ -364,7 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
       viewModel.displayOrder = order
 
-      // The Spaces/Settings rows live on the built-in display's panel only
+      // The Workspaces/Settings rows live on the built-in display's panel only
       // (falling back to the first screen when the lid is closed).
       let screenUUIDs = NSScreen.screens.compactMap { Self.displayUUID(for: $0) }
       let builtin = SpaceManager.builtinDisplayUUID()

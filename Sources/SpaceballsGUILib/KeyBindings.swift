@@ -220,7 +220,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .previousDisplay: "Display to the left"
     case .renameSpace: "Rename space"
     case .cycleSortOrder: "Cycle sort order"
-    case .createSpace: "Create space menu"
+    case .createSpace: "Workspaces menu"
     case .closeWindow: "Close window"
     case .minimizeWindow: "Minimize window"
     case .quitApp: "Quit app"
@@ -241,7 +241,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable {
     case .previousDisplay: "Moves to the display on the left (Shift optional)"
     case .renameSpace: "Starts renaming the selected space"
     case .cycleSortOrder: "Cycles through space sort orders"
-    case .createSpace: "Opens the create space menu"
+    case .createSpace: "Opens the Workspaces menu to launch a workspace or create an empty macOS Space"
     case .closeWindow: "Closes the selected window (Shift closes the space)"
     case .minimizeWindow:
       "Minimizes the selected window (Shift minimizes every window in its Space)"

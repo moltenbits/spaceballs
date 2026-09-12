@@ -255,7 +255,7 @@ spaceballs switch <space>             # Switch to a Space by ID or name
 spaceballs create                     # Create a new unnamed space
 spaceballs create "Work"              # Create a space and name it
 spaceballs create 3                   # Create 3 unnamed spaces
-spaceballs create --defaults          # Create missing spaces from your default space names list
+spaceballs create --defaults          # Create missing spaces from your configured workspaces
 spaceballs close <space>              # Close a Space by ID or name
 spaceballs rename <space-id> [name]   # Set or clear a custom Space name
 spaceballs workspace list             # Show configured workspaces and their launchers

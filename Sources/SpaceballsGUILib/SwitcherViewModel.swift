@@ -221,7 +221,7 @@ public final class SwitcherViewModel: ObservableObject {
   /// AppKit context) directional moves fall back to cycling in CGS order.
   public var displayArrangement: DisplayArrangement?
 
-  /// In mode 3 ("All" panels), the display whose panel hosts the Spaces and
+  /// In mode 3 ("All" panels), the display whose panel hosts the Workspaces and
   /// Settings rows — every other panel hides them, and the ↑/↓ space cycle
   /// visits them at this display's bottom boundary. nil (single-panel modes)
   /// shows them on every panel with no traversal detour.
@@ -903,7 +903,7 @@ public final class SwitcherViewModel: ObservableObject {
 
   /// Records the display group containing `position` so meta-row
   /// selection knows which group the user came from (highlight context and
-  /// the ↑-from-Spaces return path).
+  /// the ↑-from-Workspaces return path).
   private func rememberSettingsGroup(containing position: Int) {
     let ranges = displayGroupRanges()
     if let groupIdx = ranges.firstIndex(where: {
@@ -970,7 +970,7 @@ public final class SwitcherViewModel: ObservableObject {
       filteredSections.last(where: { $0.displayUUID == currentSection.displayUUID })?.id
         == currentSpace
     {
-      // The meta display's panel ends with the Spaces, Settings, and Eject
+      // The meta display's panel ends with the Workspaces, Settings, and Eject
       // rows — ↓ visits them before crossing off the display.
       if currentSection.displayUUID == metaRowsDisplayUUID {
         rememberSettingsGroup(containing: currentPos)
@@ -1041,7 +1041,7 @@ public final class SwitcherViewModel: ObservableObject {
       return
     }
 
-    // Eject → Settings → Spaces → last section
+    // Eject → Settings → Workspaces → last section
     if case .eject = current {
       selectedItem = .settings
       return
@@ -1088,7 +1088,7 @@ public final class SwitcherViewModel: ObservableObject {
       {
         // Entering the meta display from below lands on its bottom-most
         // offered row first: Eject (when shown), then Settings, then
-        // Spaces, then its last space.
+        // Workspaces, then its last space.
         if landing.displayUUID == metaRowsDisplayUUID {
           if let pos = items.firstIndex(of: landing.item) {
             rememberSettingsGroup(containing: pos)
