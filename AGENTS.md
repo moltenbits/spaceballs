@@ -148,21 +148,23 @@ Every other case simulates the drag:
 
 1. `activateWindow(id:)` — switch to the window's space (800ms delay for cross-space transitions; 250ms when the window is already on a current space)
 2. `CoreDockSendNotification("com.apple.expose.awake")` — open Mission Control
-3. `MissionControlContext` — navigate the Dock's AX hierarchy to find `mc.windows` (window thumbnails) and `mc.spaces.list` (space buttons)
-4. Match the target window by `AXTitle` in `mc.windows`
+3. `MissionControlTree` — locate the Mission Control AX tree (see **Where the MC tree lives** below) and its per-display `mc.display` groups, window thumbnails, and `mc.spaces.list` (space buttons)
+4. Match the target window thumbnail by its `wid` attribute (CGWindowID, macOS 27+), else by `AXTitle`
 5. `postMouseMoveAndGrab()` — hover + mouseDown on thumbnail center
 6. `postMouseDragToPoint()` — nudge 15px to initiate drag state
-7. `homingDrag()` — one continuous glide toward the target tile (matched by title "Desktop N"), re-reading its center every few steps and bending toward the latest reading. The path heads for the tile's pre-drag position; when the drag crosses into the bar, MC expands it and shifts every tile, and the re-reads bend the path onto the new center. (Tiles shift on arrival, so any fixed pre-drag coordinate would be stale.)
+7. `homingDrag()` — one continuous glide toward the target tile (located by per-display index on the target display's bar, then tracked by its own title during the drag), re-reading its aim point (`MissionControlTree.aimPoint`) every few steps and bending toward the latest reading. The path heads for the tile's pre-drag position; when the drag crosses into the bar, MC expands it and shifts every tile, and the re-reads bend the path onto the new center. (Tiles shift on arrival, so any fixed pre-drag coordinate would be stale.)
 8. `awaitStablePoint()` — after arrival, poll the tile's center (~40ms intervals, 600ms cap) until two consecutive reads agree, following any residual shift so the drop is dead-center
 9. `postMouseUp()` — drop the window dead-center on the tile
 10. `AXUIElementPerformAction(kAXPressAction)` on target space button — switch to it
 11. `activateWindow(id:)` — bring the moved window to front
 
+**Where the MC tree lives (`MissionControlTree`, `awaitMissionControlTree`):** through macOS 26 the Dock's AX tree holds an `mc` group whose children are `mc.display` groups, each with `mc.windows` (thumbnails) and `mc.spaces` → `mc.spaces.list` (the bar). On **macOS 27** the Dock still exposes the `mc` group while MC is open — it remains the open/closed signal — but as an **empty stub**; the real tree moved to the **WindowManager** process (`com.apple.WindowManager`): `mc.display` groups are direct children of its application element, window thumbnails are direct `AXButton` children of each display (no `mc.windows`) identified `<bundle id>.space.<space id>` and carrying a `wid` attribute with their CGWindowID, and the bar is unchanged. All MC flows resolve the tree through the one locator (Dock group first, WindowManager second) and read thumbnails from either layout. Two more macOS 27 quirks the geometry helpers absorb: **tile `AXPosition` is the tile's center, not its top-left** (`tileAnchor` infers this from the tiles' symmetry about the bar's center), and tile frames are taller than the bar and hang below it, so every grab/drop aims at the tile's true x center on the **bar's** vertical center (`aimPoint`); the naive frame center lands on the tile's bottom-right corner and MC refuses the drop. A display's only desktop is titled just **"Desktop"** (no number), so per-display index, not a CGS-derived "Desktop N", locates a tile (`isDesktopTile` accepts both). The window drag also slows its grab (hover, hold, 20pt glide steps) and dwells over the tile with stationary drag events before releasing, as the space-tile drag always has. `mc-dump` (DEBUG CLI) prints the tree wherever it is hosted.
+
 **Key details:**
-- Window thumbnails in MC are `AXButton` children of `mc.windows` with `AXTitle` = window title, `AXPosition`/`AXSize` = screen coordinates
+- Window thumbnails in MC are `AXButton`s (children of `mc.windows`, or of `mc.display` on macOS 27) with `AXTitle` = window title, `AXPosition`/`AXSize` = screen coordinates; on macOS 27 the built-in display's group lists thumbnails for *every* Space, not just the current one
 - Thumbnail matching (`matchWindowThumbnail`, pure/unit-tested) searches the window's own display first and prefers an exact title match on ANY display over any substring match; a substring match is accepted only when unambiguous (unique on the source display, else unique globally). MC shows every display's current space, so a similarly-titled window on another display (e.g. a terminal at the project path vs. an IDE with the project name in its title) would otherwise get grabbed and dragged instead of the real one.
 - Space buttons shift when a window is dragged into the bar (placeholder insertion). Positions must be read AFTER initiating the drag, not before.
-- Space buttons are matched by title ("Desktop N"), not index, because placeholder insertion shifts indices.
+- Space buttons are tracked by title during the drag, not index, because placeholder insertion shifts indices; the title comes from the tile at the per-display index read before the drag.
 - The `move` CLI subcommand accepts window titles or IDs, and space names or IDs.
 
 ### Moving Spaces Between Displays via Mission Control Drag
@@ -177,7 +179,7 @@ Every other case simulates the drag:
 6. Verified by polling `getAllSpaces()` until the space's `displayUUID` matches the target
 
 **Key details:**
-- **Tiles are located by per-display index, never by "Desktop N" title.** MC numbers desktops in display-arrangement order (built-in first), while `CGSCopyManagedDisplaySpaces` enumerates displays in an order that can VARY between calls — a CGS-derived global title matches MC only by luck. Per-display CGS space order does match the bar's tile order (the invariant `switchToSpace(spaceIndex:screenNumber:)` relies on). ⚠️ `moveWindowToSpace` still derives its target tile title from CGS global order — same latent unreliability, unfixed.
+- **Tiles are located by per-display index, never by "Desktop N" title.** MC numbers desktops in display-arrangement order (built-in first), while `CGSCopyManagedDisplaySpaces` enumerates displays in an order that can VARY between calls — a CGS-derived global title matches MC only by luck. Per-display CGS space order does match the bar's tile order (the invariant `switchToSpace(spaceIndex:screenNumber:)` relies on). `moveWindowToSpace` now locates its target tile the same way (falling back to the CGS-derived title only when the target display can't be resolved).
 - **The drop aims at the bar frame's center, not at tile coordinates.** Collapsed-state tiles can report frames *above* the bar (observed on portrait displays); a stale read overshoots to the display's top edge, MC shows the spring-load-into-space effect, and the drop snaps back. Tiles are laid out centered in the bar, so the frame center is a clean insertion point. (Final position within the destination bar is therefore not guaranteed.)
 - Requires ≥2 `mc.display` elements (fails early under mirroring / "Displays have separate Spaces" off)
 - MC dismissal is guarded: `com.apple.expose.awake` TOGGLES Mission Control, so it is only re-sent when the `mc` AX group is still present

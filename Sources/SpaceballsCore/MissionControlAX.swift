@@ -144,3 +144,61 @@ extension SpaceManager {
       displayTitles: displays.map { $0.map(\.title) }, windowTitle: windowTitle)
   }
 }
+
+extension MissionControlTree {
+  /// How a spaces-bar tile's `AXPosition` relates to its visible frame.
+  enum TileAnchor: Equatable {
+    /// Position is the frame's top-left corner (Dock-hosted tree, macOS ≤ 26).
+    case origin
+    /// Position is the frame's center (WindowManager-hosted tree, macOS 27).
+    case center
+  }
+
+  /// Infers the tile anchor from the bar's layout. Tiles are laid out
+  /// centered in their bar, so their reported x values sit symmetrically
+  /// about the bar's center when they are centers, and half a tile width to
+  /// its left when they are origins. Whichever reading the layout fits
+  /// better wins; a bar without tiles reads as `.origin`.
+  static func tileAnchor(tileXs: [CGFloat], tileWidth: CGFloat, barCenterX: CGFloat) -> TileAnchor {
+    guard !tileXs.isEmpty else { return .origin }
+    let mean = tileXs.reduce(0, +) / CGFloat(tileXs.count)
+    let asCenters = abs(mean - barCenterX)
+    let asOrigins = abs(mean + tileWidth / 2 - barCenterX)
+    return asCenters < asOrigins ? .center : .origin
+  }
+
+  /// The point to aim at for a tile: its horizontal center under the
+  /// inferred anchor, on the bar's vertical center. A tile's reported height
+  /// exceeds the bar's and hangs below it, so the bar's center is the only
+  /// reliable vertical aim.
+  static func dropPoint(
+    tileX: CGFloat, tileWidth: CGFloat, anchor: TileAnchor, barCenter: CGPoint
+  ) -> CGPoint {
+    let x = anchor == .center ? tileX : tileX + tileWidth / 2
+    return CGPoint(x: x, y: barCenter.y)
+  }
+
+  /// Live read of where to grab or drop on `tile`, a child of `bar`
+  /// (`mc.spaces.list`): `dropPoint` over the bar's current layout.
+  static func aimPoint(tile: AXUIElement, in bar: AXUIElement) -> CGPoint? {
+    guard let tilePosition = SpaceManager.axPosition(tile),
+      let tileSize = SpaceManager.axSize(tile),
+      let barCenter = SpaceManager.axCenter(bar)
+    else { return nil }
+    let anchor = tileAnchor(
+      tileXs: SpaceManager.axChildren(bar).compactMap { SpaceManager.axPosition($0)?.x },
+      tileWidth: tileSize.width, barCenterX: barCenter.x)
+    return dropPoint(
+      tileX: tilePosition.x, tileWidth: tileSize.width, anchor: anchor, barCenter: barCenter)
+  }
+
+  /// Whether a spaces-bar tile stands for a desktop Space: "Desktop N", or
+  /// the bare "Desktop" macOS 27 shows for a display's only desktop.
+  /// Fullscreen Spaces show app-titled tiles in the same bar.
+  static func isDesktopTile(title: String?) -> Bool {
+    guard let title else { return false }
+    if title == "Desktop" { return true }
+    guard title.hasPrefix("Desktop ") else { return false }
+    return Int(title.dropFirst("Desktop ".count)) != nil
+  }
+}
