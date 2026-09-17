@@ -12,22 +12,20 @@ concurrency:
 jobs:
   test:
     name: Build & Test
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-
+      # The xcode-27 image ships Xcode 27 as its only (beta) toolchain; a
+      # latest-stable selector finds nothing there. Use the image default
+      # and assert its major version.
       - name: Toolchain info
         run: |
           sw_vers
-          xcodebuild -version
+          xcodebuild -version | tee /dev/stderr | grep -Eq '^Xcode 27'
           swift --version
 
       - name: Build
@@ -55,7 +53,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 10
 
     steps:

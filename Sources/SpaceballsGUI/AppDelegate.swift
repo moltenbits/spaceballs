@@ -345,8 +345,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Refresh before building the display order: the MRU-top display is a
-    // refresh product.
+    // refresh product. Snapshot the user's focus from this refresh — later
+    // refreshes while navigating the panel would overwrite it.
     viewModel.refresh()
+    viewModel.captureFocusSnapshot()
 
     if multiPanel {
       // Build display order: the display of the most recently used space
@@ -1102,9 +1104,13 @@ extension AppDelegate: KeyInterceptorDelegate {
     let spaceName =
       viewModel.filteredSections.first(where: { $0.id == spaceID })?.label ?? "Space \(spaceID)"
 
-    // Capture the next MRU space before closing (sections are MRU-ordered)
-    let nextMRUSpaceID = viewModel.sections
-      .first(where: { $0.id != spaceID })?.id
+    // Decide where focus returns before the close; the panel state is gone
+    // once it hides.
+    let focusRestore = viewModel.focusRestoreTarget(afterClosing: spaceID)
+    Diagnostics.log(
+      "close-space",
+      "panel close requested space=\(spaceID) selected=\(viewModel.selectedItem) restore=\(String(describing: focusRestore))"
+    )
 
     keyInterceptor.setSuppressConfirm(true)
     viewModel.sortOverlayText = "Closing \(spaceName)..."
@@ -1118,9 +1124,31 @@ extension AppDelegate: KeyInterceptorDelegate {
     ) { [weak self] result in
       guard let self else { return }
 
-      // Switch to the next MRU space after successful close
-      if case .success = result, let nextID = nextMRUSpaceID {
-        try? self.viewModel.spaceManager.switchToSpace(id: nextID)
+      // Restore focus after a successful close: the window the user was
+      // using, else the Space that takes the closed one's place.
+      Diagnostics.log(
+        "close-space",
+        "panel close finished space=\(spaceID) result=\(result) restore=\(String(describing: focusRestore))"
+      )
+      if case .success = result {
+        switch focusRestore {
+        case .window(let windowID, let fallbackSpace):
+          Diagnostics.log("close-space", "restoring window \(windowID)")
+          do {
+            try self.viewModel.spaceManager.activateWindow(id: windowID)
+          } catch {
+            // The window can be gone by now; its Space is the next best.
+            Diagnostics.log(
+              "close-space",
+              "restore window \(windowID) failed: \(error); switching to space \(fallbackSpace)")
+            try? self.viewModel.spaceManager.switchToSpace(id: fallbackSpace)
+          }
+        case .space(let nextID):
+          Diagnostics.log("close-space", "restoring space \(nextID)")
+          try? self.viewModel.spaceManager.switchToSpace(id: nextID)
+        case nil:
+          break
+        }
       }
 
       DispatchQueue.main.async {

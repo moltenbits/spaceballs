@@ -868,19 +868,8 @@ public class SpaceManager {
     CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
     DispatchQueue.global(qos: .userInteractive).async {
-      // Poll for Mission Control AX group
-      let mcGroup: AXUIElement? = {
-        let deadline = DispatchTime.now() + .milliseconds(1000)
-        while DispatchTime.now() < deadline {
-          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") {
-            return mc
-          }
-          Thread.sleep(forTimeInterval: 0.01)
-        }
-        return nil
-      }()
-
-      guard let mcGroup else {
+      guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 1.0)
+      else {
         completion?(.failure(.missionControlNotFound))
         return
       }
@@ -897,20 +886,11 @@ public class SpaceManager {
         let requestedScreen = Self.creationDisplayID(
           requested: screenNumber,
           primary: CGMainDisplayID())
-        let displayElements: [AXUIElement]
-        if let targetDisplay = Self.axChildMatchingDisplay(
-          mcGroup, screenNumber: requestedScreen)
-        {
-          displayElements = [targetDisplay]
-        } else {
-          // Fall back to scanning every display's bar if the AX match fails.
-          displayElements = Self.axChildren(mcGroup).filter {
-            Self.axStringAttribute($0, name: "AXIdentifier") == "mc.display"
-          }
-        }
+        // Fall back to scanning every display's bar if the AX match fails.
+        let displayElements = tree.display(matching: requestedScreen).map { [$0] } ?? tree.displays
 
         for displayChild in displayElements {
-          if let mcSpaces = Self.axChildWithIdentifier(displayChild, identifier: "mc.spaces") {
+          if let mcSpaces = MissionControlTree.spacesBar(of: displayChild) {
             if let add = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.add") {
               return (add, mcSpaces)
             }
@@ -999,43 +979,48 @@ public class SpaceManager {
       Diagnostics.log("space-create", "switch-on-create: mc.spaces.list not found")
       return false
     }
-    guard let tileIndex = Self.perDisplayDesktopIndex(of: newSpace.id, in: getAllSpaces())
-    else {
-      Diagnostics.log("space-create", "switch-on-create: no tile index for id=\(newSpace.id)")
-      return false
-    }
+    return pressTileInSession(forSpace: newSpace.id, in: mcSpacesList, tag: "space-create")
+  }
 
-    // Give the fresh tile a beat to become interactive before pressing.
+  /// Ends an open Mission Control session by pressing the tile of `spaceID`
+  /// in `spacesList` (its display's `mc.spaces.list`), which zooms straight
+  /// into that Space — no dismissal animation, no separate switch. The tile
+  /// is the space's per-display DESKTOP index per CGS (the bar-order
+  /// invariant), never a title. Verified through CGS; returns whether the
+  /// Space became current. The routine every in-session activation uses:
+  /// Space creation and Space-to-display moves.
+  func pressTileInSession(forSpace spaceID: UInt64, in spacesList: AXUIElement, tag: String)
+    -> Bool
+  {
+    // Give a fresh or just-moved tile a beat to become interactive, then
+    // take the index and the bar in one go so they describe the same moment.
     Thread.sleep(forTimeInterval: 0.2)
 
-    let children = Self.axChildren(mcSpacesList)
-    guard tileIndex < children.count else {
-      Diagnostics.log(
-        "space-create",
-        "switch-on-create: tile index \(tileIndex) out of range (have \(children.count))")
+    guard let tileIndex = Self.perDisplayDesktopIndex(of: spaceID, in: getAllSpaces()) else {
+      Diagnostics.log(tag, "in-session press: no tile index for id=\(spaceID)")
       return false
     }
 
-    let tile = children[tileIndex]
-    let title = Self.axStringAttribute(tile, name: "AXTitle") ?? "?"
+    guard
+      let (tile, title) = MissionControlTree.desktopTile(in: spacesList, desktopIndex: tileIndex)
+    else {
+      Diagnostics.log(tag, "in-session press: no desktop tile at index \(tileIndex)")
+      return false
+    }
     Diagnostics.log(
-      "space-create",
-      "switch-on-create pressing tile index=\(tileIndex)/\(children.count) title=\"\(title)\" target=id=\(newSpace.id)"
-    )
+      tag, "in-session press tile index=\(tileIndex) title=\"\(title)\" target=id=\(spaceID)")
     guard AXUIElementPerformAction(tile, kAXPressAction as CFString) == .success else {
-      Diagnostics.log("space-create", "switch-on-create: tile press failed")
+      Diagnostics.log(tag, "in-session press: tile press failed")
       return false
     }
 
-    let deadline = Date().addingTimeInterval(2.0)
-    while Date() < deadline {
-      if getAllSpaces().contains(where: { $0.id == newSpace.id && $0.isCurrent }) {
-        return true
-      }
-      Thread.sleep(forTimeInterval: 0.1)
+    let landed = poll(timeout: 2.0) {
+      self.getAllSpaces().contains { $0.id == spaceID && $0.isCurrent }
     }
-    Diagnostics.log("space-create", "switch-on-create: landing not confirmed by CGS")
-    return false
+    if !landed {
+      Diagnostics.log(tag, "in-session press: landing not confirmed by CGS")
+    }
+    return landed
   }
 
   /// Synchronous version for CLI usage.
@@ -1126,19 +1111,10 @@ public class SpaceManager {
     CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
     DispatchQueue.global(qos: .userInteractive).async {
-      // Poll for Mission Control
-      let mcGroup: AXUIElement? = {
-        let deadline = DispatchTime.now() + .milliseconds(1000)
-        while DispatchTime.now() < deadline {
-          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") {
-            return mc
-          }
-          Thread.sleep(forTimeInterval: 0.01)
-        }
-        return nil
-      }()
-
-      guard let mcGroup else {
+      guard
+        let tree = Self.awaitMissionControlTree(
+          dockElement: dockElement, timeout: 1.0, requiredDisplays: [screenNumber])
+      else {
         completion?(.failure(.missionControlNotFound))
         return
       }
@@ -1146,13 +1122,13 @@ public class SpaceManager {
       Thread.sleep(forTimeInterval: 0.3)
 
       // Navigate to the spaces list
-      guard let mcDisplay = Self.axChildMatchingDisplay(mcGroup, screenNumber: screenNumber) else {
+      guard let mcDisplay = tree.display(matching: screenNumber) else {
         Self.dismissMissionControl()
         completion?(.failure(.spaceNotFound))
         return
       }
 
-      guard let mcSpaces = Self.axChildWithIdentifier(mcDisplay, identifier: "mc.spaces"),
+      guard let mcSpaces = MissionControlTree.spacesBar(of: mcDisplay),
         let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
       else {
         Self.dismissMissionControl()
@@ -1281,20 +1257,12 @@ public class SpaceManager {
     CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
     DispatchQueue.global(qos: .userInteractive).async { [self] in
-      // Poll for the Mission Control AX group to appear in the Dock's children.
-      let mcGroup: AXUIElement? = {
-        let deadline = DispatchTime.now() + .milliseconds(1000)
-        while DispatchTime.now() < deadline {
-          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") {
-            return mc
-          }
-          Thread.sleep(forTimeInterval: 0.01)
-        }
-        return nil
-      }()
-
-      guard let mcGroup else {
-        Self.reportMCFailure("switchToSpace: Mission Control AX group not found")
+      guard
+        let tree = Self.awaitMissionControlTree(
+          dockElement: dockElement, timeout: 1.0, requiredDisplays: [screenNumber])
+      else {
+        Self.reportMCFailure(
+          "switchToSpace: Mission Control AX tree not found for display \(screenNumber)")
         return
       }
 
@@ -1302,13 +1270,13 @@ public class SpaceManager {
       // appear in the tree before they're fully interactive.
       Thread.sleep(forTimeInterval: 0.3)
 
-      // Navigate: mc → mc.display (matching target display) → mc.spaces → mc.spaces.list
-      guard let mcDisplay = Self.axChildMatchingDisplay(mcGroup, screenNumber: screenNumber) else {
+      // Navigate: mc.display (matching target display) → mc.spaces → mc.spaces.list
+      guard let mcDisplay = tree.display(matching: screenNumber) else {
         Self.reportMCFailure("switchToSpace: mc.display not found for display \(screenNumber)")
         return
       }
 
-      guard let mcSpaces = Self.axChildWithIdentifier(mcDisplay, identifier: "mc.spaces") else {
+      guard let mcSpaces = MissionControlTree.spacesBar(of: mcDisplay) else {
         Self.reportMCFailure("switchToSpace: mc.spaces not found")
         return
       }
@@ -1380,7 +1348,7 @@ public class SpaceManager {
 
   // MARK: - Dock AX Helpers
 
-  private static func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+  static func axChildren(_ element: AXUIElement) -> [AXUIElement] {
     var childrenRef: CFTypeRef?
     guard
       AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
@@ -1392,7 +1360,7 @@ public class SpaceManager {
     return children
   }
 
-  private static func axChildWithIdentifier(
+  static func axChildWithIdentifier(
     _ element: AXUIElement, identifier: String
   ) -> AXUIElement? {
     for child in axChildren(element) {
@@ -1403,33 +1371,12 @@ public class SpaceManager {
     return nil
   }
 
-  private static func axStringAttribute(_ element: AXUIElement, name: String) -> String? {
+  static func axStringAttribute(_ element: AXUIElement, name: String) -> String? {
     var valueRef: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, name as CFString, &valueRef) == .success else {
       return nil
     }
     return valueRef as? String
-  }
-
-  /// Finds the `mc.display` child whose `AXDisplayID` matches the target screen number.
-  private static func axChildMatchingDisplay(
-    _ mcGroup: AXUIElement, screenNumber: CGDirectDisplayID
-  ) -> AXUIElement? {
-    for child in axChildren(mcGroup) {
-      guard axStringAttribute(child, name: "AXIdentifier") == "mc.display" else { continue }
-      var valueRef: CFTypeRef?
-      if AXUIElementCopyAttributeValue(child, "AXDisplayID" as CFString, &valueRef) == .success,
-        let displayID = valueRef as? Int,
-        CGDirectDisplayID(displayID) == screenNumber
-      {
-        return child
-      }
-    }
-    // Fallback: if only one mc.display exists, use it (single-display setup)
-    let displays = axChildren(mcGroup).filter {
-      axStringAttribute($0, name: "AXIdentifier") == "mc.display"
-    }
-    return displays.count == 1 ? displays.first : nil
   }
 
   // MARK: - Window Activation
@@ -1888,12 +1835,11 @@ public class SpaceManager {
   struct MissionControlContext {
     let mcGroup: AXUIElement
     let mcDisplay: AXUIElement
-    let mcWindows: AXUIElement
     let mcSpaces: AXUIElement
     let mcSpacesList: AXUIElement
 
     /// All window thumbnail buttons currently shown in Mission Control.
-    var windowButtons: [AXUIElement] { SpaceManager.axChildren(mcWindows) }
+    var windowButtons: [AXUIElement] { MissionControlTree.windowThumbnails(of: mcDisplay) }
 
     /// All space buttons in the spaces bar.
     var spaceButtons: [AXUIElement] { SpaceManager.axChildren(mcSpacesList) }
@@ -1952,18 +1898,8 @@ public class SpaceManager {
 
     CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
-    // Poll for the Mission Control AX group
-    let mcGroup: AXUIElement? = {
-      let deadline = DispatchTime.now() + .milliseconds(2000)
-      while DispatchTime.now() < deadline {
-        if let mc = axChildWithIdentifier(dockElement, identifier: "mc") { return mc }
-        Thread.sleep(forTimeInterval: 0.01)
-      }
-      return nil
-    }()
-
-    guard let mcGroup else {
-      print("openMissionControlContext: Mission Control AX group not found")
+    guard let tree = awaitMissionControlTree(dockElement: dockElement, timeout: 2.0) else {
+      print("openMissionControlContext: Mission Control AX tree not found")
       return nil
     }
 
@@ -1971,31 +1907,21 @@ public class SpaceManager {
     Thread.sleep(forTimeInterval: 0.5)
 
     // Find mc.display (match by screen number if provided, or use first/only)
-    let mcDisplay: AXUIElement?
-    if let screenNumber {
-      mcDisplay = axChildMatchingDisplay(mcGroup, screenNumber: screenNumber)
-    } else {
-      mcDisplay = axChildren(mcGroup).first {
-        axStringAttribute($0, name: "AXIdentifier") == "mc.display"
-      }
-    }
-
+    let mcDisplay = screenNumber.map(tree.display(matching:)) ?? tree.displays.first
     guard let mcDisplay else {
       print("openMissionControlContext: mc.display not found")
       return nil
     }
 
-    guard let mcWindows = axChildWithIdentifier(mcDisplay, identifier: "mc.windows"),
-      let mcSpaces = axChildWithIdentifier(mcDisplay, identifier: "mc.spaces"),
+    guard let mcSpaces = MissionControlTree.spacesBar(of: mcDisplay),
       let mcSpacesList = axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
     else {
-      print("openMissionControlContext: mc.windows/mc.spaces/mc.spaces.list not found")
+      print("openMissionControlContext: mc.spaces/mc.spaces.list not found")
       return nil
     }
 
     return MissionControlContext(
-      mcGroup: mcGroup, mcDisplay: mcDisplay,
-      mcWindows: mcWindows, mcSpaces: mcSpaces, mcSpacesList: mcSpacesList)
+      mcGroup: tree.root, mcDisplay: mcDisplay, mcSpaces: mcSpaces, mcSpacesList: mcSpacesList)
   }
 
   // MARK: - Display Focus
@@ -2482,7 +2408,8 @@ public class SpaceManager {
     let targetScreenNumber = Self.displayIDForUUID(targetSpace.displayUUID)
     let sourceScreenNumber = sourceSpace.flatMap { Self.displayIDForUUID($0.displayUUID) }
     let moved = moveWindowInMC(
-      windowTitle: request.windowTitle, targetSpaceTitle: targetSpaceTitle,
+      windowTitle: request.windowTitle, windowID: windowID, targetSpaceTitle: targetSpaceTitle,
+      targetSpaceIndex: Self.perDisplayDesktopIndex(of: targetSpace.id, in: allSpaces),
       targetScreenNumber: targetScreenNumber, sourceScreenNumber: sourceScreenNumber,
       switchToTarget: activateAfterMove)
 
@@ -2646,7 +2573,7 @@ public class SpaceManager {
     return frames
   }
 
-  private static func frameString(_ rect: CGRect) -> String {
+  static func frameString(_ rect: CGRect) -> String {
     "(\(Int(rect.minX)),\(Int(rect.minY)))/\(Int(rect.width))x\(Int(rect.height))"
   }
 
@@ -2682,27 +2609,6 @@ public class SpaceManager {
     return nil
   }
 
-  /// Reorders `displays` so the one whose `AXDisplayID` matches
-  /// `screenNumber` comes first; unchanged when nil or not found.
-  private static func orderDisplays(
-    _ displays: [AXUIElement], preferring screenNumber: CGDirectDisplayID?
-  ) -> [AXUIElement] {
-    guard let screenNumber else { return displays }
-    let preferred = displays.first { display in
-      var valueRef: CFTypeRef?
-      if AXUIElementCopyAttributeValue(display, "AXDisplayID" as CFString, &valueRef)
-        == .success,
-        let displayID = valueRef as? Int,
-        CGDirectDisplayID(displayID) == screenNumber
-      {
-        return true
-      }
-      return false
-    }
-    guard let preferred else { return displays }
-    return [preferred] + displays.filter { $0 != preferred }
-  }
-
   /// Moves a window to a different Space by simulating a drag in Mission Control.
   ///
   /// Opens Mission Control, searches ALL displays for the window thumbnail and
@@ -2711,7 +2617,14 @@ public class SpaceManager {
   ///
   /// - Parameters:
   ///   - windowTitle: Substring to match against MC window thumbnail titles.
-  ///   - targetSpaceTitle: Exact title of the target space (e.g., "Desktop 2").
+  ///   - windowID: The window's CGWindowID; wins over the title wherever MC
+  ///     exposes thumbnails' `wid` (macOS 27+).
+  ///   - targetSpaceTitle: Expected title of the target space (e.g., "Desktop 2"),
+  ///     derived from CGS global order; the label used when the target tile can't
+  ///     be located by index.
+  ///   - targetSpaceIndex: The target space's index among its display's desktop
+  ///     tiles. With `targetScreenNumber`, locates the tile without trusting the
+  ///     CGS-derived title (MC titles a display's only desktop just "Desktop").
   ///   - targetScreenNumber: Screen number of the display containing the target space.
   ///   - sourceScreenNumber: Screen number of the display showing the window's
   ///     space; its thumbnails are searched first so a similarly-titled window
@@ -2723,8 +2636,8 @@ public class SpaceManager {
   /// - Returns: `true` if the drag completed, `false` on any error.
   @discardableResult
   public func moveWindowInMC(
-    windowTitle: String, targetSpaceTitle: String,
-    targetScreenNumber: CGDirectDisplayID? = nil,
+    windowTitle: String, windowID: Int? = nil, targetSpaceTitle: String,
+    targetSpaceIndex: Int? = nil, targetScreenNumber: CGDirectDisplayID? = nil,
     sourceScreenNumber: CGDirectDisplayID? = nil, verbose: Bool = false,
     switchToTarget: Bool = true
   ) -> Bool {
@@ -2751,54 +2664,43 @@ public class SpaceManager {
       let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
       CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
-      // Poll for MC
-      let mcGroup: AXUIElement? = {
-        let deadline = DispatchTime.now() + .milliseconds(2000)
-        while DispatchTime.now() < deadline {
-          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") { return mc }
-          Thread.sleep(forTimeInterval: 0.01)
-        }
-        return nil
-      }()
-
-      guard let mcGroup else {
-        print("moveWindowInMC: Mission Control not found")
-        Self.dismissMissionControl()
+      guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 2.0)
+      else {
+        Self.reportMCFailure("moveWindowInMC: Mission Control AX tree not found")
+        Self.dismissMissionControlIfPresent(dockElement: dockElement)
         return
       }
 
       Thread.sleep(forTimeInterval: 0.5)
 
-      // Gather all mc.display elements
-      let allDisplays = Self.axChildren(mcGroup).filter {
-        Self.axStringAttribute($0, name: "AXIdentifier") == "mc.display"
-      }
-
-      // Search for the window thumbnail — the window's own display first,
-      // exact matches on ANY display before any substring match. A substring
-      // match alone is trusted only when unambiguous, so a similarly-titled
-      // window visible on another display (e.g. a terminal at the project
-      // path) can't get grabbed and dragged instead of the real one.
-      let thumbnailSearchOrder = Self.orderDisplays(
-        allDisplays, preferring: sourceScreenNumber)
-      let buttonsPerDisplay = thumbnailSearchOrder.map { display in
-        Self.axChildWithIdentifier(display, identifier: "mc.windows")
-          .map(Self.axChildren) ?? []
-      }
-      let titlesPerDisplay = buttonsPerDisplay.map { buttons in
-        buttons.map { Self.axStringAttribute($0, name: "AXTitle") }
+      // Search for the window thumbnail — by CGWindowID where MC exposes it,
+      // else by title: the window's own display first, exact matches on ANY
+      // display before any substring match. A substring match alone is
+      // trusted only when unambiguous, so a similarly-titled window visible
+      // on another display (e.g. a terminal at the project path) can't get
+      // grabbed and dragged instead of the real one.
+      let thumbnailSearchOrder = tree.displays(preferring: sourceScreenNumber)
+      let buttonsPerDisplay = thumbnailSearchOrder.map(MissionControlTree.windowThumbnails(of:))
+      let thumbnailsPerDisplay = buttonsPerDisplay.map { buttons in
+        buttons.map { button in
+          ThumbnailDescriptor(
+            title: Self.axStringAttribute(button, name: "AXTitle"),
+            windowID: MissionControlTree.windowID(of: button))
+        }
       }
       guard
         let match = Self.matchWindowThumbnail(
-          displayTitles: titlesPerDisplay, windowTitle: windowTitle)
+          displays: thumbnailsPerDisplay, windowTitle: windowTitle, windowID: windowID)
       else {
-        print("moveWindowInMC: No window matching \"\(windowTitle)\" on any display")
+        Self.reportMCFailure(
+          "moveWindowInMC: No window matching \"\(Diagnostics.titleForLogging(windowTitle))\" on any display"
+        )
         Self.dismissMissionControl()
         return
       }
       let windowButton = buttonsPerDisplay[match.display][match.index]
       guard let windowCenter = Self.axCenter(windowButton) else {
-        print("moveWindowInMC: matched window has no readable position")
+        Self.reportMCFailure("moveWindowInMC: matched window has no readable position")
         Self.dismissMissionControl()
         return
       }
@@ -2808,27 +2710,45 @@ public class SpaceManager {
         print("  Window: \"\(title)\" at \(windowCenter)")
       }
 
-      // Build display search order — target display first
-      let displaySearchOrder = Self.orderDisplays(
-        allDisplays, preferring: targetScreenNumber)
-
-      // Locate the spaces bar that contains the target space.
+      // Locate the target tile: by per-display index on the target display's
+      // bar when known (MC labels tiles in display-arrangement order — and a
+      // display's only desktop just "Desktop" — so a CGS-derived "Desktop N"
+      // is only a guess), else the first bar holding a tile with that title.
+      // The tile's own title is what the drag tracks: tiles shift when the
+      // drag enters the bar (placeholder insertion), so an index goes stale.
       var barList: AXUIElement?
-      for display in displaySearchOrder {
-        guard let mcSpaces = Self.axChildWithIdentifier(display, identifier: "mc.spaces"),
-          let mcSpacesList = Self.axChildWithIdentifier(mcSpaces, identifier: "mc.spaces.list")
-        else { continue }
-        let buttons = Self.axChildren(mcSpacesList)
-        if buttons.contains(where: {
-          Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
-        }) {
-          barList = mcSpacesList
-          break
+      var tileTitle = targetSpaceTitle
+      if let targetSpaceIndex, let targetScreenNumber,
+        let display = tree.display(matching: targetScreenNumber),
+        let list = MissionControlTree.spacesList(of: display)
+      {
+        if let (_, title) = MissionControlTree.desktopTile(in: list, desktopIndex: targetSpaceIndex)
+        {
+          barList = list
+          tileTitle = title
+          if title != targetSpaceTitle {
+            Diagnostics.log(
+              "move-space",
+              "target tile index=\(targetSpaceIndex) titled \"\(title)\", expected \"\(targetSpaceTitle)\""
+            )
+          }
+        }
+      }
+      if barList == nil {
+        for display in tree.displays(preferring: targetScreenNumber) {
+          guard let list = MissionControlTree.spacesList(of: display) else { continue }
+          if Self.axChildren(list).contains(where: {
+            Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
+          }) {
+            barList = list
+            break
+          }
         }
       }
 
       guard let barList else {
-        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found on any display")
+        Self.reportMCFailure(
+          "moveWindowInMC: Space \"\(targetSpaceTitle)\" not found on any display")
         Self.dismissMissionControl()
         return
       }
@@ -2844,16 +2764,19 @@ public class SpaceManager {
       // the bar, MC expands it and shifts every tile, and the re-reads bend the
       // path onto the tile's new center. AX references are live, so re-reading
       // the bar's children reflects the current layout.
+      // Aim through `MissionControlTree.aimPoint`: macOS 27 reports a tile's
+      // position as its center, so the naive frame center (position + half
+      // the size) lands on the tile's bottom-right corner where the drop is
+      // refused.
       var targetButton: AXUIElement?
       let readTargetCenter: () -> CGPoint? = {
-        let buttons = Self.axChildren(barList)
         guard
-          let match = buttons.first(where: {
-            Self.axStringAttribute($0, name: "AXTitle") == targetSpaceTitle
+          let match = Self.axChildren(barList).first(where: {
+            Self.axStringAttribute($0, name: "AXTitle") == tileTitle
           })
         else { return nil }
         targetButton = match
-        return Self.axCenter(match)
+        return MissionControlTree.aimPoint(tile: match, in: barList, anchor: tree.tileAnchor)
       }
       let arrival = Self.homingDrag(
         from: nudge,
@@ -2864,7 +2787,7 @@ public class SpaceManager {
         }
       )
       guard let arrival, let targetButton else {
-        print("moveWindowInMC: Space \"\(targetSpaceTitle)\" not found during drag")
+        Self.reportMCFailure("moveWindowInMC: Space \"\(tileTitle)\" not found during drag")
         Self.postMouseUp(at: nudge)
         Self.dismissMissionControl()
         return
@@ -2874,15 +2797,30 @@ public class SpaceManager {
 
       // Hold until the bar's relayout fully settles, following any residual
       // shift so the drop lands dead-center.
+      // The drag entering the bar expanded it; confirm that and the tile's
+      // settled position before dropping. Anything less is a stale point and
+      // the drop is abandoned rather than released onto it.
       var dropPoint = arrival
-      if let settled = Self.awaitStablePoint(
-        read: readTargetCenter, delay: { Thread.sleep(forTimeInterval: 0.04) }),
-        abs(settled.point.x - dropPoint.x) > 2 || abs(settled.point.y - dropPoint.y) > 2
-      {
-        Self.postMouseDragToPoint(from: dropPoint, to: settled.point, steps: 4)
-        dropPoint = settled.point
+      guard
+        let settled = MissionControlTree.locateTile(
+          anchor: tree.tileAnchor,
+          read: MissionControlTree.barReader(
+            bar: barList, tileTitle: tileTitle, anchor: tree.tileAnchor),
+          delay: { Thread.sleep(forTimeInterval: 0.04) })
+      else {
+        Self.reportMCFailure(
+          "moveWindowInMC: tile \"\(tileTitle)\" not confirmed settled in the bar; drop abandoned")
+        Self.postMouseUp(at: nudge)
+        Self.dismissMissionControl()
+        return
+      }
+      if abs(settled.x - dropPoint.x) > 2 || abs(settled.y - dropPoint.y) > 2 {
+        Self.postMouseDragToPoint(from: dropPoint, to: settled, steps: 4)
+        dropPoint = settled
       }
       Thread.sleep(forTimeInterval: 0.05)
+      Diagnostics.log(
+        "move-space", "drop tile=\"\(tileTitle)\" at (\(Int(dropPoint.x)),\(Int(dropPoint.y)))")
       Self.postMouseUp(at: dropPoint)
 
       Thread.sleep(forTimeInterval: 0.3)
@@ -3019,10 +2957,12 @@ public class SpaceManager {
       Thread.sleep(forTimeInterval: 0.8)
     }
 
-    let moved = moveSpaceInMC(
+    let (moved, sessionOutcome) = moveSpaceInMC(
       sourceSpaceIndex: plan.sourceSpaceIndex,
       sourceScreenNumber: sourceScreen,
-      targetScreenNumber: targetScreen)
+      targetScreenNumber: targetScreen,
+      activate: activateAfterMove
+        ? InSessionActivation(spaceID: spaceID, targetDisplayUUID: targetDisplayUUID) : nil)
     guard moved else {
       Diagnostics.endTiming(token, outcome: "drag-failed")
       return false
@@ -3034,19 +2974,39 @@ public class SpaceManager {
       self.getAllSpaces().first(where: { $0.id == spaceID })?.displayUUID == targetDisplayUUID
     }
 
-    // Make the moved space the target display's active Space (activating a
-    // window on it when it has one — no Mission Control round). Best-effort:
-    // the move itself already succeeded, so a failed switch only logs.
-    if verified && activateAfterMove {
-      do {
-        try activateSpace(id: spaceID)
-      } catch {
-        Diagnostics.log("move-space-display", "post-move activation failed: \(error)")
-      }
+    // The session normally ends on the moved Space (in-session tile press).
+    // When that didn't verify, fall back to activating it from outside,
+    // VERIFIED through CGS with one serialized retry (`MovedSpaceActivator`):
+    // the batch's dismissal is only confirmed as far as MC's AX group being
+    // gone — the dismiss animation can still be running, and a DockSwipe
+    // posted meanwhile is swallowed, which the verified retry covers. The
+    // move itself already succeeded; an unverified activation is logged,
+    // never a failure of the move.
+    var activationSuffix = ""
+    if sessionOutcome == .activated {
+      activationSuffix = " active-in-session"
+    } else if SpaceMoveSessionEnd.outsideActivationNeeded(
+      relocationVerified: verified, activateAfterMove: activateAfterMove,
+      sessionOutcome: sessionOutcome)
+    {
+      Self.awaitMissionControlDismissed(timeout: 2.0)
+      activationSuffix = activateMovedSpace(id: spaceID) ? " active" : " activation-unverified"
     }
-
-    Diagnostics.endTiming(token, outcome: verified ? "moved" : "not-verified")
+    Diagnostics.endTiming(token, outcome: (verified ? "moved" : "not-verified") + activationSuffix)
     return verified
+  }
+
+  /// `MovedSpaceActivator` over the live Space switching, CGS and MC reads.
+  private func activateMovedSpace(id spaceID: UInt64) -> Bool {
+    MovedSpaceActivator().run(
+      MovedSpaceActivator.Dependencies(
+        activate: { try self.activateSpace(id: spaceID) },
+        switchSpace: { try self.switchToSpace(id: spaceID) },
+        isCurrent: { self.getAllSpaces().contains { $0.id == spaceID && $0.isCurrent } },
+        missionControlPresent: Self.missionControlPresent,
+        sleep: { Thread.sleep(forTimeInterval: $0) },
+        now: Date.init,
+        log: { Diagnostics.log("move-space-display", $0) }))
   }
 
   /// Polls `condition` every `interval` until it holds or `timeout` elapses.
@@ -3061,44 +3021,36 @@ public class SpaceManager {
     return condition()
   }
 
-  /// Drags a Space tile from one display's Mission Control spaces bar onto
-  /// another display's bar.
-  ///
-  /// Mirrors `moveWindowInMC`, with space-tile specifics: the source bar is
-  /// hovered first so it expands (tile frames differ pre/post expansion), the
-  /// nudge pulls DOWN out of the bar (in-bar motion reads as reordering), and
-  /// the homing target is the destination bar's append position past its last
-  /// tile rather than a tile center. No tile is pressed afterwards — that
-  /// would switch the destination display's active space.
-  ///
-  /// The tile is located by INDEX among the source bar's desktop tiles, not by
-  /// "Desktop N" title: MC numbers desktops in display-arrangement order
-  /// (built-in first) while CGS enumerates displays in an order that can vary
-  /// between calls, so a CGS-derived global title is unreliable. Per-display
-  /// CGS space order does match the bar's tile order (the same invariant
-  /// `switchToSpace(spaceIndex:screenNumber:)` relies on).
-  ///
-  /// - Parameters:
-  ///   - sourceSpaceIndex: Position of the space among its display's desktop
-  ///     tiles (0-based).
-  ///   - sourceScreenNumber: Display currently owning the space.
-  ///   - targetScreenNumber: Display to move the space to.
-  ///   - verbose: Print diagnostic output.
-  /// - Returns: `true` if the drag completed, `false` on any error.
-  @discardableResult
+  /// A Space to activate in the same Mission Control session once its tile
+  /// has been dropped on `targetDisplayUUID`'s bar.
+  public struct InSessionActivation: Equatable {
+    public let spaceID: UInt64
+    public let targetDisplayUUID: String
+    public init(spaceID: UInt64, targetDisplayUUID: String) {
+      self.spaceID = spaceID
+      self.targetDisplayUUID = targetDisplayUUID
+    }
+  }
+
+  /// Drags one Space tile to another display's bar. With `activate`, the
+  /// session ends by pressing the moved tile — the Space is right there in
+  /// the open Mission Control, so it becomes the target display's active
+  /// Space directly, without a dismissal animation and a separate switch.
+  /// `sessionOutcome` says how the session ended (`.activated` when CGS confirmed it).
   public func moveSpaceInMC(
     sourceSpaceIndex: Int, sourceScreenNumber: CGDirectDisplayID,
-    targetScreenNumber: CGDirectDisplayID, verbose: Bool = false
-  ) -> Bool {
-    !moveSpacesInMCBatch(
+    targetScreenNumber: CGDirectDisplayID, verbose: Bool = false,
+    activate: InSessionActivation? = nil
+  ) -> (moved: Bool, sessionOutcome: SpaceMoveSessionEnd.Outcome) {
+    let result = runSpaceDragsInMC(
       [
         SpaceTileDrag(
           sourceSpaceIndex: sourceSpaceIndex,
           sourceScreenNumber: sourceScreenNumber,
           targetScreenNumber: targetScreenNumber)
       ],
-      verbose: verbose
-    ).isEmpty
+      verbose: verbose, activate: activate)
+    return (!result.completed.isEmpty, result.sessionOutcome)
   }
 
   /// Performs several space-tile drags in ONE Mission Control session: open
@@ -3114,14 +3066,23 @@ public class SpaceManager {
     _ drags: [SpaceTileDrag], verbose: Bool = false,
     resolveSourceIndex: ((_ dragIndex: Int) -> Int?)? = nil
   ) -> [Int] {
-    guard !drags.isEmpty else { return [] }
+    runSpaceDragsInMC(drags, verbose: verbose, resolveSourceIndex: resolveSourceIndex).completed
+  }
+
+  private func runSpaceDragsInMC(
+    _ drags: [SpaceTileDrag], verbose: Bool = false,
+    resolveSourceIndex: ((_ dragIndex: Int) -> Int?)? = nil,
+    activate: InSessionActivation? = nil
+  ) -> (completed: [Int], sessionOutcome: SpaceMoveSessionEnd.Outcome) {
+    guard !drags.isEmpty else { return ([], .notRequested) }
     guard AXIsProcessTrusted() else {
       Self.reportMCFailure("moveSpacesInMCBatch: Accessibility not trusted")
-      return []
+      return ([], .notRequested)
     }
 
     let semaphore = DispatchSemaphore(value: 0)
     var completed: [Int] = []
+    var sessionOutcome = SpaceMoveSessionEnd.Outcome.notRequested
     let timing = moveTiming
 
     DispatchQueue.global(qos: .userInteractive).async {
@@ -3148,25 +3109,21 @@ public class SpaceManager {
       }
       CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
-      let mcGroup: AXUIElement? = {
-        let deadline = DispatchTime.now() + .milliseconds(2000)
-        while DispatchTime.now() < deadline {
-          if let mc = Self.axChildWithIdentifier(dockElement, identifier: "mc") { return mc }
-          Thread.sleep(forTimeInterval: 0.01)
-        }
-        return nil
-      }()
-
-      guard let mcGroup else {
-        Self.reportMCFailure("moveSpacesInMCBatch: Mission Control not found")
+      let requiredDisplays = Array(
+        Set(drags.flatMap { [$0.sourceScreenNumber, $0.targetScreenNumber] }))
+      guard
+        let tree = Self.awaitMissionControlTree(
+          dockElement: dockElement, timeout: 2.0, requiredDisplays: requiredDisplays)
+      else {
+        Self.reportMCFailure(
+          "moveSpacesInMCBatch: Mission Control AX tree not found for displays \(requiredDisplays)")
+        Self.dismissMissionControlIfPresent(dockElement: dockElement)
         return
       }
 
       Thread.sleep(forTimeInterval: 0.5)
 
-      let allDisplays = Self.axChildren(mcGroup).filter {
-        Self.axStringAttribute($0, name: "AXIdentifier") == "mc.display"
-      }
+      let allDisplays = tree.displays
 
       // One mc.display per physical display. Fewer than two means there is no
       // other bar to drop onto (single display, mirroring, or "Displays have
@@ -3178,18 +3135,11 @@ public class SpaceManager {
       }
 
       func displayMatching(_ screen: CGDirectDisplayID) -> AXUIElement? {
-        allDisplays.first { display in
-          var valueRef: CFTypeRef?
-          return AXUIElementCopyAttributeValue(display, "AXDisplayID" as CFString, &valueRef)
-            == .success
-            && (valueRef as? Int).map { CGDirectDisplayID($0) == screen } == true
-        }
+        allDisplays.first { MissionControlTree.displayID(of: $0) == screen }
       }
 
       func spacesBar(of display: AXUIElement) -> AXUIElement? {
-        Self.axChildWithIdentifier(display, identifier: "mc.spaces").flatMap {
-          Self.axChildWithIdentifier($0, identifier: "mc.spaces.list")
-        }
+        MissionControlTree.spacesList(of: display)
       }
 
       for (dragIndex, drag) in drags.enumerated() {
@@ -3208,7 +3158,7 @@ public class SpaceManager {
           continue
         }
         if Self.performSpaceTileDrag(
-          sourceBar: sourceBar, targetBar: targetBar,
+          sourceBar: sourceBar, targetBar: targetBar, anchor: tree.tileAnchor,
           sourceSpaceIndex: sourceIndex, dropSettle: timing.dropSettle,
           verbose: verbose)
         {
@@ -3218,65 +3168,67 @@ public class SpaceManager {
         // the tail of Mission Control's re-layout.
         Thread.sleep(forTimeInterval: timing.interDragPause)
       }
-      Self.dismissMissionControlIfPresent(dockElement: dockElement)
+
+      // End the session: on the moved Space when asked (`SpaceMoveSessionEnd`),
+      // else by guarded dismissal.
+      let lastIndex = drags.indices.last!
+      let targetBar = displayMatching(drags[lastIndex].targetScreenNumber).flatMap(spacesBar(of:))
+      sessionOutcome = SpaceMoveSessionEnd.run(
+        activate: activate != nil,
+        SpaceMoveSessionEnd.Dependencies(
+          dragCompleted: completed.contains(lastIndex) && targetBar != nil,
+          awaitArrival: {
+            self.poll(timeout: 2.0) {
+              self.getAllSpaces().first(where: { $0.id == activate!.spaceID })?.displayUUID
+                == activate!.targetDisplayUUID
+            }
+          },
+          pressTile: {
+            self.pressTileInSession(
+              forSpace: activate!.spaceID, in: targetBar!, tag: "move-space-display")
+          },
+          awaitMissionControlDismissed: { Self.awaitMissionControlDismissed(timeout: 2.0) },
+          dismissMissionControlIfPresent: {
+            Self.dismissMissionControlIfPresent(dockElement: dockElement)
+          },
+          log: { Diagnostics.log("move-space-display", $0) }))
     }
 
     semaphore.wait()
-    return completed
+    return (completed, sessionOutcome)
   }
 
   /// Drags one space tile from `sourceBar` onto `targetBar` within an open
   /// Mission Control session. Does NOT open or dismiss Mission Control —
   /// that's the session owner's job.
   private static func performSpaceTileDrag(
-    sourceBar: AXUIElement, targetBar: AXUIElement,
+    sourceBar: AXUIElement, targetBar: AXUIElement, anchor: MissionControlTree.TileAnchor,
     sourceSpaceIndex: Int, dropSettle: TimeInterval, verbose: Bool
   ) -> Bool {
     // Locate the tile by index among the bar's desktop tiles (fullscreen
     // spaces show app-titled tiles in the same bar and don't count), then
     // capture its title for the drag re-reads — MC doesn't renumber tiles
     // mid-drag, so the title is a stable handle while frames shift.
-    func desktopTiles(in bar: AXUIElement) -> [AXUIElement] {
-      Self.axChildren(bar).filter {
-        guard let title = Self.axStringAttribute($0, name: "AXTitle"),
-          title.hasPrefix("Desktop "),
-          Int(title.dropFirst("Desktop ".count)) != nil
-        else { return false }
-        return true
-      }
-    }
-
-    let tiles = desktopTiles(in: sourceBar)
-    guard sourceSpaceIndex >= 0 && sourceSpaceIndex < tiles.count,
-      let spaceTileTitle = Self.axStringAttribute(
-        tiles[sourceSpaceIndex], name: "AXTitle")
+    guard
+      let (_, spaceTileTitle) = MissionControlTree.desktopTile(
+        in: sourceBar, desktopIndex: sourceSpaceIndex)
     else {
       Self.reportMCFailure(
-        "moveSpaceInMC: tile index \(sourceSpaceIndex) out of range (have \(tiles.count) desktop tiles)"
-      )
+        "moveSpaceInMC: no desktop tile at index \(sourceSpaceIndex) in the source bar")
       return false
     }
 
-    let readTileCenter: () -> CGPoint? = {
-      Self.axChildren(sourceBar).first(where: {
-        Self.axStringAttribute($0, name: "AXTitle") == spaceTileTitle
-      }).flatMap(Self.axCenter)
-    }
-
-    // Hover the source bar so it expands, then wait for the tile's frame to
-    // settle — collapsed-bar frames are stale the moment expansion starts.
-    guard let barCenter = Self.axCenter(sourceBar) else {
-      Self.reportMCFailure("moveSpaceInMC: source bar frame unreadable")
-      return false
-    }
-    Self.postMouseMove(at: barCenter)
+    // Hover the source bar so it expands, then wait for the expansion and
+    // for the tile's frame to settle — collapsed-bar frames are stale the
+    // moment expansion starts, and a collapsed bar is "stable" too.
     guard
-      let grab = Self.awaitStablePoint(
-        read: readTileCenter, delay: { Thread.sleep(forTimeInterval: 0.04) })
+      let grabPoint = MissionControlTree.hoverAndLocateTile(
+        titled: spaceTileTitle, in: sourceBar, anchor: anchor, hover: Self.postMouseMove(at:))
     else {
-      Self.reportMCFailure("moveSpaceInMC: tile \"\(spaceTileTitle)\" not found in source bar")
+      Self.reportMCFailure("moveSpaceInMC: tile \"\(spaceTileTitle)\" not located in source bar")
       return false
     }
+    let grab = (point: grabPoint, isStable: true)
 
     if verbose { print("  Tile: \"\(spaceTileTitle)\" at \(grab.point)") }
 
@@ -3385,7 +3337,7 @@ public class SpaceManager {
   // MARK: - Mission Control Diagnostics
 
   /// Dumps the full AX hierarchy of Mission Control for diagnostic purposes.
-  public func dumpMissionControlAXTree() {
+  public func dumpMissionControlAXTree(hoverSpacesBar: Bool = false, hold: TimeInterval = 0.3) {
     guard AXIsProcessTrusted() else {
       print("dumpMissionControlAXTree: Accessibility not trusted")
       return
@@ -3394,17 +3346,43 @@ public class SpaceManager {
     let semaphore = DispatchSemaphore(value: 0)
 
     DispatchQueue.global(qos: .userInteractive).async {
-      guard let mc = Self.openMissionControlContext() else {
-        Self.dismissMissionControl()
+      guard
+        let dockApp = NSRunningApplication.runningApplications(
+          withBundleIdentifier: "com.apple.dock"
+        ).first
+      else {
+        print("dumpMissionControlAXTree: Dock not running")
         semaphore.signal()
         return
       }
+      let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
+      CoreDockSendNotification("com.apple.expose.awake" as CFString)
+      guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 2.0)
+      else {
+        print("dumpMissionControlAXTree: Mission Control AX tree not found")
+        Self.dismissMissionControlIfPresent(dockElement: dockElement)
+        semaphore.signal()
+        return
+      }
+      Thread.sleep(forTimeInterval: 0.5)
 
-      print("=== Mission Control AX Tree ===\n")
-      Self.dumpAXElement(mc.mcGroup, indent: 0)
+      if hoverSpacesBar, let display = tree.display(matching: CGMainDisplayID()),
+        let bar = MissionControlTree.spacesList(of: display),
+        let firstTitle = Self.axChildren(bar).first.flatMap({
+          Self.axStringAttribute($0, name: "AXTitle")
+        })
+      {
+        let aim = MissionControlTree.hoverAndLocateTile(
+          titled: firstTitle, in: bar, anchor: tree.tileAnchor, hover: Self.postMouseMove(at:))
+        print("hovered bar; first tile \"\(firstTitle)\" located at \(String(describing: aim))")
+      }
+
+      let host = tree.root == tree.dockGroup ? "Dock" : "WindowManager"
+      print("=== Mission Control AX Tree (hosted by \(host)) ===\n")
+      Self.dumpAXElement(tree.root, indent: 0)
       print("\n=== End AX Tree ===")
 
-      Thread.sleep(forTimeInterval: 0.3)
+      Thread.sleep(forTimeInterval: hold)
       Self.dismissMissionControl()
       semaphore.signal()
     }
@@ -3502,10 +3480,14 @@ public class SpaceManager {
     let posStr = axPosition(element).map { "(\(Int($0.x)), \(Int($0.y)))" } ?? "-"
     let sizeStr = axSize(element).map { "\(Int($0.width))x\(Int($0.height))" } ?? "-"
     let children = axChildren(element)
+    var actionsRef: CFArray?
+    let actions =
+      AXUIElementCopyActionNames(element, &actionsRef) == .success
+      ? (actionsRef as? [String]) ?? [] : []
 
     print(
       "\(prefix)[\(role)/\(subrole)] id=\(identifier) title=\"\(title)\" desc=\"\(desc)\""
-        + " pos=\(posStr) size=\(sizeStr) children=\(children.count)")
+        + " pos=\(posStr) size=\(sizeStr) children=\(children.count) actions=\(actions)")
 
     var namesRef: CFArray?
     if AXUIElementCopyAttributeNames(element, &namesRef) == .success,
