@@ -296,8 +296,10 @@ struct WorkspaceLauncherExecutorTests {
     #expect(processCall?.waitsForExit == false)
   }
 
-  @Test("Legacy open launchers retain their existing behavior")
-  func openLauncher() throws {
+  @Test(
+    "Open launchers pass application names and selected paths as one argument",
+    arguments: ["Preview", "/Applications/An App's Name.app"])
+  func openLauncher(application: String) throws {
     var processCall: ProcessCall?
     let executor = WorkspaceLauncherExecutor(
       runProcess: { executable, arguments, waitsForExit in
@@ -310,11 +312,30 @@ struct WorkspaceLauncherExecutorTests {
       })
 
     try executor.execute(
-      WorkspaceLaunchRequest(steps: [.openApplication("Preview")], bundleID: ""))
+      WorkspaceLaunchRequest(steps: [.openApplication(application)], bundleID: ""))
 
     #expect(processCall?.executable.path == "/usr/bin/open")
-    #expect(processCall?.arguments == ["-a", "Preview"])
+    #expect(processCall?.arguments == ["-a", application])
     #expect(processCall?.waitsForExit == true)
+  }
+
+  @Test(
+    "Selected apps fall back to bundle identity only when their path is gone",
+    arguments: [true, false])
+  func selectedAppRelocation(pathExists: Bool) throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString + ".app")
+    if pathExists {
+      try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+    defer { try? FileManager.default.removeItem(at: url) }
+    var arguments: [String]?
+    let executor = WorkspaceLauncherExecutor(
+      runProcess: { _, args, _ in arguments = args },
+      openWithLaunchServices: { _ in Issue.record("Expected an Open App step") })
+    try executor.execute(
+      WorkspaceLaunchRequest(steps: [.openApplication(url.path)], bundleID: "example.selected"))
+    #expect(arguments == (pathExists ? ["-a", url.path] : ["-b", "example.selected"]))
   }
 
   @Test("Launch Services requires an application bundle")
