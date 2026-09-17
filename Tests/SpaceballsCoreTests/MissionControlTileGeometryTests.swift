@@ -33,14 +33,21 @@ struct MissionControlTileGeometryTests {
     #expect(MissionControlTree.tileAnchor(tileXs: [], tileWidth: 168, barCenterX: 900) == .origin)
   }
 
-  @Test("Drop point uses the tile's true horizontal center on the bar's vertical center")
-  func dropPoint() {
+  @Test("A center-anchored tile is aimed at exactly as reported")
+  func centerAnchoredDropPoint() {
     let bar = CGPoint(x: 900, y: 97)
     #expect(
-      MissionControlTree.dropPoint(tileX: 900, tileWidth: 168, anchor: .center, barCenter: bar)
-        == CGPoint(x: 900, y: 97))
+      MissionControlTree.dropPoint(
+        tilePosition: CGPoint(x: 900, y: 125), tileWidth: 168, anchor: .center, barCenter: bar)
+        == CGPoint(x: 900, y: 125))
+  }
+
+  @Test("An origin-anchored tile is aimed at its horizontal center on the bar's vertical center")
+  func originAnchoredDropPoint() {
+    let bar = CGPoint(x: 900, y: 97)
     #expect(
-      MissionControlTree.dropPoint(tileX: 816, tileWidth: 168, anchor: .origin, barCenter: bar)
+      MissionControlTree.dropPoint(
+        tilePosition: CGPoint(x: 816, y: -40), tileWidth: 168, anchor: .origin, barCenter: bar)
         == CGPoint(x: 900, y: 97))
   }
 }
@@ -59,5 +66,33 @@ struct MissionControlDesktopTileTests {
     #expect(!MissionControlTree.isDesktopTile(title: "Safari"))
     #expect(!MissionControlTree.isDesktopTile(title: "Desktop Pictures"))
     #expect(!MissionControlTree.isDesktopTile(title: nil))
+  }
+}
+
+@Suite("Mission Control Desktop Tile Index")
+struct MissionControlDesktopTileIndexTests {
+  @Test("A fullscreen tile between desktops does not shift the desktop index")
+  func fullscreenTileBetweenDesktops() {
+    let titles: [String?] = ["Desktop 1", "Safari", "Desktop 2"]
+    #expect(MissionControlTree.desktopTileChildIndex(titles: titles, desktopIndex: 1) == 2)
+    #expect(MissionControlTree.desktopTileChildIndex(titles: titles, desktopIndex: 0) == 0)
+  }
+
+  @Test("A fullscreen tile before the desktops does not shift the desktop index")
+  func fullscreenTileFirst() {
+    let titles: [String?] = ["Xcode", "Desktop 1", "Desktop 2"]
+    #expect(MissionControlTree.desktopTileChildIndex(titles: titles, desktopIndex: 0) == 1)
+  }
+
+  @Test("A display's only desktop, titled just Desktop, is index 0")
+  func bareDesktop() {
+    #expect(MissionControlTree.desktopTileChildIndex(titles: ["Desktop"], desktopIndex: 0) == 0)
+  }
+
+  @Test("Out-of-range and negative indices resolve to nil")
+  func outOfRange() {
+    let titles: [String?] = ["Desktop 1", "Safari"]
+    #expect(MissionControlTree.desktopTileChildIndex(titles: titles, desktopIndex: 1) == nil)
+    #expect(MissionControlTree.desktopTileChildIndex(titles: titles, desktopIndex: -1) == nil)
   }
 }

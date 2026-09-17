@@ -137,10 +137,34 @@ struct WindowThumbnailWindowIDMatchTests {
     #expect(result?.index == 0)
   }
 
-  @Test("A wid that matches nothing still falls back to an unambiguous title")
-  func unknownWIDFallsBackToTitle() {
+  @Test("A wid that matches nothing never falls back onto a thumbnail with a known, different wid")
+  func unknownWIDExcludesKnownOtherWindows() {
+    // Every thumbnail here is provably some other window: a title match
+    // would drag a bystander between Spaces.
     let result = SpaceManager.matchWindowThumbnail(
       displays: [[Thumb(title: "Inbox", windowID: 1), Thumb(title: "spaceballs", windowID: 2)]],
+      windowTitle: "spaceballs", windowID: 999)
+    #expect(result == nil)
+  }
+
+  @Test("With mixed identities, the title fallback considers only thumbnails without a wid")
+  func mixedIdentitiesFallBackToUnknownOnly() {
+    let result = SpaceManager.matchWindowThumbnail(
+      displays: [
+        [Thumb(title: "spaceballs", windowID: 2), Thumb(title: "spaceballs", windowID: nil)]
+      ],
+      windowTitle: "spaceballs", windowID: 999)
+    #expect(result?.display == 0)
+    #expect(result?.index == 1)
+  }
+
+  @Test("All-nil legacy thumbnails keep the title heuristics, indices preserved")
+  func legacyThumbnailsKeepTitleHeuristics() {
+    let result = SpaceManager.matchWindowThumbnail(
+      displays: [
+        [Thumb(title: "bash", windowID: nil), Thumb(title: "spaceballs", windowID: nil)],
+        [Thumb(title: "spaceballs — notes", windowID: nil)],
+      ],
       windowTitle: "spaceballs", windowID: 999)
     #expect(result?.display == 0)
     #expect(result?.index == 1)

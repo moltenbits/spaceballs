@@ -1106,7 +1106,9 @@ public class SpaceManager {
     CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
     DispatchQueue.global(qos: .userInteractive).async {
-      guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 1.0)
+      guard
+        let tree = Self.awaitMissionControlTree(
+          dockElement: dockElement, timeout: 1.0, requiredDisplays: [screenNumber])
       else {
         completion?(.failure(.missionControlNotFound))
         return
@@ -1250,9 +1252,12 @@ public class SpaceManager {
     CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
     DispatchQueue.global(qos: .userInteractive).async { [self] in
-      guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 1.0)
+      guard
+        let tree = Self.awaitMissionControlTree(
+          dockElement: dockElement, timeout: 1.0, requiredDisplays: [screenNumber])
       else {
-        Self.reportMCFailure("switchToSpace: Mission Control AX tree not found")
+        Self.reportMCFailure(
+          "switchToSpace: Mission Control AX tree not found for display \(screenNumber)")
         return
       }
 
@@ -2109,9 +2114,7 @@ public class SpaceManager {
   }
 
   /// Posts mouseDragged events in steps from one point to another (mouse must already be down).
-  static func postMouseDragToPoint(
-    from: CGPoint, to: CGPoint, steps: Int = 15, stepDelay: TimeInterval = 0.008
-  ) {
+  static func postMouseDragToPoint(from: CGPoint, to: CGPoint, steps: Int = 15) {
     for i in 1...steps {
       let t = CGFloat(i) / CGFloat(steps)
       let point = CGPoint(
@@ -2119,7 +2122,7 @@ public class SpaceManager {
         y: from.y + (to.y - from.y) * t
       )
       postMouseDragEvent(at: point)
-      Thread.sleep(forTimeInterval: stepDelay)
+      Thread.sleep(forTimeInterval: 0.008)
     }
   }
 
@@ -2714,9 +2717,7 @@ public class SpaceManager {
         let display = tree.display(matching: targetScreenNumber),
         let list = MissionControlTree.spacesList(of: display)
       {
-        let tiles = Self.axChildren(list)
-        if tiles.indices.contains(targetSpaceIndex),
-          let title = Self.axStringAttribute(tiles[targetSpaceIndex], name: "AXTitle")
+        if let (_, title) = MissionControlTree.desktopTile(in: list, desktopIndex: targetSpaceIndex)
         {
           barList = list
           tileTitle = title
@@ -2747,15 +2748,10 @@ public class SpaceManager {
         return
       }
 
-      // Grab and nudge to initiate drag. Hover, then hold the button a beat
-      // before moving: macOS 27's Mission Control drops a grab that starts
-      // moving immediately.
-      Self.postMouseMove(at: windowCenter)
-      Thread.sleep(forTimeInterval: 0.15)
+      // Grab and nudge to initiate drag
       Self.postMouseMoveAndGrab(at: windowCenter)
-      Thread.sleep(forTimeInterval: 0.25)
       let nudge = CGPoint(x: windowCenter.x, y: windowCenter.y - 15)
-      Self.postMouseDragToPoint(from: windowCenter, to: nudge, steps: 6, stepDelay: 0.02)
+      Self.postMouseDragToPoint(from: windowCenter, to: nudge, steps: 3)
 
       // Homing glide: one continuous motion that re-reads the tile's position
       // every few steps and bends toward the latest reading. The path heads
@@ -2763,11 +2759,10 @@ public class SpaceManager {
       // the bar, MC expands it and shifts every tile, and the re-reads bend the
       // path onto the tile's new center. AX references are live, so re-reading
       // the bar's children reflects the current layout.
-      // Aim at the tile's horizontal center on the BAR's vertical center
-      // (`MissionControlTree.aimPoint`): a tile's AX frame is taller than the
-      // bar and hangs below it, and macOS 27 reports tile positions as
-      // centers, so the naive frame center lands on the tile's bottom-right
-      // corner where the drop is refused.
+      // Aim through `MissionControlTree.aimPoint`: macOS 27 reports a tile's
+      // position as its center, so the naive frame center (position + half
+      // the size) lands on the tile's bottom-right corner where the drop is
+      // refused.
       var targetButton: AXUIElement?
       let readTargetCenter: () -> CGPoint? = {
         guard
@@ -2780,11 +2775,10 @@ public class SpaceManager {
       }
       let arrival = Self.homingDrag(
         from: nudge,
-        stepLength: 20,
         read: readTargetCenter,
         move: { point in
           Self.postMouseDragEvent(at: point)
-          Thread.sleep(forTimeInterval: 0.016)
+          Thread.sleep(forTimeInterval: 0.008)
         }
       )
       guard let arrival, let targetButton else {
@@ -2806,13 +2800,7 @@ public class SpaceManager {
         Self.postMouseDragToPoint(from: dropPoint, to: settled.point, steps: 4)
         dropPoint = settled.point
       }
-      // Dwell over the tile with the button held before releasing — as the
-      // space-tile drag does — with stationary drag events, not a bare
-      // sleep, so the drag session stays alive until the drop.
-      for _ in 0..<7 {
-        Self.postMouseDragEvent(at: dropPoint)
-        Thread.sleep(forTimeInterval: 0.05)
-      }
+      Thread.sleep(forTimeInterval: 0.05)
       Diagnostics.log(
         "move-space", "drop tile=\"\(tileTitle)\" at (\(Int(dropPoint.x)),\(Int(dropPoint.y)))")
       Self.postMouseUp(at: dropPoint)
@@ -3080,9 +3068,14 @@ public class SpaceManager {
       }
       CoreDockSendNotification("com.apple.expose.awake" as CFString)
 
-      guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 2.0)
+      let requiredDisplays = Array(
+        Set(drags.flatMap { [$0.sourceScreenNumber, $0.targetScreenNumber] }))
+      guard
+        let tree = Self.awaitMissionControlTree(
+          dockElement: dockElement, timeout: 2.0, requiredDisplays: requiredDisplays)
       else {
-        Self.reportMCFailure("moveSpacesInMCBatch: Mission Control AX tree not found")
+        Self.reportMCFailure(
+          "moveSpacesInMCBatch: Mission Control AX tree not found for displays \(requiredDisplays)")
         Self.dismissMissionControlIfPresent(dockElement: dockElement)
         return
       }
@@ -3152,20 +3145,12 @@ public class SpaceManager {
     // spaces show app-titled tiles in the same bar and don't count), then
     // capture its title for the drag re-reads — MC doesn't renumber tiles
     // mid-drag, so the title is a stable handle while frames shift.
-    func desktopTiles(in bar: AXUIElement) -> [AXUIElement] {
-      Self.axChildren(bar).filter {
-        MissionControlTree.isDesktopTile(title: Self.axStringAttribute($0, name: "AXTitle"))
-      }
-    }
-
-    let tiles = desktopTiles(in: sourceBar)
-    guard sourceSpaceIndex >= 0 && sourceSpaceIndex < tiles.count,
-      let spaceTileTitle = Self.axStringAttribute(
-        tiles[sourceSpaceIndex], name: "AXTitle")
+    guard
+      let (_, spaceTileTitle) = MissionControlTree.desktopTile(
+        in: sourceBar, desktopIndex: sourceSpaceIndex)
     else {
       Self.reportMCFailure(
-        "moveSpaceInMC: tile index \(sourceSpaceIndex) out of range (have \(tiles.count) desktop tiles)"
-      )
+        "moveSpaceInMC: no desktop tile at index \(sourceSpaceIndex) in the source bar")
       return false
     }
 
@@ -3297,7 +3282,7 @@ public class SpaceManager {
   // MARK: - Mission Control Diagnostics
 
   /// Dumps the full AX hierarchy of Mission Control for diagnostic purposes.
-  public func dumpMissionControlAXTree() {
+  public func dumpMissionControlAXTree(hoverSpacesBar: Bool = false, hold: TimeInterval = 0.3) {
     guard AXIsProcessTrusted() else {
       print("dumpMissionControlAXTree: Accessibility not trusted")
       return
@@ -3326,12 +3311,22 @@ public class SpaceManager {
       }
       Thread.sleep(forTimeInterval: 0.5)
 
+      if hoverSpacesBar, let display = tree.display(matching: CGMainDisplayID()),
+        let bar = MissionControlTree.spacesList(of: display), let barCenter = Self.axCenter(bar)
+      {
+        Self.postMouseMove(at: barCenter)
+        let settled = Self.awaitStablePoint(
+          read: { Self.axChildren(bar).first.flatMap(Self.axCenter) },
+          delay: { Thread.sleep(forTimeInterval: 0.04) })
+        print("hovered bar at \(barCenter); first tile settled=\(String(describing: settled))")
+      }
+
       let host = tree.root == tree.dockGroup ? "Dock" : "WindowManager"
       print("=== Mission Control AX Tree (hosted by \(host)) ===\n")
       Self.dumpAXElement(tree.root, indent: 0)
       print("\n=== End AX Tree ===")
 
-      Thread.sleep(forTimeInterval: 0.3)
+      Thread.sleep(forTimeInterval: hold)
       Self.dismissMissionControl()
       semaphore.signal()
     }
