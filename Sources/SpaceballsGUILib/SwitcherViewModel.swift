@@ -672,26 +672,51 @@ public final class SwitcherViewModel: ObservableObject {
     return nil
   }
 
+  /// The focus the user had when the panel opened: the focused Space and,
+  /// when one was frontmost on it, that window.
+  public struct FocusSnapshot: Equatable {
+    public let spaceID: UInt64
+    public let windowID: Int?
+  }
+
+  /// Focus captured at the panel-open boundary. `refresh()` keeps overwriting
+  /// its MRU bookkeeping as the user navigates (single-panel display focus
+  /// re-refreshes with another display's context, sort and rename refresh
+  /// too), so a decision made at close time must come from this snapshot,
+  /// never from the live fields.
+  public private(set) var panelOpenFocus: FocusSnapshot?
+
+  /// Records the focus of the most recent refresh as the panel-open focus.
+  /// Called once by the panel host right after the refresh that opens the
+  /// panel, before any panel is shown or moved.
+  public func captureFocusSnapshot() {
+    panelOpenFocus = lastFocusedSpaceID.map {
+      FocusSnapshot(spaceID: $0, windowID: lastFrontWindowID)
+    }
+  }
+
   /// Where focus should go after a Space is closed from the panel.
   public enum FocusRestoreTarget: Equatable {
     /// Re-activate this window: the one that was frontmost when the panel
-    /// opened, so both its Space and its app come back.
-    case window(Int)
+    /// opened, so both its Space and its app come back. `fallbackSpace` is
+    /// its Space, to switch to if the window is gone by the time the close
+    /// completes.
+    case window(Int, fallbackSpace: UInt64)
     /// Switch to this Space: nothing was frontmost, or the closed Space was
     /// the focused one and the next most recent takes its place.
     case space(UInt64)
   }
 
-  /// The focus to restore after closing `spaceID`, decided from the last
-  /// refresh. Closing another Space must return the user to the window they
-  /// were using — macOS otherwise hands focus to whatever it likes once
-  /// Mission Control dismisses, and switching to the already-current Space
-  /// is a no-op that restores nothing. Closing the focused Space itself
-  /// falls through to the next most recent Space.
+  /// The focus to restore after closing `spaceID`, decided from the
+  /// panel-open snapshot. Closing another Space must return the user to the
+  /// window they were using — macOS otherwise hands focus to whatever it
+  /// likes once Mission Control dismisses, and switching to the
+  /// already-current Space is a no-op that restores nothing. Closing the
+  /// focused Space itself falls through to the next most recent Space.
   public func focusRestoreTarget(afterClosing spaceID: UInt64) -> FocusRestoreTarget? {
-    if let focused = lastFocusedSpaceID, focused != spaceID {
-      if let window = lastFrontWindowID { return .window(window) }
-      return .space(focused)
+    if let focus = panelOpenFocus, focus.spaceID != spaceID {
+      if let window = focus.windowID { return .window(window, fallbackSpace: focus.spaceID) }
+      return .space(focus.spaceID)
     }
     return sections.first(where: { $0.id != spaceID }).map { .space($0.id) }
   }
