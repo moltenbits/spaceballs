@@ -45,6 +45,12 @@ public protocol SystemDataSource {
   /// for the given process. `nil` means the state could not be determined.
   func minimizedAXWindowIDs(pid: pid_t) -> Set<CGWindowID>?
 
+  /// Whether the app's live AX window list contains `windowID`. Unlike
+  /// `liveAXWindowIDs`, this stays `.unknown` when the list was readable but
+  /// some element could not be mapped to a CGWindowID, so an incomplete read
+  /// is never taken for absence.
+  func axWindowPresence(pid: pid_t, windowID: CGWindowID) -> AXWindowPresence
+
   /// Returns the activation policy and bundle identifier of the application
   /// owning `pid`, or `nil` when the pid maps to no LaunchServices-registered
   /// application. Callers MUST treat `nil` as "keep the window": most pids
@@ -62,6 +68,28 @@ extension SystemDataSource {
   /// Default: minimization state unknown.
   public func minimizedAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? { nil }
 
+  /// Default: derived from `liveAXWindowIDs`, whose set is treated as complete.
+  public func axWindowPresence(pid: pid_t, windowID: CGWindowID) -> AXWindowPresence {
+    guard let liveIDs = liveAXWindowIDs(pid: pid) else { return .unknown }
+    return liveIDs.contains(windowID) ? .present : .absent
+  }
+
   /// Default: no LaunchServices registration known, so windows are kept.
   public func appInfo(pid: pid_t) -> AppInfo? { nil }
+}
+
+/// Answer to "does this app's AX window list contain this window?".
+public enum AXWindowPresence: Equatable {
+  case present
+  case absent
+  /// The list could not be read, or was read but not fully mapped to window
+  /// IDs — the window may well be there. Never a ground for a closed verdict.
+  case unknown
+
+  /// Folds one enumeration into a verdict: a match is `.present`; no match is
+  /// `.absent` only when every element mapped to a window ID.
+  static func resolve(targetFound: Bool, unmappedElements: Int) -> AXWindowPresence {
+    if targetFound { return .present }
+    return unmappedElements == 0 ? .absent : .unknown
+  }
 }
