@@ -42,7 +42,8 @@ struct MCMoveSpaceTestCommand: ParsableCommand {
 
     let ok = manager.moveSpaceInMC(
       sourceSpaceIndex: spaceIndex, sourceScreenNumber: sourceScreen,
-      targetScreenNumber: targetScreen, verbose: verbose)
+      targetScreenNumber: targetScreen, verbose: verbose
+    ).moved
     if !ok {
       throw ExitCode.failure
     }

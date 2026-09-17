@@ -979,43 +979,48 @@ public class SpaceManager {
       Diagnostics.log("space-create", "switch-on-create: mc.spaces.list not found")
       return false
     }
-    guard let tileIndex = Self.perDisplayDesktopIndex(of: newSpace.id, in: getAllSpaces())
-    else {
-      Diagnostics.log("space-create", "switch-on-create: no tile index for id=\(newSpace.id)")
-      return false
-    }
+    return pressTileInSession(forSpace: newSpace.id, in: mcSpacesList, tag: "space-create")
+  }
 
-    // Give the fresh tile a beat to become interactive before pressing.
+  /// Ends an open Mission Control session by pressing the tile of `spaceID`
+  /// in `spacesList` (its display's `mc.spaces.list`), which zooms straight
+  /// into that Space — no dismissal animation, no separate switch. The tile
+  /// is the space's per-display DESKTOP index per CGS (the bar-order
+  /// invariant), never a title. Verified through CGS; returns whether the
+  /// Space became current. The routine every in-session activation uses:
+  /// Space creation and Space-to-display moves.
+  func pressTileInSession(forSpace spaceID: UInt64, in spacesList: AXUIElement, tag: String)
+    -> Bool
+  {
+    // Give a fresh or just-moved tile a beat to become interactive, then
+    // take the index and the bar in one go so they describe the same moment.
     Thread.sleep(forTimeInterval: 0.2)
 
-    let children = Self.axChildren(mcSpacesList)
-    guard tileIndex < children.count else {
-      Diagnostics.log(
-        "space-create",
-        "switch-on-create: tile index \(tileIndex) out of range (have \(children.count))")
+    guard let tileIndex = Self.perDisplayDesktopIndex(of: spaceID, in: getAllSpaces()) else {
+      Diagnostics.log(tag, "in-session press: no tile index for id=\(spaceID)")
       return false
     }
 
-    let tile = children[tileIndex]
-    let title = Self.axStringAttribute(tile, name: "AXTitle") ?? "?"
+    guard
+      let (tile, title) = MissionControlTree.desktopTile(in: spacesList, desktopIndex: tileIndex)
+    else {
+      Diagnostics.log(tag, "in-session press: no desktop tile at index \(tileIndex)")
+      return false
+    }
     Diagnostics.log(
-      "space-create",
-      "switch-on-create pressing tile index=\(tileIndex)/\(children.count) title=\"\(title)\" target=id=\(newSpace.id)"
-    )
+      tag, "in-session press tile index=\(tileIndex) title=\"\(title)\" target=id=\(spaceID)")
     guard AXUIElementPerformAction(tile, kAXPressAction as CFString) == .success else {
-      Diagnostics.log("space-create", "switch-on-create: tile press failed")
+      Diagnostics.log(tag, "in-session press: tile press failed")
       return false
     }
 
-    let deadline = Date().addingTimeInterval(2.0)
-    while Date() < deadline {
-      if getAllSpaces().contains(where: { $0.id == newSpace.id && $0.isCurrent }) {
-        return true
-      }
-      Thread.sleep(forTimeInterval: 0.1)
+    let landed = poll(timeout: 2.0) {
+      self.getAllSpaces().contains { $0.id == spaceID && $0.isCurrent }
     }
-    Diagnostics.log("space-create", "switch-on-create: landing not confirmed by CGS")
-    return false
+    if !landed {
+      Diagnostics.log(tag, "in-session press: landing not confirmed by CGS")
+    }
+    return landed
   }
 
   /// Synchronous version for CLI usage.
@@ -2952,10 +2957,12 @@ public class SpaceManager {
       Thread.sleep(forTimeInterval: 0.8)
     }
 
-    let moved = moveSpaceInMC(
+    let (moved, sessionOutcome) = moveSpaceInMC(
       sourceSpaceIndex: plan.sourceSpaceIndex,
       sourceScreenNumber: sourceScreen,
-      targetScreenNumber: targetScreen)
+      targetScreenNumber: targetScreen,
+      activate: activateAfterMove
+        ? InSessionActivation(spaceID: spaceID, targetDisplayUUID: targetDisplayUUID) : nil)
     guard moved else {
       Diagnostics.endTiming(token, outcome: "drag-failed")
       return false
@@ -2967,23 +2974,25 @@ public class SpaceManager {
       self.getAllSpaces().first(where: { $0.id == spaceID })?.displayUUID == targetDisplayUUID
     }
 
-    // Make the moved space the target display's active Space, VERIFIED
-    // through CGS with one serialized retry (`MovedSpaceActivator`): the
-    // batch's dismissal is only confirmed as far as MC's AX group being
+    // The session normally ends on the moved Space (in-session tile press).
+    // When that didn't verify, fall back to activating it from outside,
+    // VERIFIED through CGS with one serialized retry (`MovedSpaceActivator`):
+    // the batch's dismissal is only confirmed as far as MC's AX group being
     // gone — the dismiss animation can still be running, and a DockSwipe
     // posted meanwhile is swallowed, which the verified retry covers. The
     // move itself already succeeded; an unverified activation is logged,
     // never a failure of the move.
-    var activated: Bool?
-    if verified && activateAfterMove {
+    var activationSuffix = ""
+    if sessionOutcome == .activated {
+      activationSuffix = " active-in-session"
+    } else if SpaceMoveSessionEnd.outsideActivationNeeded(
+      relocationVerified: verified, activateAfterMove: activateAfterMove,
+      sessionOutcome: sessionOutcome)
+    {
       Self.awaitMissionControlDismissed(timeout: 2.0)
-      activated = activateMovedSpace(id: spaceID)
+      activationSuffix = activateMovedSpace(id: spaceID) ? " active" : " activation-unverified"
     }
-
-    Diagnostics.endTiming(
-      token,
-      outcome: (verified ? "moved" : "not-verified")
-        + (activated.map { $0 ? " active" : " activation-unverified" } ?? ""))
+    Diagnostics.endTiming(token, outcome: (verified ? "moved" : "not-verified") + activationSuffix)
     return verified
   }
 
@@ -3012,44 +3021,36 @@ public class SpaceManager {
     return condition()
   }
 
-  /// Drags a Space tile from one display's Mission Control spaces bar onto
-  /// another display's bar.
-  ///
-  /// Mirrors `moveWindowInMC`, with space-tile specifics: the source bar is
-  /// hovered first so it expands (tile frames differ pre/post expansion), the
-  /// nudge pulls DOWN out of the bar (in-bar motion reads as reordering), and
-  /// the homing target is the destination bar's append position past its last
-  /// tile rather than a tile center. No tile is pressed afterwards — that
-  /// would switch the destination display's active space.
-  ///
-  /// The tile is located by INDEX among the source bar's desktop tiles, not by
-  /// "Desktop N" title: MC numbers desktops in display-arrangement order
-  /// (built-in first) while CGS enumerates displays in an order that can vary
-  /// between calls, so a CGS-derived global title is unreliable. Per-display
-  /// CGS space order does match the bar's tile order (the same invariant
-  /// `switchToSpace(spaceIndex:screenNumber:)` relies on).
-  ///
-  /// - Parameters:
-  ///   - sourceSpaceIndex: Position of the space among its display's desktop
-  ///     tiles (0-based).
-  ///   - sourceScreenNumber: Display currently owning the space.
-  ///   - targetScreenNumber: Display to move the space to.
-  ///   - verbose: Print diagnostic output.
-  /// - Returns: `true` if the drag completed, `false` on any error.
-  @discardableResult
+  /// A Space to activate in the same Mission Control session once its tile
+  /// has been dropped on `targetDisplayUUID`'s bar.
+  public struct InSessionActivation: Equatable {
+    public let spaceID: UInt64
+    public let targetDisplayUUID: String
+    public init(spaceID: UInt64, targetDisplayUUID: String) {
+      self.spaceID = spaceID
+      self.targetDisplayUUID = targetDisplayUUID
+    }
+  }
+
+  /// Drags one Space tile to another display's bar. With `activate`, the
+  /// session ends by pressing the moved tile — the Space is right there in
+  /// the open Mission Control, so it becomes the target display's active
+  /// Space directly, without a dismissal animation and a separate switch.
+  /// `sessionOutcome` says how the session ended (`.activated` when CGS confirmed it).
   public func moveSpaceInMC(
     sourceSpaceIndex: Int, sourceScreenNumber: CGDirectDisplayID,
-    targetScreenNumber: CGDirectDisplayID, verbose: Bool = false
-  ) -> Bool {
-    !moveSpacesInMCBatch(
+    targetScreenNumber: CGDirectDisplayID, verbose: Bool = false,
+    activate: InSessionActivation? = nil
+  ) -> (moved: Bool, sessionOutcome: SpaceMoveSessionEnd.Outcome) {
+    let result = runSpaceDragsInMC(
       [
         SpaceTileDrag(
           sourceSpaceIndex: sourceSpaceIndex,
           sourceScreenNumber: sourceScreenNumber,
           targetScreenNumber: targetScreenNumber)
       ],
-      verbose: verbose
-    ).isEmpty
+      verbose: verbose, activate: activate)
+    return (!result.completed.isEmpty, result.sessionOutcome)
   }
 
   /// Performs several space-tile drags in ONE Mission Control session: open
@@ -3065,14 +3066,23 @@ public class SpaceManager {
     _ drags: [SpaceTileDrag], verbose: Bool = false,
     resolveSourceIndex: ((_ dragIndex: Int) -> Int?)? = nil
   ) -> [Int] {
-    guard !drags.isEmpty else { return [] }
+    runSpaceDragsInMC(drags, verbose: verbose, resolveSourceIndex: resolveSourceIndex).completed
+  }
+
+  private func runSpaceDragsInMC(
+    _ drags: [SpaceTileDrag], verbose: Bool = false,
+    resolveSourceIndex: ((_ dragIndex: Int) -> Int?)? = nil,
+    activate: InSessionActivation? = nil
+  ) -> (completed: [Int], sessionOutcome: SpaceMoveSessionEnd.Outcome) {
+    guard !drags.isEmpty else { return ([], .notRequested) }
     guard AXIsProcessTrusted() else {
       Self.reportMCFailure("moveSpacesInMCBatch: Accessibility not trusted")
-      return []
+      return ([], .notRequested)
     }
 
     let semaphore = DispatchSemaphore(value: 0)
     var completed: [Int] = []
+    var sessionOutcome = SpaceMoveSessionEnd.Outcome.notRequested
     let timing = moveTiming
 
     DispatchQueue.global(qos: .userInteractive).async {
@@ -3158,11 +3168,34 @@ public class SpaceManager {
         // the tail of Mission Control's re-layout.
         Thread.sleep(forTimeInterval: timing.interDragPause)
       }
-      Self.dismissMissionControlIfPresent(dockElement: dockElement)
+
+      // End the session: on the moved Space when asked (`SpaceMoveSessionEnd`),
+      // else by guarded dismissal.
+      let lastIndex = drags.indices.last!
+      let targetBar = displayMatching(drags[lastIndex].targetScreenNumber).flatMap(spacesBar(of:))
+      sessionOutcome = SpaceMoveSessionEnd.run(
+        activate: activate != nil,
+        SpaceMoveSessionEnd.Dependencies(
+          dragCompleted: completed.contains(lastIndex) && targetBar != nil,
+          awaitArrival: {
+            self.poll(timeout: 2.0) {
+              self.getAllSpaces().first(where: { $0.id == activate!.spaceID })?.displayUUID
+                == activate!.targetDisplayUUID
+            }
+          },
+          pressTile: {
+            self.pressTileInSession(
+              forSpace: activate!.spaceID, in: targetBar!, tag: "move-space-display")
+          },
+          awaitMissionControlDismissed: { Self.awaitMissionControlDismissed(timeout: 2.0) },
+          dismissMissionControlIfPresent: {
+            Self.dismissMissionControlIfPresent(dockElement: dockElement)
+          },
+          log: { Diagnostics.log("move-space-display", $0) }))
     }
 
     semaphore.wait()
-    return completed
+    return (completed, sessionOutcome)
   }
 
   /// Drags one space tile from `sourceBar` onto `targetBar` within an open
