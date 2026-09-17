@@ -1803,19 +1803,25 @@ public final class SwitcherViewModel: ObservableObject {
       sectionIndex: sectionIndex)
   }
 
+  /// Shows the marked space on `next`'s panel, at the TOP of it: the move,
+  /// once executed, activates the space there, so the preview must rank it
+  /// first — leaving it at its old global index would place it wherever that
+  /// index falls among the target display's sections.
   private func retargetMarkedSpace(
     to next: (uuid: String, name: String), sectionIndex: Int
   ) {
-    let old = sections[sectionIndex]
-    sections[sectionIndex] = SwitcherSection(
-      id: old.id,
-      spaceUUID: old.spaceUUID,
-      displayUUID: next.uuid,
-      displayName: next.name,
-      label: old.label,
-      isCurrent: old.isCurrent,
-      ordinalLabel: old.ordinalLabel,
-      windows: old.windows)
+    let old = sections.remove(at: sectionIndex)
+    sections.insert(
+      SwitcherSection(
+        id: old.id,
+        spaceUUID: old.spaceUUID,
+        displayUUID: next.uuid,
+        displayName: next.name,
+        label: old.label,
+        isCurrent: old.isCurrent,
+        ordinalLabel: old.ordinalLabel,
+        windows: old.windows),
+      at: 0)
     selectedItem = .spaceHeader(old.id)
   }
 

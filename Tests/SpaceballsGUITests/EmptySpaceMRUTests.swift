@@ -180,6 +180,31 @@ struct SpaceMoveMRUTests {
     vm.moveMarkedSpaceToNextDisplay()
   }
 
+  @Test("A retargeted space previews at the top of the target display's panel")
+  func retargetedSpaceShowsFirstOnTargetDisplay() {
+    // Space 2 (display-1) sits behind display-1's current space and behind
+    // display-2's current space in MRU order; retargeting it to display-2
+    // must show it FIRST among display-2's sections, not mid-list.
+    let ds = makeEmptySpaceScenario()
+    let vm = makeTestSwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.showEmptySpaces = true
+    vm.refresh()
+    #expect(vm.sections.firstIndex(where: { $0.id == 2 }).map { $0 > 0 } == true)
+
+    vm.selectedItem = .spaceHeader(2)
+    vm.toggleSpaceMoveMode()
+    vm.moveMarkedSpaceToNextDisplay()
+
+    let onTarget = vm.sections.filter { $0.displayUUID == "display-2" }
+    #expect(onTarget.first?.id == 2)
+    #expect(vm.sections.first?.id == 2)
+    #expect(vm.selectedItem == .spaceHeader(2))
+
+    // Cycling on keeps it on top of whichever display it lands on.
+    vm.moveMarkedSpaceToNextDisplay()
+    #expect(vm.sections.first?.id == 2)
+  }
+
   @Test("Executing a space move with activation promotes the moved space")
   func movedSpacePromotedWhenActivating() {
     let ds = makeEmptySpaceScenario()
