@@ -317,6 +317,42 @@ public class SpaceManager {
     return result
   }
 
+  /// Reaches the `removeClosedWindows` verdict for one window on demand: true
+  /// when it sits off-screen on a current Space and its app's AX window list
+  /// does not include it — a closed window the window server still lists. A
+  /// confirmed verdict is tombstoned so the ghost stays hidden afterwards.
+  ///
+  /// Meant for activation, once the window's Space is current (the instant
+  /// switch just landed there, or it always was): a window that was
+  /// unjudgeable at refresh time can finally be judged. Fails closed:
+  /// on-screen, minimized (AX-listed), non-current-Space windows and any AX
+  /// read that is unavailable or incomplete (`AXWindowPresence.unknown`) are
+  /// all kept. A missing window is re-read once after `recheckDelay`, since
+  /// the app's AX server can lag the Space switch by a beat; both reads must
+  /// independently find it absent.
+  func confirmWindowClosedOnCurrentSpace(
+    windowID: Int, pid: pid_t, recheckDelay: TimeInterval = 0.1
+  ) -> Bool {
+    func isOffScreenOnCurrentSpaceAndAbsentFromAX() -> Bool {
+      let entry = dataSource.fetchWindowList().first {
+        ($0[kCGWindowNumber as String] as? Int) == windowID
+      }
+      guard let entry, entry[kCGWindowIsOnscreen as String] as? Bool != true else {
+        return false
+      }
+      let currentSpaceIDs = Set(getAllSpaces().filter(\.isCurrent).map(\.id))
+      guard dataSource.fetchSpacesForWindow(windowID).contains(where: currentSpaceIDs.contains)
+      else { return false }
+      return dataSource.axWindowPresence(pid: pid, windowID: CGWindowID(windowID)) == .absent
+    }
+
+    guard isOffScreenOnCurrentSpaceAndAbsentFromAX() else { return false }
+    if recheckDelay > 0 { Thread.sleep(forTimeInterval: recheckDelay) }
+    guard isOffScreenOnCurrentSpaceAndAbsentFromAX() else { return false }
+    markWindowClosed(id: windowID)
+    return true
+  }
+
   /// Returns the CGWindowID of the frontmost normal window on the given space,
   /// using the on-screen window list which guarantees front-to-back Z-order.
   /// Returns `nil` if no qualifying window is found.
@@ -1450,6 +1486,22 @@ public class SpaceManager {
 
     if prepareInstantWindowActivation(windowID: windowID, timeout: 0.5) {
       spaceWakeFallbackTarget = nil
+    }
+
+    // If the window's Space is current now — because the instant switch just
+    // landed there, or because it always was (a stale panel row, a raw CLI
+    // ID) — this is the moment AX can vouch for a window getAllWindows() may
+    // never have judged (its Space wasn't current at refresh time). A closed
+    // window that still lingers in the window list must stop here: SkyLight
+    // would otherwise front the app's real key window and drag the display
+    // off to whatever Space that one is on. Windows whose Space still isn't
+    // current fall through untouched; the check can't judge them.
+    if confirmWindowClosedOnCurrentSpace(windowID: windowID, pid: pid) {
+      Diagnostics.log(
+        "activate",
+        "windowID=\(windowID) result=window-closed (absent from AX on its current Space; tombstoned) total=\(Int(Date().timeIntervalSince(activateStart) * 1000))ms",
+        app: ownerName)
+      throw WindowActivationError.windowNotFound(windowID: windowID)
     }
 
     // 3. Try the standard kAXWindowsAttribute first (fast, works for same-space windows).

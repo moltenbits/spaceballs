@@ -58,6 +58,20 @@ public struct CGSDataSource: SystemDataSource {
       })
   }
 
+  public func axWindowPresence(pid: pid_t, windowID: CGWindowID) -> AXWindowPresence {
+    guard let axWindows = axWindows(pid: pid) else { return .unknown }
+    var unmapped = 0
+    for axWindow in axWindows {
+      var candidate = CGWindowID(0)
+      guard _AXUIElementGetWindow(axWindow, &candidate) == .success else {
+        unmapped += 1
+        continue
+      }
+      if candidate == windowID { return .present }
+    }
+    return AXWindowPresence.resolve(targetFound: false, unmappedElements: unmapped)
+  }
+
   public func minimizedAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? {
     guard let axWindows = axWindows(pid: pid) else { return nil }
 
