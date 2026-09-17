@@ -672,6 +672,30 @@ public final class SwitcherViewModel: ObservableObject {
     return nil
   }
 
+  /// Where focus should go after a Space is closed from the panel.
+  public enum FocusRestoreTarget: Equatable {
+    /// Re-activate this window: the one that was frontmost when the panel
+    /// opened, so both its Space and its app come back.
+    case window(Int)
+    /// Switch to this Space: nothing was frontmost, or the closed Space was
+    /// the focused one and the next most recent takes its place.
+    case space(UInt64)
+  }
+
+  /// The focus to restore after closing `spaceID`, decided from the last
+  /// refresh. Closing another Space must return the user to the window they
+  /// were using — macOS otherwise hands focus to whatever it likes once
+  /// Mission Control dismisses, and switching to the already-current Space
+  /// is a no-op that restores nothing. Closing the focused Space itself
+  /// falls through to the next most recent Space.
+  public func focusRestoreTarget(afterClosing spaceID: UInt64) -> FocusRestoreTarget? {
+    if let focused = lastFocusedSpaceID, focused != spaceID {
+      if let window = lastFrontWindowID { return .window(window) }
+      return .space(focused)
+    }
+    return sections.first(where: { $0.id != spaceID }).map { .space($0.id) }
+  }
+
   public var selectedSpaceID: UInt64? {
     let map = windowSpaceMap()
     return spaceID(for: selectedItem ?? .settings, using: map)

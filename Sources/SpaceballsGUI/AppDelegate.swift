@@ -1102,9 +1102,9 @@ extension AppDelegate: KeyInterceptorDelegate {
     let spaceName =
       viewModel.filteredSections.first(where: { $0.id == spaceID })?.label ?? "Space \(spaceID)"
 
-    // Capture the next MRU space before closing (sections are MRU-ordered)
-    let nextMRUSpaceID = viewModel.sections
-      .first(where: { $0.id != spaceID })?.id
+    // Decide where focus returns before the close; the panel state is gone
+    // once it hides.
+    let focusRestore = viewModel.focusRestoreTarget(afterClosing: spaceID)
 
     keyInterceptor.setSuppressConfirm(true)
     viewModel.sortOverlayText = "Closing \(spaceName)..."
@@ -1118,9 +1118,17 @@ extension AppDelegate: KeyInterceptorDelegate {
     ) { [weak self] result in
       guard let self else { return }
 
-      // Switch to the next MRU space after successful close
-      if case .success = result, let nextID = nextMRUSpaceID {
-        try? self.viewModel.spaceManager.switchToSpace(id: nextID)
+      // Restore focus after a successful close: the window the user was
+      // using, else the Space that takes the closed one's place.
+      if case .success = result {
+        switch focusRestore {
+        case .window(let windowID):
+          try? self.viewModel.spaceManager.activateWindow(id: windowID)
+        case .space(let nextID):
+          try? self.viewModel.spaceManager.switchToSpace(id: nextID)
+        case nil:
+          break
+        }
       }
 
       DispatchQueue.main.async {
