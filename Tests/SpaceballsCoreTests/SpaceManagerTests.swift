@@ -843,12 +843,17 @@ final class MutableCoreMockDataSource: SystemDataSource {
   var windowList: [[String: Any]] = []
   var windowSpaces: [Int: [UInt64]] = [:]
   var liveWindowIDsByPID: [Int: Set<CGWindowID>] = [:]
+  /// Runs after each AX liveness query, so a test can script the next answer.
+  var onLiveAXQuery: (() -> Void)?
 
   func fetchManagedDisplaySpaces() -> [[String: Any]] { displaySpaces }
   func fetchWindowList() -> [[String: Any]] { windowList }
   func fetchOnScreenWindowList() -> [[String: Any]] { windowList }
   func fetchSpacesForWindow(_ windowID: Int) -> [UInt64] { windowSpaces[windowID] ?? [] }
-  func liveAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? { liveWindowIDsByPID[Int(pid)] }
+  func liveAXWindowIDs(pid: pid_t) -> Set<CGWindowID>? {
+    defer { onLiveAXQuery?() }
+    return liveWindowIDsByPID[Int(pid)]
+  }
 }
 
 /// A window confirmed closed via AX must STAY hidden after its Space stops being
@@ -964,6 +969,106 @@ struct ClosedWindowTombstoneTests {
     ]
     ds.windowSpaces = [2: [11]]
     #expect(manager.getAllWindows().map(\.id) == [2])
+  }
+
+  // MARK: Verdict at activation time
+
+  // A ghost on a Space that is never current at refresh time can't be judged by
+  // getAllWindows(). Activation switches to that Space first, which is the one
+  // moment AX can vouch — the verdict must be taken there and remembered.
+
+  @Test("Activation-time check tombstones a ghost once its Space is current")
+  func activationCheckTombstonesGhostOnNowCurrentSpace() {
+    let ds = makeDataSource(currentSpaceID: 11)
+    ds.windowList = [
+      makeWindowDict(id: 7, ownerName: "App", name: "Ghost", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [7: [10]]
+    ds.liveWindowIDsByPID = [100: []]  // AX: the app has no such window
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(manager.getAllWindows().map(\.id) == [7])  // space 10 not current → kept
+
+    // The instant switch landed on space 10; now AX's answer is authoritative.
+    ds.displaySpaces = makeDataSource(currentSpaceID: 10).displaySpaces
+    #expect(manager.confirmWindowClosedOnCurrentSpace(windowID: 7, pid: 100, recheckDelay: 0))
+
+    // The verdict survives the display moving off that Space again.
+    ds.displaySpaces = makeDataSource(currentSpaceID: 11).displaySpaces
+    #expect(manager.getAllWindows().isEmpty)
+  }
+
+  @Test("Activation-time check keeps a minimized window AX still lists")
+  func activationCheckKeepsMinimizedWindow() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 7, ownerName: "App", name: "Minimized", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [7: [10]]
+    ds.liveWindowIDsByPID = [100: [7]]
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(!manager.confirmWindowClosedOnCurrentSpace(windowID: 7, pid: 100, recheckDelay: 0))
+    #expect(manager.getAllWindows().map(\.id) == [7])
+  }
+
+  @Test("Activation-time check never judges when AX is unavailable")
+  func activationCheckNeedsAXVerdict() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 7, ownerName: "App", name: "Unknown", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [7: [10]]
+    // pid 100 absent → liveAXWindowIDs returns nil
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(!manager.confirmWindowClosedOnCurrentSpace(windowID: 7, pid: 100, recheckDelay: 0))
+    #expect(manager.getAllWindows().map(\.id) == [7])
+  }
+
+  @Test("Activation-time check trusts an on-screen window over AX")
+  func activationCheckKeepsOnScreenWindow() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 7, ownerName: "App", name: "Front", pid: 100, isOnscreen: true)
+    ]
+    ds.windowSpaces = [7: [10]]
+    ds.liveWindowIDsByPID = [100: []]
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(!manager.confirmWindowClosedOnCurrentSpace(windowID: 7, pid: 100, recheckDelay: 0))
+    #expect(manager.getAllWindows().map(\.id) == [7])
+  }
+
+  @Test("Activation-time check declines when the window's Space is still not current")
+  func activationCheckRequiresCurrentSpace() {
+    let ds = makeDataSource(currentSpaceID: 11)
+    ds.windowList = [
+      makeWindowDict(id: 7, ownerName: "App", name: "Elsewhere", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [7: [10]]
+    ds.liveWindowIDsByPID = [100: []]  // AX can't see space 10; its answer means nothing
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(!manager.confirmWindowClosedOnCurrentSpace(windowID: 7, pid: 100, recheckDelay: 0))
+    #expect(manager.getAllWindows().map(\.id) == [7])
+  }
+
+  @Test("Activation-time check re-reads once before condemning a window")
+  func activationCheckRechecksBeforeCondemning() {
+    let ds = makeDataSource(currentSpaceID: 10)
+    ds.windowList = [
+      makeWindowDict(id: 7, ownerName: "App", name: "Late", pid: 100, isOnscreen: false)
+    ]
+    ds.windowSpaces = [7: [10]]
+    // First AX read misses the window (the app's AX server lags the Space
+    // switch); the second lists it.
+    ds.liveWindowIDsByPID = [100: []]
+    ds.onLiveAXQuery = { ds.liveWindowIDsByPID = [100: [7]] }
+
+    let manager = SpaceManager(dataSource: ds)
+    #expect(!manager.confirmWindowClosedOnCurrentSpace(windowID: 7, pid: 100, recheckDelay: 0))
+    #expect(manager.getAllWindows().map(\.id) == [7])
   }
 }
 
