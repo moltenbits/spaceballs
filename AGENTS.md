@@ -195,7 +195,7 @@ Every other case simulates the drag:
 
 ## Key Constraints
 
-- **Targets the current macOS release only** — currently macOS 26 (Tahoe). The private CGS/SkyLight/AX internals shift between macOS releases, so each Spaceballs release supports only the macOS version it was developed against; older macOS versions are served by older releases (uses Cocoa, CoreGraphics, SkyLight, Accessibility APIs)
+- **Targets the current macOS release only** — currently macOS 27 (Golden Gate); the package, bundle plists and Homebrew cask all declare 27.0 as the minimum. The private CGS/SkyLight/AX internals shift between macOS releases, so each Spaceballs release supports only the macOS version it was developed against; older macOS versions are served by older releases (uses Cocoa, CoreGraphics, SkyLight, Accessibility APIs)
 - **Accessibility permission** required for keyboard interception and window activation
 - **Screen Recording permission** required for window titles
 - **Private APIs** — undocumented Apple internals; may break across macOS versions
