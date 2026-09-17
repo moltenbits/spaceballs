@@ -2568,7 +2568,7 @@ public class SpaceManager {
     return frames
   }
 
-  private static func frameString(_ rect: CGRect) -> String {
+  static func frameString(_ rect: CGRect) -> String {
     "(\(Int(rect.minX)),\(Int(rect.minY)))/\(Int(rect.width))x\(Int(rect.height))"
   }
 
@@ -2771,7 +2771,7 @@ public class SpaceManager {
           })
         else { return nil }
         targetButton = match
-        return MissionControlTree.aimPoint(tile: match, in: barList)
+        return MissionControlTree.aimPoint(tile: match, in: barList, anchor: tree.tileAnchor)
       }
       let arrival = Self.homingDrag(
         from: nudge,
@@ -2792,13 +2792,26 @@ public class SpaceManager {
 
       // Hold until the bar's relayout fully settles, following any residual
       // shift so the drop lands dead-center.
+      // The drag entering the bar expanded it; confirm that and the tile's
+      // settled position before dropping. Anything less is a stale point and
+      // the drop is abandoned rather than released onto it.
       var dropPoint = arrival
-      if let settled = Self.awaitStablePoint(
-        read: readTargetCenter, delay: { Thread.sleep(forTimeInterval: 0.04) }),
-        abs(settled.point.x - dropPoint.x) > 2 || abs(settled.point.y - dropPoint.y) > 2
-      {
-        Self.postMouseDragToPoint(from: dropPoint, to: settled.point, steps: 4)
-        dropPoint = settled.point
+      guard
+        let settled = MissionControlTree.locateTile(
+          anchor: tree.tileAnchor,
+          read: MissionControlTree.barReader(
+            bar: barList, tileTitle: tileTitle, anchor: tree.tileAnchor),
+          delay: { Thread.sleep(forTimeInterval: 0.04) })
+      else {
+        Self.reportMCFailure(
+          "moveWindowInMC: tile \"\(tileTitle)\" not confirmed settled in the bar; drop abandoned")
+        Self.postMouseUp(at: nudge)
+        Self.dismissMissionControl()
+        return
+      }
+      if abs(settled.x - dropPoint.x) > 2 || abs(settled.y - dropPoint.y) > 2 {
+        Self.postMouseDragToPoint(from: dropPoint, to: settled, steps: 4)
+        dropPoint = settled
       }
       Thread.sleep(forTimeInterval: 0.05)
       Diagnostics.log(
@@ -2954,19 +2967,37 @@ public class SpaceManager {
       self.getAllSpaces().first(where: { $0.id == spaceID })?.displayUUID == targetDisplayUUID
     }
 
-    // Make the moved space the target display's active Space (activating a
-    // window on it when it has one — no Mission Control round). Best-effort:
-    // the move itself already succeeded, so a failed switch only logs.
+    // Make the moved space the target display's active Space, VERIFIED
+    // through CGS with one serialized retry (`MovedSpaceActivator`): the
+    // batch's dismissal is only confirmed as far as MC's AX group being
+    // gone — the dismiss animation can still be running, and a DockSwipe
+    // posted meanwhile is swallowed, which the verified retry covers. The
+    // move itself already succeeded; an unverified activation is logged,
+    // never a failure of the move.
+    var activated: Bool?
     if verified && activateAfterMove {
-      do {
-        try activateSpace(id: spaceID)
-      } catch {
-        Diagnostics.log("move-space-display", "post-move activation failed: \(error)")
-      }
+      Self.awaitMissionControlDismissed(timeout: 2.0)
+      activated = activateMovedSpace(id: spaceID)
     }
 
-    Diagnostics.endTiming(token, outcome: verified ? "moved" : "not-verified")
+    Diagnostics.endTiming(
+      token,
+      outcome: (verified ? "moved" : "not-verified")
+        + (activated.map { $0 ? " active" : " activation-unverified" } ?? ""))
     return verified
+  }
+
+  /// `MovedSpaceActivator` over the live Space switching, CGS and MC reads.
+  private func activateMovedSpace(id spaceID: UInt64) -> Bool {
+    MovedSpaceActivator().run(
+      MovedSpaceActivator.Dependencies(
+        activate: { try self.activateSpace(id: spaceID) },
+        switchSpace: { try self.switchToSpace(id: spaceID) },
+        isCurrent: { self.getAllSpaces().contains { $0.id == spaceID && $0.isCurrent } },
+        missionControlPresent: Self.missionControlPresent,
+        sleep: { Thread.sleep(forTimeInterval: $0) },
+        now: Date.init,
+        log: { Diagnostics.log("move-space-display", $0) }))
   }
 
   /// Polls `condition` every `interval` until it holds or `timeout` elapses.
@@ -3117,7 +3148,7 @@ public class SpaceManager {
           continue
         }
         if Self.performSpaceTileDrag(
-          sourceBar: sourceBar, targetBar: targetBar,
+          sourceBar: sourceBar, targetBar: targetBar, anchor: tree.tileAnchor,
           sourceSpaceIndex: sourceIndex, dropSettle: timing.dropSettle,
           verbose: verbose)
         {
@@ -3138,7 +3169,7 @@ public class SpaceManager {
   /// Mission Control session. Does NOT open or dismiss Mission Control —
   /// that's the session owner's job.
   private static func performSpaceTileDrag(
-    sourceBar: AXUIElement, targetBar: AXUIElement,
+    sourceBar: AXUIElement, targetBar: AXUIElement, anchor: MissionControlTree.TileAnchor,
     sourceSpaceIndex: Int, dropSettle: TimeInterval, verbose: Bool
   ) -> Bool {
     // Locate the tile by index among the bar's desktop tiles (fullscreen
@@ -3154,26 +3185,17 @@ public class SpaceManager {
       return false
     }
 
-    let readTileCenter: () -> CGPoint? = {
-      Self.axChildren(sourceBar).first(where: {
-        Self.axStringAttribute($0, name: "AXTitle") == spaceTileTitle
-      }).flatMap { MissionControlTree.aimPoint(tile: $0, in: sourceBar) }
-    }
-
-    // Hover the source bar so it expands, then wait for the tile's frame to
-    // settle — collapsed-bar frames are stale the moment expansion starts.
-    guard let barCenter = Self.axCenter(sourceBar) else {
-      Self.reportMCFailure("moveSpaceInMC: source bar frame unreadable")
-      return false
-    }
-    Self.postMouseMove(at: barCenter)
+    // Hover the source bar so it expands, then wait for the expansion and
+    // for the tile's frame to settle — collapsed-bar frames are stale the
+    // moment expansion starts, and a collapsed bar is "stable" too.
     guard
-      let grab = Self.awaitStablePoint(
-        read: readTileCenter, delay: { Thread.sleep(forTimeInterval: 0.04) })
+      let grabPoint = MissionControlTree.hoverAndLocateTile(
+        titled: spaceTileTitle, in: sourceBar, anchor: anchor, hover: Self.postMouseMove(at:))
     else {
-      Self.reportMCFailure("moveSpaceInMC: tile \"\(spaceTileTitle)\" not found in source bar")
+      Self.reportMCFailure("moveSpaceInMC: tile \"\(spaceTileTitle)\" not located in source bar")
       return false
     }
+    let grab = (point: grabPoint, isStable: true)
 
     if verbose { print("  Tile: \"\(spaceTileTitle)\" at \(grab.point)") }
 
@@ -3312,13 +3334,14 @@ public class SpaceManager {
       Thread.sleep(forTimeInterval: 0.5)
 
       if hoverSpacesBar, let display = tree.display(matching: CGMainDisplayID()),
-        let bar = MissionControlTree.spacesList(of: display), let barCenter = Self.axCenter(bar)
+        let bar = MissionControlTree.spacesList(of: display),
+        let firstTitle = Self.axChildren(bar).first.flatMap({
+          Self.axStringAttribute($0, name: "AXTitle")
+        })
       {
-        Self.postMouseMove(at: barCenter)
-        let settled = Self.awaitStablePoint(
-          read: { Self.axChildren(bar).first.flatMap(Self.axCenter) },
-          delay: { Thread.sleep(forTimeInterval: 0.04) })
-        print("hovered bar at \(barCenter); first tile settled=\(String(describing: settled))")
+        let aim = MissionControlTree.hoverAndLocateTile(
+          titled: firstTitle, in: bar, anchor: tree.tileAnchor, hover: Self.postMouseMove(at:))
+        print("hovered bar; first tile \"\(firstTitle)\" located at \(String(describing: aim))")
       }
 
       let host = tree.root == tree.dockGroup ? "Dock" : "WindowManager"

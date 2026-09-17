@@ -9,30 +9,6 @@ import Testing
 @Suite("Mission Control Tile Geometry")
 struct MissionControlTileGeometryTests {
 
-  @Test("Tiles symmetric about the bar center are reported as centers (macOS 27 layout)")
-  func centersAreDetected() {
-    // Live macOS 27 reading: 7 expanded tiles, 168 wide, on an 1800-wide bar.
-    let xs: [CGFloat] = [388, 559, 729, 900, 1070, 1241, 1412]
-    #expect(MissionControlTree.tileAnchor(tileXs: xs, tileWidth: 168, barCenterX: 900) == .center)
-  }
-
-  @Test("Tiles offset half a width left of the bar center are reported as origins")
-  func originsAreDetected() {
-    let xs: [CGFloat] = [304, 475, 645, 816, 986, 1157, 1328]
-    #expect(MissionControlTree.tileAnchor(tileXs: xs, tileWidth: 168, barCenterX: 900) == .origin)
-  }
-
-  @Test("A single tile is classified the same way")
-  func singleTile() {
-    #expect(MissionControlTree.tileAnchor(tileXs: [900], tileWidth: 80, barCenterX: 900) == .center)
-    #expect(MissionControlTree.tileAnchor(tileXs: [860], tileWidth: 80, barCenterX: 900) == .origin)
-  }
-
-  @Test("No tiles reads as origin")
-  func noTiles() {
-    #expect(MissionControlTree.tileAnchor(tileXs: [], tileWidth: 168, barCenterX: 900) == .origin)
-  }
-
   @Test("A center-anchored tile is aimed at exactly as reported")
   func centerAnchoredDropPoint() {
     let bar = CGPoint(x: 900, y: 97)
@@ -94,5 +70,137 @@ struct MissionControlDesktopTileIndexTests {
     let titles: [String?] = ["Desktop 1", "Safari"]
     #expect(MissionControlTree.desktopTileChildIndex(titles: titles, desktopIndex: 1) == nil)
     #expect(MissionControlTree.desktopTileChildIndex(titles: titles, desktopIndex: -1) == nil)
+  }
+}
+
+@Suite("Mission Control Bar Expansion")
+struct MissionControlBarExpansionTests {
+  typealias Reading = MissionControlTree.BarReading
+
+  private func collapsed(x: CGFloat) -> Reading {
+    Reading(
+      barFrame: CGRect(x: 0, y: 0, width: 1800, height: 78),
+      tileFrame: CGRect(x: x, y: 5, width: 168, height: 129), aim: CGPoint(x: x, y: 5))
+  }
+
+  private func expanded(x: CGFloat, y: CGFloat = 125) -> Reading {
+    Reading(
+      barFrame: CGRect(x: 0, y: 0, width: 1800, height: 194),
+      tileFrame: CGRect(x: x, y: y, width: 168, height: 129), aim: CGPoint(x: x, y: y))
+  }
+
+  @Test("Collapsed readings never satisfy the wait, even when stable")
+  func collapsedIsNotAccepted() {
+    var reads = [collapsed(x: 899), collapsed(x: 899), collapsed(x: 899)]
+    let result = MissionControlTree.awaitExpandedAim(
+      maxAttempts: 3, read: { reads.isEmpty ? nil : reads.removeFirst() }, delay: {})
+    #expect(result?.expanded == false)
+    #expect(result?.aim == CGPoint(x: 899, y: 5))
+  }
+
+  @Test("The wait rides out expansion and returns the first settled expanded aim")
+  func settlesAfterExpansion() {
+    var reads = [
+      collapsed(x: 899), collapsed(x: 899),
+      expanded(x: 850, y: 110), expanded(x: 890, y: 122), expanded(x: 900), expanded(x: 900),
+    ]
+    var attempts = 0
+    let result = MissionControlTree.awaitExpandedAim(
+      read: {
+        attempts += 1
+        return reads.isEmpty ? nil : reads.removeFirst()
+      }, delay: {})
+    #expect(result?.expanded == true)
+    #expect(result?.aim == CGPoint(x: 900, y: 125))
+    #expect(attempts == 6)
+  }
+
+  @Test("An already-expanded bar settles on its second reading")
+  func alreadyExpanded() {
+    var reads = [expanded(x: 900), expanded(x: 900)]
+    let result = MissionControlTree.awaitExpandedAim(
+      read: { reads.isEmpty ? nil : reads.removeFirst() }, delay: {})
+    #expect(result?.expanded == true)
+    #expect(result?.aim == CGPoint(x: 900, y: 125))
+  }
+
+  @Test("A failed read breaks the agreement streak")
+  func failedReadBreaksStreak() {
+    var reads: [Reading?] = [expanded(x: 900), nil, expanded(x: 900), expanded(x: 900)]
+    var attempts = 0
+    let result = MissionControlTree.awaitExpandedAim(
+      read: {
+        attempts += 1
+        return reads.isEmpty ? nil : reads.removeFirst()
+      }, delay: {})
+    #expect(result?.expanded == true)
+    #expect(attempts == 4)
+  }
+
+  @Test("Nothing readable resolves to nil")
+  func nothingReadable() {
+    let result = MissionControlTree.awaitExpandedAim(maxAttempts: 3, read: { nil }, delay: {})
+    #expect(result == nil)
+  }
+}
+
+/// The decision callers act on: a point to grab/drop, or nil meaning fail.
+@Suite("Mission Control Tile Location Decision")
+struct MissionControlTileLocationTests {
+  typealias Reading = MissionControlTree.BarReading
+
+  private func collapsed(x: CGFloat) -> Reading {
+    Reading(
+      barFrame: CGRect(x: 0, y: 0, width: 1800, height: 78),
+      tileFrame: CGRect(x: x, y: 5, width: 168, height: 129), aim: CGPoint(x: x, y: 5))
+  }
+
+  private func expanded(x: CGFloat) -> Reading {
+    Reading(
+      barFrame: CGRect(x: 0, y: 0, width: 1800, height: 194),
+      tileFrame: CGRect(x: x, y: 125, width: 168, height: 129), aim: CGPoint(x: x, y: 125))
+  }
+
+  @Test("WindowManager host: a bar that never expands yields no point")
+  func centerNeverExpanded() {
+    let point = MissionControlTree.locateTile(
+      anchor: .center, read: { self.collapsed(x: 900) }, delay: {})
+    #expect(point == nil)
+  }
+
+  @Test("WindowManager host: a tile that vanished after one reading yields no point")
+  func centerVanishedAfterFirstRead() {
+    var reads: [Reading?] = [expanded(x: 900)]
+    let point = MissionControlTree.locateTile(
+      anchor: .center, read: { reads.isEmpty ? nil : reads.removeFirst() }, delay: {})
+    #expect(point == nil)
+  }
+
+  @Test("WindowManager host: confirmed expansion yields the settled center")
+  func centerExpanded() {
+    var reads = [collapsed(x: 899), expanded(x: 880), expanded(x: 900), expanded(x: 900)]
+    let point = MissionControlTree.locateTile(
+      anchor: .center, read: { reads.isEmpty ? nil : reads.removeFirst() }, delay: {})
+    #expect(point == CGPoint(x: 900, y: 125))
+  }
+
+  @Test("Dock host: two agreeing readings suffice, without an expansion predicate")
+  func originStableSuffices() {
+    var reads = [collapsed(x: 899), collapsed(x: 899)]
+    let point = MissionControlTree.locateTile(
+      anchor: .origin, read: { reads.isEmpty ? nil : reads.removeFirst() }, delay: {})
+    #expect(point == CGPoint(x: 899, y: 5))
+  }
+
+  @Test("Dock host: readings that never agree yield no point")
+  func originNeverStable() {
+    var x: CGFloat = 0
+    let point = MissionControlTree.locateTile(
+      anchor: .origin,
+      read: {
+        x += 10
+        return self.collapsed(x: x)
+      }, delay: {})
+    #expect(point == nil)
   }
 }
