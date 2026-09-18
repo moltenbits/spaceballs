@@ -16,7 +16,7 @@ struct WorkspaceApplicationTests {
 
     var launcher = LauncherTemplate.genericOpen.launcher
     let stepID = launcher.steps[0].id
-    launcher.selectApplication(application, forStep: stepID)
+    launcher.selectApplication(application)
     #expect(launcher.appName == "Friendly App")
     #expect(launcher.bundleID == "example.selected")
     #expect(launcher.steps[0].action == .openApplication(url.path))
@@ -57,7 +57,7 @@ struct WorkspaceApplicationTests {
       label: "Custom label", appName: "Old", bundleID: "example.old",
       allowsExistingWindow: false, steps: [script, open])
     let id = launcher.id
-    launcher.selectApplication(application, forStep: open.id)
+    launcher.selectApplication(application)
     #expect(launcher.id == id)
     #expect(launcher.label == "Custom label")
     #expect(!launcher.allowsExistingWindow)
@@ -65,12 +65,137 @@ struct WorkspaceApplicationTests {
     #expect(launcher.steps[1].action == .openApplication(url.path))
     #expect(launcher.appName == "Replacement")
     #expect(launcher.bundleID == "example.selected")
+  }
 
+  @Test("With several Open App steps, only those launching the previous app are retargeted")
+  func multipleOpenSteps() throws {
+    let previous = try makeApplication(name: "Previous", bundleID: "example.previous")
+    defer { try? FileManager.default.removeItem(at: previous.deletingLastPathComponent()) }
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    let byPath = WorkspaceLauncherStep(action: .openApplication(previous.path))
+    let byName = WorkspaceLauncherStep(action: .openApplication("Previous"))
+    let helper = WorkspaceLauncherStep(action: .openApplication("Preview"))
+    var launcher = AppLauncher(
+      appName: "Previous", bundleID: "example.previous", steps: [byPath, helper, byName])
+
+    launcher.selectApplication(application)
+    #expect(launcher.steps[0].action == .openApplication(url.path))
+    #expect(launcher.steps[1] == helper)
+    #expect(launcher.steps[2].action == .openApplication(url.path))
+    #expect(launcher.steps.map(\.id) == [byPath.id, helper.id, byName.id])
+  }
+
+  @Test("A lone Open App step beside Launch Services is a helper and is kept")
+  func helperBesideLaunchServices() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    let primary = WorkspaceLauncherStep(
+      action: .launchServices(WorkspaceLaunchServicesConfiguration(target: "$PATH")))
+    let helper = WorkspaceLauncherStep(action: .openApplication("Preview"))
+    var launcher = AppLauncher(
+      appName: "Previous", bundleID: "example.previous", steps: [primary, helper])
+
+    launcher.selectApplication(application)
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == [primary, helper])
+    #expect(launcher.hasAmbiguousOpenSteps)
+  }
+
+  @Test("An Open App step beside Launch Services that launched the previous app is retargeted")
+  func previousAppBesideLaunchServices() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    let primary = WorkspaceLauncherStep(
+      action: .launchServices(WorkspaceLaunchServicesConfiguration(activates: false)))
+    let reopen = WorkspaceLauncherStep(action: .openApplication("Previous"))
+    var launcher = AppLauncher(
+      appName: "Previous", bundleID: "example.previous", steps: [primary, reopen])
+
+    launcher.selectApplication(application)
+    #expect(launcher.steps[0] == primary)
+    #expect(launcher.steps[1].action == .openApplication(url.path))
+    #expect(launcher.steps[1].id == reopen.id)
+  }
+
+  @Test("Choosing after clearing a multi-open pipeline changes identity and no steps")
+  func chooseAfterClearWithSeveralOpenSteps() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    let first = WorkspaceLauncherStep(action: .openApplication("Previous"))
+    let second = WorkspaceLauncherStep(action: .openApplication("Preview"))
+    var launcher = AppLauncher(
+      appName: "Previous", bundleID: "example.previous", steps: [first, second])
+
+    launcher.clearApplication()
+    launcher.selectApplication(application)
+    #expect(launcher.appName == "Picked")
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == [first, second])
+    #expect(launcher.hasAmbiguousOpenSteps)
+    #expect(!LauncherTemplate.genericOpen.launcher.hasAmbiguousOpenSteps)
+  }
+
+  @Test("Clearing the application keeps steps, IDs, and policy but drops the association")
+  func clearApplication() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    var launcher = LauncherTemplate.genericShell.launcher
+    launcher.allowsExistingWindow = false
+    launcher.selectApplication(application)
     let selected = launcher
-    launcher.selectApplication(application, forStep: UUID())
-    #expect(launcher == selected)
-    launcher.selectApplication(application, forStep: script.id)
-    #expect(launcher == selected)
+    #expect(launcher.hasApplication)
+    #expect(launcher.applicationIsOptional)
+
+    launcher.clearApplication()
+    #expect(!launcher.hasApplication)
+    #expect(launcher.appName.isEmpty)
+    #expect(launcher.bundleID.isEmpty)
+    #expect(launcher.id == selected.id)
+    #expect(launcher.steps == selected.steps)
+    #expect(!launcher.allowsExistingWindow)
+  }
+
+  @Test("Launchers with a Launch Services step require an application")
+  func applicationIsRequiredForLaunchServices() {
+    #expect(!LauncherTemplate.iterm.launcher.applicationIsOptional)
+    #expect(!LauncherTemplate.genericLaunchServices.launcher.applicationIsOptional)
+    #expect(LauncherTemplate.genericOpen.launcher.applicationIsOptional)
+    #expect(LauncherTemplate.genericAppleScript.launcher.applicationIsOptional)
+  }
+
+  @Test("Selecting an app for a Launch Services step sets identity and leaves the step alone")
+  func launchServicesSelection() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+
+    var launcher = LauncherTemplate.genericLaunchServices.launcher
+    let step = launcher.steps[0]
+    launcher.selectApplication(application)
+    #expect(launcher.appName == "Picked")
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == [step])
+  }
+
+  @Test("Selecting an app for a pipeline with no Open App step updates only the identity")
+  func identityOnlySelection() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+
+    var launcher = LauncherTemplate.iterm.launcher
+    let steps = launcher.steps
+    launcher.selectApplication(application)
+    #expect(launcher.appName == "Picked")
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == steps)
+    #expect(!launcher.allowsExistingWindow)
   }
 
   @Test("App bundles may omit the optional package type; other bundle extensions are rejected")
