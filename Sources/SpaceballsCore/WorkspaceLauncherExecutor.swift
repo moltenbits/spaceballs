@@ -41,8 +41,13 @@ struct WorkspaceLauncherExecutor {
         try runProcess(
           URL(fileURLWithPath: "/usr/bin/osascript"), ["-e", source], true)
       case .openApplication(let applicationName):
-        try runProcess(
-          URL(fileURLWithPath: "/usr/bin/open"), ["-a", applicationName], true)
+        // Picker-created launchers retain the chosen bundle's path. If the app
+        // moves, let Launch Services find it again by its saved identity.
+        let arguments =
+          applicationName.hasPrefix("/") && !request.bundleID.isEmpty
+            && !FileManager.default.fileExists(atPath: applicationName)
+          ? ["-b", request.bundleID] : ["-a", applicationName]
+        try runProcess(URL(fileURLWithPath: "/usr/bin/open"), arguments, true)
       case .launchServices(let configuration):
         guard !request.bundleID.isEmpty else {
           throw WorkspaceLauncherError.missingLaunchServicesBundleID

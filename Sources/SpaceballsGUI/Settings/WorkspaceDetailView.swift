@@ -1,3 +1,4 @@
+import AppKit
 import SpaceballsCore
 import SpaceballsGUILib
 import SwiftUI
@@ -132,7 +133,11 @@ struct WorkspaceDetailView: View {
           Menu("Add Launcher") {
             ForEach(LauncherTemplate.allCases) { template in
               Button(template.label) {
-                let launcher = template.launcher
+                var launcher = template.launcher
+                if template == .genericOpen {
+                  guard let application = WorkspaceApplicationPicker.choose() else { return }
+                  launcher.selectApplication(application, forStep: launcher.steps[0].id)
+                }
                 settings.workspaces[workspaceIndex].launchers.append(launcher)
                 let newIdx = settings.workspaces[workspaceIndex].launchers.count - 1
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -183,126 +188,178 @@ struct LauncherDetailView: View {
 
       ScrollView {
         VStack(alignment: .leading, spacing: 12) {
-          let launcher = settings.workspaces[workspaceIndex].launchers[launcherIndex]
-
-          Text("Launcher Pipeline")
-            .font(.headline)
-
-          Text(
-            "Steps run from top to bottom. Steps that wait stop the pipeline on failure; background shell steps continue immediately. Use $PATH, $NAME, and $PROFILE in configurable values."
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
-          Toggle(
-            "Allow relocating an existing window",
-            isOn: $settings.workspaces[workspaceIndex].launchers[launcherIndex].allowsExistingWindow
-          )
-          Text(
-            "Turn off when this launcher must create a new window, such as the iTerm and Safari templates."
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
-          HStack(spacing: 16) {
-            if launcher.usesProfileVariable {
-              VStack(alignment: .leading, spacing: 2) {
-                Text("Profile").font(.caption).foregroundStyle(.secondary)
-                TextField(
-                  "$NAME",
-                  text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].label
-                )
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 160)
-              }
+          if let step = simpleOpenStep {
+            applicationSelection(step: step)
+            DisclosureGroup("Advanced") {
+              pipelineEditor
+                .padding(.top, 8)
             }
-
-            VStack(alignment: .leading, spacing: 2) {
-              Text("App Name").font(.caption).foregroundStyle(.secondary)
-              TextField(
-                "e.g. Safari",
-                text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].appName
-              )
-              .textFieldStyle(.roundedBorder)
-              .frame(width: 160)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Bundle ID").font(.caption).foregroundStyle(.secondary)
-              TextField(
-                "e.g. com.apple.Safari",
-                text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].bundleID
-              )
-              .textFieldStyle(.roundedBorder)
-              .frame(width: 190)
-            }
+          } else {
+            pipelineEditor
           }
-
-          Divider()
-
-          ForEach(Array(launcher.steps.enumerated()), id: \.element.id) { stepIndex, step in
-            VStack(alignment: .leading, spacing: 10) {
-              HStack {
-                Text("\(stepIndex + 1). \(step.type.label)")
-                  .font(.callout.weight(.semibold))
-                Spacer()
-                Button {
-                  moveStep(from: stepIndex, by: -1)
-                } label: {
-                  Image(systemName: "arrow.up")
-                }
-                .buttonStyle(.borderless)
-                .disabled(stepIndex == 0)
-                .help("Move step earlier")
-
-                Button {
-                  moveStep(from: stepIndex, by: 1)
-                } label: {
-                  Image(systemName: "arrow.down")
-                }
-                .buttonStyle(.borderless)
-                .disabled(stepIndex == launcher.steps.count - 1)
-                .help("Move step later")
-
-                Button {
-                  removeStep(at: stepIndex)
-                } label: {
-                  Image(systemName: "minus.circle.fill")
-                    .foregroundStyle(.red)
-                }
-                .buttonStyle(.borderless)
-                .disabled(launcher.steps.count == 1)
-                .help(
-                  launcher.steps.count == 1
-                    ? "A launcher must contain at least one step" : "Remove step")
-              }
-
-              LauncherStepEditor(
-                step: $settings.workspaces[workspaceIndex].launchers[launcherIndex].steps[
-                  stepIndex],
-                bundleID: launcher.bundleID
-              )
-            }
-            .padding(12)
-            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-          }
-
-          Menu("Add Step") {
-            ForEach(
-              [
-                WorkspaceLaunchType.launchServices, .applescript, .shell, .open,
-              ]
-            ) { type in
-              Button(type.label) {
-                settings.workspaces[workspaceIndex].launchers[launcherIndex].steps.append(
-                  WorkspaceLauncherStep(action: .empty(for: type)))
-              }
-            }
-          }
-          .menuStyle(.borderlessButton)
         }
         .padding(16)
       }
+    }
+  }
+
+  private var simpleOpenStep: WorkspaceLauncherStep? {
+    let steps = settings.workspaces[workspaceIndex].launchers[launcherIndex].steps
+    guard steps.count == 1, case .openApplication = steps[0].action else { return nil }
+    return steps[0]
+  }
+
+  private func applicationSelection(step: WorkspaceLauncherStep) -> some View {
+    let launcher = settings.workspaces[workspaceIndex].launchers[launcherIndex]
+    let target = if case .openApplication(let value) = step.action { value } else { "" }
+    let applicationURL =
+      target.hasPrefix("/")
+      ? URL(fileURLWithPath: target)
+      : NSWorkspace.shared.urlForApplication(withBundleIdentifier: launcher.bundleID)
+    return HStack(spacing: 12) {
+      if let applicationURL {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: applicationURL.path))
+          .resizable()
+          .frame(width: 40, height: 40)
+      } else {
+        Image(systemName: "app")
+          .font(.largeTitle)
+          .foregroundStyle(.secondary)
+      }
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Application").font(.caption).foregroundStyle(.secondary)
+        Text(launcher.appName.isEmpty ? target : launcher.appName)
+          .font(.headline)
+      }
+      Spacer()
+      Button("Choose Application…") {
+        guard let application = WorkspaceApplicationPicker.choose() else { return }
+        settings.workspaces[workspaceIndex].launchers[launcherIndex]
+          .selectApplication(application, forStep: step.id)
+      }
+    }
+    .padding(.vertical, 8)
+  }
+
+  private var pipelineEditor: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      let launcher = settings.workspaces[workspaceIndex].launchers[launcherIndex]
+
+      Text("Launcher Pipeline")
+        .font(.headline)
+
+      Text(
+        "Steps run from top to bottom. Steps that wait stop the pipeline on failure; background shell steps continue immediately. Use $PATH, $NAME, and $PROFILE in configurable values."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+
+      Toggle(
+        "Allow relocating an existing window",
+        isOn: $settings.workspaces[workspaceIndex].launchers[launcherIndex].allowsExistingWindow
+      )
+      Text(
+        "Turn off when this launcher must create a new window, such as the iTerm and Safari templates."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+
+      HStack(spacing: 16) {
+        if launcher.usesProfileVariable {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Profile").font(.caption).foregroundStyle(.secondary)
+            TextField(
+              "$NAME",
+              text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].label
+            )
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 160)
+          }
+        }
+
+        VStack(alignment: .leading, spacing: 2) {
+          Text("App Name").font(.caption).foregroundStyle(.secondary)
+          TextField(
+            "e.g. Safari",
+            text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].appName
+          )
+          .textFieldStyle(.roundedBorder)
+          .frame(width: 160)
+        }
+
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Bundle ID").font(.caption).foregroundStyle(.secondary)
+          TextField(
+            "e.g. com.apple.Safari",
+            text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].bundleID
+          )
+          .textFieldStyle(.roundedBorder)
+          .frame(width: 190)
+        }
+      }
+
+      Divider()
+
+      ForEach(Array(launcher.steps.enumerated()), id: \.element.id) { stepIndex, step in
+        VStack(alignment: .leading, spacing: 10) {
+          HStack {
+            Text("\(stepIndex + 1). \(step.type.label)")
+              .font(.callout.weight(.semibold))
+            Spacer()
+            Button {
+              moveStep(from: stepIndex, by: -1)
+            } label: {
+              Image(systemName: "arrow.up")
+            }
+            .buttonStyle(.borderless)
+            .disabled(stepIndex == 0)
+            .help("Move step earlier")
+
+            Button {
+              moveStep(from: stepIndex, by: 1)
+            } label: {
+              Image(systemName: "arrow.down")
+            }
+            .buttonStyle(.borderless)
+            .disabled(stepIndex == launcher.steps.count - 1)
+            .help("Move step later")
+
+            Button {
+              removeStep(at: stepIndex)
+            } label: {
+              Image(systemName: "minus.circle.fill")
+                .foregroundStyle(.red)
+            }
+            .buttonStyle(.borderless)
+            .disabled(launcher.steps.count == 1)
+            .help(
+              launcher.steps.count == 1
+                ? "A launcher must contain at least one step" : "Remove step")
+          }
+
+          LauncherStepEditor(
+            step: $settings.workspaces[workspaceIndex].launchers[launcherIndex].steps[
+              stepIndex],
+            bundleID: launcher.bundleID
+          )
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+      }
+
+      Menu("Add Step") {
+        ForEach(
+          [
+            WorkspaceLaunchType.launchServices, .applescript, .shell, .open,
+          ]
+        ) { type in
+          Button(type.label) {
+            settings.workspaces[workspaceIndex].launchers[launcherIndex].steps.append(
+              WorkspaceLauncherStep(action: .empty(for: type)))
+          }
+        }
+      }
+      .menuStyle(.borderlessButton)
     }
   }
 
@@ -347,7 +404,7 @@ private struct LauncherStepEditor: View {
       }
     case .openApplication:
       VStack(alignment: .leading, spacing: 4) {
-        Text("Application Name").font(.caption).foregroundStyle(.secondary)
+        Text("Application Name or Path").font(.caption).foregroundStyle(.secondary)
         TextField("e.g. Preview", text: stringValue(for: .open))
           .textFieldStyle(.roundedBorder)
       }
