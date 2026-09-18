@@ -198,7 +198,7 @@ struct WorkspaceConfigTests {
     #expect(genericConfiguration.activates)
   }
 
-  @Test("Legacy stock iTerm launchers migrate to an explicit composed pipeline")
+  @Test("Legacy stock iTerm launchers migrate to the single new-instance launch")
   func legacyITermLauncherLaunchServicesMigration() throws {
     let migrated = try decodeLegacyLauncher(
       type: .applescript,
@@ -217,7 +217,7 @@ struct WorkspaceConfigTests {
     #expect(!migrated.allowsExistingWindow)
   }
 
-  @Test("Current stock iTerm launchers remove their embedded shell launch")
+  @Test("Shell-prefixed stock iTerm launchers migrate to the single new-instance launch")
   func currentITermLauncherLaunchServicesMigration() throws {
     let migrated = try decodeLegacyLauncher(
       type: .applescript,
@@ -254,6 +254,29 @@ struct WorkspaceConfigTests {
     // The migrated form is stable.
     let again = try JSONDecoder().decode(AppLauncher.self, from: JSONEncoder().encode(migrated))
     #expect(again == migrated)
+  }
+
+  @Test(
+    "A composed stock iTerm payload without a stored policy infers a new window; a stored policy wins",
+    arguments: [nil, true, false])
+  func composedStockITermPolicyInference(storedPolicy: Bool?) throws {
+    let stock = AppLauncher(
+      appName: "iTerm", bundleID: "com.googlecode.iterm2",
+      steps: [
+        WorkspaceLauncherStep(
+          action: .launchServices(WorkspaceLaunchServicesConfiguration(activates: false))),
+        WorkspaceLauncherStep(action: .appleScript(AppLauncher.iTermCommand)),
+      ])
+    var object = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(stock)) as? [String: Any])
+    object["allowsExistingWindow"] = storedPolicy
+
+    let decoded = try JSONDecoder().decode(
+      AppLauncher.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.steps.map(\.action) == LauncherTemplate.iterm.launcher.steps.map(\.action))
+    #expect(decoded.allowsExistingWindow == (storedPolicy ?? false))
+    let again = try JSONDecoder().decode(AppLauncher.self, from: JSONEncoder().encode(decoded))
+    #expect(again == decoded)
   }
 
   @Test("Composed iTerm launchers with custom steps are not migrated")
