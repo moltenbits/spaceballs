@@ -244,6 +244,13 @@ struct LauncherDetailView: View {
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
         }
+        if launcher.hasAmbiguousOpenSteps {
+          Text(
+            "Choosing an app updates only the Open App steps that launched the previous app. Check the other steps under the pipeline."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
       }
       Spacer()
       if launcher.hasApplication, launcher.applicationIsOptional {

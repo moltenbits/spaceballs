@@ -87,6 +87,59 @@ struct WorkspaceApplicationTests {
     #expect(launcher.steps.map(\.id) == [byPath.id, helper.id, byName.id])
   }
 
+  @Test("A lone Open App step beside Launch Services is a helper and is kept")
+  func helperBesideLaunchServices() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    let primary = WorkspaceLauncherStep(
+      action: .launchServices(WorkspaceLaunchServicesConfiguration(target: "$PATH")))
+    let helper = WorkspaceLauncherStep(action: .openApplication("Preview"))
+    var launcher = AppLauncher(
+      appName: "Previous", bundleID: "example.previous", steps: [primary, helper])
+
+    launcher.selectApplication(application)
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == [primary, helper])
+    #expect(launcher.hasAmbiguousOpenSteps)
+  }
+
+  @Test("An Open App step beside Launch Services that launched the previous app is retargeted")
+  func previousAppBesideLaunchServices() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    let primary = WorkspaceLauncherStep(
+      action: .launchServices(WorkspaceLaunchServicesConfiguration(activates: false)))
+    let reopen = WorkspaceLauncherStep(action: .openApplication("Previous"))
+    var launcher = AppLauncher(
+      appName: "Previous", bundleID: "example.previous", steps: [primary, reopen])
+
+    launcher.selectApplication(application)
+    #expect(launcher.steps[0] == primary)
+    #expect(launcher.steps[1].action == .openApplication(url.path))
+    #expect(launcher.steps[1].id == reopen.id)
+  }
+
+  @Test("Choosing after clearing a multi-open pipeline changes identity and no steps")
+  func chooseAfterClearWithSeveralOpenSteps() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+    let first = WorkspaceLauncherStep(action: .openApplication("Previous"))
+    let second = WorkspaceLauncherStep(action: .openApplication("Preview"))
+    var launcher = AppLauncher(
+      appName: "Previous", bundleID: "example.previous", steps: [first, second])
+
+    launcher.clearApplication()
+    launcher.selectApplication(application)
+    #expect(launcher.appName == "Picked")
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == [first, second])
+    #expect(launcher.hasAmbiguousOpenSteps)
+    #expect(!LauncherTemplate.genericOpen.launcher.hasAmbiguousOpenSteps)
+  }
+
   @Test("Clearing the application keeps steps, IDs, and policy but drops the association")
   func clearApplication() throws {
     let url = try makeApplication(name: "Picked")

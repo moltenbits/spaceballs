@@ -103,15 +103,11 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
 
   /// Point window matching, Launch Services steps, and the Open App steps that launch
   /// this launcher's app at the chosen application. Launch Services steps read the
-  /// launcher's bundle ID at launch. A lone Open App step is retargeted outright;
-  /// among several, only the ones launching the previous app change, so a pipeline
-  /// that opens a helper app alongside keeps that step.
+  /// launcher's bundle ID at launch. Which Open App steps change follows
+  /// `retargetedOpenSteps`: the primary step when it is unambiguous, otherwise only
+  /// the steps launching the previous app, so helper-app steps are never rewritten.
   public mutating func selectApplication(_ application: WorkspaceApplication) {
-    let openSteps = steps.indices.filter {
-      if case .openApplication = steps[$0].action { true } else { false }
-    }
-    let retargeted =
-      openSteps.count == 1 ? openSteps : openSteps.filter { launchesCurrentApplication(steps[$0]) }
+    let retargeted = retargetedOpenSteps
     appName = application.name
     bundleID = application.bundleID
     for index in retargeted {
@@ -119,6 +115,28 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
       // apps can share a name. `open -a` also accepts the exact application path.
       steps[index].action = .openApplication(application.url.path)
     }
+  }
+
+  /// Whether choosing an app leaves some Open App step to be checked by hand:
+  /// the pipeline has more than one, or one beside a Launch Services step, so only
+  /// steps launching the previous app are retargeted.
+  public var hasAmbiguousOpenSteps: Bool {
+    let openCount = steps.filter { if case .openApplication = $0.action { true } else { false } }
+      .count
+    return openCount > 1 || (openCount == 1 && !applicationIsOptional)
+  }
+
+  /// Indices of the Open App steps `selectApplication` rewrites. A lone Open App step
+  /// in a pipeline without Launch Services is the launcher's primary launch and is
+  /// retargeted outright. Otherwise the primary app is launched elsewhere (Launch
+  /// Services) or ambiguous (several Open App steps), so only steps launching the
+  /// previous app change; with no previous app to match, none do.
+  private var retargetedOpenSteps: [Int] {
+    let openSteps = steps.indices.filter {
+      if case .openApplication = steps[$0].action { true } else { false }
+    }
+    if openSteps.count == 1, applicationIsOptional { return openSteps }
+    return openSteps.filter { launchesCurrentApplication(steps[$0]) }
   }
 
   /// Drop the application association, leaving steps, IDs, and policy alone.
