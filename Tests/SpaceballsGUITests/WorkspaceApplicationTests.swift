@@ -73,6 +73,35 @@ struct WorkspaceApplicationTests {
     #expect(launcher == selected)
   }
 
+  @Test("Selecting an app for a Launch Services step sets identity and leaves the step alone")
+  func launchServicesSelection() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+
+    var launcher = LauncherTemplate.genericLaunchServices.launcher
+    let step = launcher.steps[0]
+    launcher.selectApplication(application, forStep: step.id)
+    #expect(launcher.appName == "Picked")
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == [step])
+  }
+
+  @Test("Selecting an app without a step updates only the launcher identity")
+  func identityOnlySelection() throws {
+    let url = try makeApplication(name: "Picked")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let application = try #require(WorkspaceApplication(url: url))
+
+    var launcher = LauncherTemplate.iterm.launcher
+    let steps = launcher.steps
+    launcher.selectApplication(application)
+    #expect(launcher.appName == "Picked")
+    #expect(launcher.bundleID == "example.selected")
+    #expect(launcher.steps == steps)
+    #expect(!launcher.allowsExistingWindow)
+  }
+
   @Test("App bundles may omit the optional package type; other bundle extensions are rejected")
   func optionalPackageType() throws {
     let url = try makeApplication(name: "Script App", packageType: nil)

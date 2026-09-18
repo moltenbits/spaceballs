@@ -91,17 +91,29 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
   public var bundleID: String
   public var allowsExistingWindow: Bool
 
-  /// Keep window matching and the selected Open App step pointed at the same app.
-  public mutating func selectApplication(_ application: WorkspaceApplication, forStep stepID: UUID)
-  {
-    guard let index = steps.firstIndex(where: { $0.id == stepID }),
-      case .openApplication = steps[index].action
-    else { return }
+  /// Point window matching and Launch Services steps at the chosen app.
+  public mutating func selectApplication(_ application: WorkspaceApplication) {
     appName = application.name
     bundleID = application.bundleID
-    // A display name can differ from the bundle's filename, and several installed
-    // apps can share a name. `open -a` also accepts the exact application path.
-    steps[index].action = .openApplication(application.url.path)
+  }
+
+  /// Keep window matching and the selected app-launching step pointed at the same app.
+  /// Launch Services steps read the launcher's bundle ID, so only an Open App step
+  /// changes; any other step leaves the launcher untouched.
+  public mutating func selectApplication(_ application: WorkspaceApplication, forStep stepID: UUID)
+  {
+    guard let index = steps.firstIndex(where: { $0.id == stepID }) else { return }
+    switch steps[index].action {
+    case .openApplication:
+      selectApplication(application)
+      // A display name can differ from the bundle's filename, and several installed
+      // apps can share a name. `open -a` also accepts the exact application path.
+      steps[index].action = .openApplication(application.url.path)
+    case .launchServices:
+      selectApplication(application)
+    case .shell, .appleScript:
+      return
+    }
   }
 
   public init(

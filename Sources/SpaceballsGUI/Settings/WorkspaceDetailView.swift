@@ -134,7 +134,7 @@ struct WorkspaceDetailView: View {
             ForEach(LauncherTemplate.allCases) { template in
               Button(template.label) {
                 var launcher = template.launcher
-                if template == .genericOpen {
+                if template == .genericOpen || template == .genericLaunchServices {
                   guard let application = WorkspaceApplicationPicker.choose() else { return }
                   launcher.selectApplication(application, forStep: launcher.steps[0].id)
                 }
@@ -188,8 +188,8 @@ struct LauncherDetailView: View {
 
       ScrollView {
         VStack(alignment: .leading, spacing: 12) {
-          if let step = simpleOpenStep {
-            applicationSelection(step: step)
+          applicationSelection
+          if simpleApplicationStep != nil {
             DisclosureGroup("Advanced") {
               pipelineEditor
                 .padding(.top, 8)
@@ -203,19 +203,26 @@ struct LauncherDetailView: View {
     }
   }
 
-  private var simpleOpenStep: WorkspaceLauncherStep? {
+  /// The single Open App or Launch Services step of a plain app launcher, whose
+  /// pipeline controls belong under Advanced.
+  private var simpleApplicationStep: WorkspaceLauncherStep? {
     let steps = settings.workspaces[workspaceIndex].launchers[launcherIndex].steps
-    guard steps.count == 1, case .openApplication = steps[0].action else { return nil }
-    return steps[0]
+    guard steps.count == 1 else { return nil }
+    switch steps[0].action {
+    case .openApplication, .launchServices: return steps[0]
+    case .shell, .appleScript: return nil
+    }
   }
 
-  private func applicationSelection(step: WorkspaceLauncherStep) -> some View {
+  private var applicationSelection: some View {
     let launcher = settings.workspaces[workspaceIndex].launchers[launcherIndex]
-    let target = if case .openApplication(let value) = step.action { value } else { "" }
+    let step = simpleApplicationStep
+    let target = if case .openApplication(let value)? = step?.action { value } else { "" }
     let applicationURL =
       target.hasPrefix("/")
       ? URL(fileURLWithPath: target)
       : NSWorkspace.shared.urlForApplication(withBundleIdentifier: launcher.bundleID)
+    let name = launcher.appName.isEmpty ? target : launcher.appName
     return HStack(spacing: 12) {
       if let applicationURL {
         Image(nsImage: NSWorkspace.shared.icon(forFile: applicationURL.path))
@@ -228,14 +235,26 @@ struct LauncherDetailView: View {
       }
       VStack(alignment: .leading, spacing: 4) {
         Text("Application").font(.caption).foregroundStyle(.secondary)
-        Text(launcher.appName.isEmpty ? target : launcher.appName)
+        Text(name.isEmpty ? "No application chosen" : name)
           .font(.headline)
+          .foregroundStyle(name.isEmpty ? .secondary : .primary)
+        if !launcher.bundleID.isEmpty {
+          Text(launcher.bundleID)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
       }
       Spacer()
       Button("Choose Application…") {
         guard let application = WorkspaceApplicationPicker.choose() else { return }
-        settings.workspaces[workspaceIndex].launchers[launcherIndex]
-          .selectApplication(application, forStep: step.id)
+        if let step {
+          settings.workspaces[workspaceIndex].launchers[launcherIndex]
+            .selectApplication(application, forStep: step.id)
+        } else {
+          settings.workspaces[workspaceIndex].launchers[launcherIndex]
+            .selectApplication(application)
+        }
       }
     }
     .padding(.vertical, 8)
@@ -264,37 +283,15 @@ struct LauncherDetailView: View {
       .font(.caption)
       .foregroundStyle(.secondary)
 
-      HStack(spacing: 16) {
-        if launcher.usesProfileVariable {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Profile").font(.caption).foregroundStyle(.secondary)
-            TextField(
-              "$NAME",
-              text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].label
-            )
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 160)
-          }
-        }
-
+      if launcher.usesProfileVariable {
         VStack(alignment: .leading, spacing: 2) {
-          Text("App Name").font(.caption).foregroundStyle(.secondary)
+          Text("Profile").font(.caption).foregroundStyle(.secondary)
           TextField(
-            "e.g. Safari",
-            text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].appName
+            "$NAME",
+            text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].label
           )
           .textFieldStyle(.roundedBorder)
           .frame(width: 160)
-        }
-
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Bundle ID").font(.caption).foregroundStyle(.secondary)
-          TextField(
-            "e.g. com.apple.Safari",
-            text: $settings.workspaces[workspaceIndex].launchers[launcherIndex].bundleID
-          )
-          .textFieldStyle(.roundedBorder)
-          .frame(width: 190)
         }
       }
 
@@ -478,7 +475,7 @@ private struct LaunchServicesStepEditor: View {
     VStack(alignment: .leading, spacing: 10) {
       if bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         Label(
-          "Enter a bundle ID above before using this Launch Services step.",
+          "Choose an application above before using this Launch Services step.",
           systemImage: "exclamationmark.triangle.fill"
         )
         .font(.caption)
