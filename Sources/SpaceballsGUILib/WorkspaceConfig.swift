@@ -91,29 +91,49 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
   public var bundleID: String
   public var allowsExistingWindow: Bool
 
-  /// Point window matching and Launch Services steps at the chosen app.
-  public mutating func selectApplication(_ application: WorkspaceApplication) {
-    appName = application.name
-    bundleID = application.bundleID
+  /// Whether a window-matching app is associated with this launcher.
+  public var hasApplication: Bool { !appName.isEmpty || !bundleID.isEmpty }
+
+  /// A Launch Services step launches by the launcher's bundle ID, so it cannot run
+  /// without an application. Every other pipeline may run unassociated: it always
+  /// executes and skips window placement.
+  public var applicationIsOptional: Bool {
+    !steps.contains { if case .launchServices = $0.action { true } else { false } }
   }
 
-  /// Keep window matching and the selected app-launching step pointed at the same app.
-  /// Launch Services steps read the launcher's bundle ID, so only an Open App step
-  /// changes; any other step leaves the launcher untouched.
-  public mutating func selectApplication(_ application: WorkspaceApplication, forStep stepID: UUID)
-  {
-    guard let index = steps.firstIndex(where: { $0.id == stepID }) else { return }
-    switch steps[index].action {
-    case .openApplication:
-      selectApplication(application)
+  /// Point window matching, Launch Services steps, and the Open App steps that launch
+  /// this launcher's app at the chosen application. Launch Services steps read the
+  /// launcher's bundle ID at launch. A lone Open App step is retargeted outright;
+  /// among several, only the ones launching the previous app change, so a pipeline
+  /// that opens a helper app alongside keeps that step.
+  public mutating func selectApplication(_ application: WorkspaceApplication) {
+    let openSteps = steps.indices.filter {
+      if case .openApplication = steps[$0].action { true } else { false }
+    }
+    let retargeted =
+      openSteps.count == 1 ? openSteps : openSteps.filter { launchesCurrentApplication(steps[$0]) }
+    appName = application.name
+    bundleID = application.bundleID
+    for index in retargeted {
       // A display name can differ from the bundle's filename, and several installed
       // apps can share a name. `open -a` also accepts the exact application path.
       steps[index].action = .openApplication(application.url.path)
-    case .launchServices:
-      selectApplication(application)
-    case .shell, .appleScript:
-      return
     }
+  }
+
+  /// Drop the application association, leaving steps, IDs, and policy alone.
+  public mutating func clearApplication() {
+    appName = ""
+    bundleID = ""
+  }
+
+  private func launchesCurrentApplication(_ step: WorkspaceLauncherStep) -> Bool {
+    guard case .openApplication(let target) = step.action else { return false }
+    if !appName.isEmpty, target == appName { return true }
+    guard target.hasPrefix("/"), !bundleID.isEmpty,
+      let opened = WorkspaceApplication(url: URL(fileURLWithPath: target))
+    else { return false }
+    return opened.bundleID == bundleID
   }
 
   public init(

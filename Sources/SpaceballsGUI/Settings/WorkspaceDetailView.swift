@@ -136,7 +136,7 @@ struct WorkspaceDetailView: View {
                 var launcher = template.launcher
                 if template == .genericOpen || template == .genericLaunchServices {
                   guard let application = WorkspaceApplicationPicker.choose() else { return }
-                  launcher.selectApplication(application, forStep: launcher.steps[0].id)
+                  launcher.selectApplication(application)
                 }
                 settings.workspaces[workspaceIndex].launchers.append(launcher)
                 let newIdx = settings.workspaces[workspaceIndex].launchers.count - 1
@@ -246,15 +246,18 @@ struct LauncherDetailView: View {
         }
       }
       Spacer()
+      if launcher.hasApplication, launcher.applicationIsOptional {
+        Button("Clear") {
+          settings.workspaces[workspaceIndex].launchers[launcherIndex].clearApplication()
+        }
+        .help(
+          "Run this launcher without an associated app: it always executes and skips window placement."
+        )
+      }
       Button("Choose Application…") {
         guard let application = WorkspaceApplicationPicker.choose() else { return }
-        if let step {
-          settings.workspaces[workspaceIndex].launchers[launcherIndex]
-            .selectApplication(application, forStep: step.id)
-        } else {
-          settings.workspaces[workspaceIndex].launchers[launcherIndex]
-            .selectApplication(application)
-        }
+        settings.workspaces[workspaceIndex].launchers[launcherIndex]
+          .selectApplication(application)
       }
     }
     .padding(.vertical, 8)
