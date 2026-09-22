@@ -137,6 +137,19 @@ public final class WorkspaceRestorer {
     // 2. Activate each workspace, including ones whose apps are already present.
     var appsLaunched = 0
     var errors: [(String, String, String)] = []
+    // Every recorded error also reaches the diagnostics log (the summary shown on
+    // screen only counts them), but the log gets the payload-free description.
+    func recordError(_ workspaceName: String, _ app: String, _ summary: String, log: String) {
+      errors.append((workspaceName, app, summary))
+      guard hooks.diagnosticsEnabled() else { return }
+      hooks.logDiagnostic(
+        "error workspace=\"\(workspaceName)\"\(app.isEmpty ? "" : " app=\"\(app)\"") \(log)")
+    }
+    func recordError(_ workspaceName: String, _ app: String, _ prefix: String, _ error: Error) {
+      recordError(
+        workspaceName, app, prefix + error.localizedDescription,
+        log: prefix + Self.diagnosticDescription(of: error))
+    }
 
     for (i, workspace) in workspaces.enumerated() {
       progress?(i, workspaces.count, workspace.name)
@@ -144,7 +157,7 @@ public final class WorkspaceRestorer {
       // Resolve space name to ID
       let spaces = hooks.allSpaces()
       guard let targetSpace = spaceNameStore.spaceWithCustomName(workspace.name, in: spaces) else {
-        errors.append((workspace.name, "", "Space not found"))
+        recordError(workspace.name, "", "Space not found", log: "Space not found")
         continue
       }
       let spaceID = targetSpace.id
@@ -182,7 +195,7 @@ public final class WorkspaceRestorer {
         try focusTargetSpace(
           spaceID, forceSwitch: true, context: "workspace=\(workspace.id) initial")
       } catch {
-        errors.append((workspace.name, "", "Failed to switch: \(error.localizedDescription)"))
+        recordError(workspace.name, "", "Failed to switch: ", error)
         continue
       }
 
@@ -219,20 +232,18 @@ public final class WorkspaceRestorer {
           logState("after-placement", targetSpaceID: spaceID, context: context)
         } catch {
           logState("launcher-failed", targetSpaceID: spaceID, context: context)
-          errors.append(
-            (
-              workspace.name,
-              launcher.appName.isEmpty
-                ? launcher.steps.first?.type.rawValue ?? "launcher" : launcher.appName,
-              error.localizedDescription
-            ))
+          recordError(
+            workspace.name,
+            launcher.appName.isEmpty
+              ? launcher.steps.first?.type.rawValue ?? "launcher" : launcher.appName,
+            "", error)
         }
 
         guard launcherIndex < missingLaunchers.count - 1 else { continue }
         do {
           try focusTargetSpace(spaceID, forceSwitch: false, context: context)
         } catch {
-          errors.append((workspace.name, "", "Failed to refocus: \(error.localizedDescription)"))
+          recordError(workspace.name, "", "Failed to refocus: ", error)
           focusFailed = true
           break
         }
@@ -250,7 +261,7 @@ public final class WorkspaceRestorer {
               workspace: workspace, launcher: lastLauncher,
               index: missingLaunchers.count - 1))
         } catch {
-          errors.append((workspace.name, "", "Failed to refocus: \(error.localizedDescription)"))
+          recordError(workspace.name, "", "Failed to refocus: ", error)
           continue
         }
       }
@@ -284,6 +295,19 @@ public final class WorkspaceRestorer {
     // IDs and step types only: do not expose commands, paths, arguments, or environment values.
     return
       "workspace=\(workspace.id) launcher=\(index + 1) app=\(launcher.bundleID.isEmpty ? "unknown" : launcher.bundleID) steps=[\(steps)]"
+  }
+
+  /// What the diagnostics log may say about an error: launcher failures drop
+  /// their process output, restorer failures name only IDs, and anything else is
+  /// reduced to its domain and code.
+  static func diagnosticDescription(of error: Error) -> String {
+    switch error {
+    case let error as WorkspaceLauncherError: return error.diagnosticDescription
+    case let error as WorkspaceRestorerError: return error.errorDescription ?? "\(error)"
+    default:
+      let error = error as NSError
+      return "\(error.domain) code=\(error.code)"
+    }
   }
 
   private func logState(_ phase: String, targetSpaceID: UInt64, context: String) {
