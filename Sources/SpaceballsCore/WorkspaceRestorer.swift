@@ -560,9 +560,13 @@ public struct LauncherData {
       allowsExistingWindow: type != .applescript)
   }
 
+  private static func expandedPath(_ path: String?) -> String {
+    (path as NSString?)?.expandingTildeInPath ?? ""
+  }
+
   private func resolvedValue(_ value: String, path: String?, name: String) -> String {
     var resolved = value
-    let expandedPath = (path as NSString?)?.expandingTildeInPath ?? ""
+    let expandedPath = Self.expandedPath(path)
     var resolvedProfile = label.isEmpty ? name : label
     resolvedProfile = resolvedProfile.replacingOccurrences(of: "$PATH", with: expandedPath)
     resolvedProfile = resolvedProfile.replacingOccurrences(of: "${PATH}", with: expandedPath)
@@ -606,7 +610,8 @@ public struct LauncherData {
               activates: configuration.activates))
         }
       },
-      bundleID: bundleID)
+      bundleID: bundleID,
+      workspacePath: Self.expandedPath(path))
   }
 }
 

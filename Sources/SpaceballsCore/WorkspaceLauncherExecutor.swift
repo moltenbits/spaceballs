@@ -1,9 +1,20 @@
 import AppKit
 import Foundation
 
+/// Environment variables a shell step receives when their values are known.
+/// Unlike `$PATH`-style substitutions, which become part of the shell source,
+/// the shell expands these as data, so any character in a path arrives unchanged.
+public enum WorkspaceShellEnvironment {
+  /// The workspace's folder, with `~` expanded.
+  public static let workspacePath = "SPACEBALLS_WORKSPACE_PATH"
+  /// The launcher application's bundle, resolved from its bundle ID.
+  public static let applicationPath = "SPACEBALLS_APP_PATH"
+}
+
 struct WorkspaceLaunchRequest: Equatable {
   let steps: [WorkspaceLauncherAction]
   let bundleID: String
+  var workspacePath = ""
 }
 
 struct WorkspaceLaunchServicesRequest: Equatable {
@@ -18,7 +29,7 @@ struct WorkspaceLaunchServicesRequest: Equatable {
 /// Owns every workspace launcher execution path. `WorkspaceRestorer` decides
 /// when to launch; this type decides how each configured launch mechanism runs.
 struct WorkspaceLauncherExecutor {
-  typealias ProcessRunner = (URL, [String], Bool) throws -> Void
+  typealias ProcessRunner = (URL, [String], [String: String], Bool) throws -> Void
   typealias LaunchServicesOpener = (WorkspaceLaunchServicesRequest) throws -> Void
 
   static let live = WorkspaceLauncherExecutor(
@@ -27,6 +38,9 @@ struct WorkspaceLauncherExecutor {
 
   let runProcess: ProcessRunner
   let openWithLaunchServices: LaunchServicesOpener
+  var applicationURL: (String) -> URL? = {
+    NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
+  }
 
   func execute(_ request: WorkspaceLaunchRequest) throws {
     guard !request.steps.isEmpty else {
@@ -36,10 +50,11 @@ struct WorkspaceLauncherExecutor {
       switch step {
       case .shell(let command, let waitsForExit):
         try runProcess(
-          URL(fileURLWithPath: "/bin/zsh"), ["-c", command], waitsForExit)
+          URL(fileURLWithPath: "/bin/zsh"), ["-c", command], shellEnvironment(for: request),
+          waitsForExit)
       case .appleScript(let source):
         try runProcess(
-          URL(fileURLWithPath: "/usr/bin/osascript"), ["-e", source], true)
+          URL(fileURLWithPath: "/usr/bin/osascript"), ["-e", source], [:], true)
       case .openApplication(let applicationName):
         // Picker-created launchers retain the chosen bundle's path. If the app
         // moves, let Launch Services find it again by its saved identity.
@@ -47,7 +62,7 @@ struct WorkspaceLauncherExecutor {
           applicationName.hasPrefix("/") && !request.bundleID.isEmpty
             && !FileManager.default.fileExists(atPath: applicationName)
           ? ["-b", request.bundleID] : ["-a", applicationName]
-        try runProcess(URL(fileURLWithPath: "/usr/bin/open"), arguments, true)
+        try runProcess(URL(fileURLWithPath: "/usr/bin/open"), arguments, [:], true)
       case .launchServices(let configuration):
         guard !request.bundleID.isEmpty else {
           throw WorkspaceLauncherError.missingLaunchServicesBundleID
@@ -68,6 +83,17 @@ struct WorkspaceLauncherExecutor {
             activates: configuration.activates))
       }
     }
+  }
+
+  private func shellEnvironment(for request: WorkspaceLaunchRequest) -> [String: String] {
+    var environment: [String: String] = [:]
+    if !request.workspacePath.isEmpty {
+      environment[WorkspaceShellEnvironment.workspacePath] = request.workspacePath
+    }
+    if !request.bundleID.isEmpty, let application = applicationURL(request.bundleID) {
+      environment[WorkspaceShellEnvironment.applicationPath] = application.path
+    }
+    return environment
   }
 
   static func launchServicesTarget(from value: String) -> URL? {
@@ -102,11 +128,15 @@ struct WorkspaceLauncherExecutor {
   private static func runProcess(
     executable: URL,
     arguments: [String],
+    environment: [String: String],
     waitsForExit: Bool
   ) throws {
     let process = Process()
     process.executableURL = executable
     process.arguments = arguments
+    if !environment.isEmpty {
+      process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+    }
 
     guard waitsForExit else {
       process.standardOutput = FileHandle.nullDevice
