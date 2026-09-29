@@ -40,6 +40,20 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
 
   static let iTermCommand = legacyITermCommand
 
+  /// The stock iTerm launch: iTerm opens a folder as a new session at that path, and a
+  /// separate process per workspace lets one be quit without closing the others and
+  /// never activates windows on another Space first.
+  static let iTermLaunch = WorkspaceLauncherAction.launchServices(
+    WorkspaceLaunchServicesConfiguration(
+      target: "$PATH", createsNewApplicationInstance: true, activates: true))
+
+  /// The stock composition earlier releases saved for iTerm: a background Launch
+  /// Services start followed by the window-creating AppleScript.
+  static let composedITermActions: [WorkspaceLauncherAction] = [
+    .launchServices(WorkspaceLaunchServicesConfiguration(activates: false)),
+    .appleScript(iTermCommand),
+  ]
+
   static let shellLaunchingSafariCommand = """
     tell application "System Events"
       if not (exists process "Safari") then
@@ -196,18 +210,22 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
     bundleID =
       try c.decodeIfPresent(String.self, forKey: .bundleID)
       ?? Self.knownBundleID(forAppName: appName)
+    // Only old saved launchers infer policy from their former execution behavior:
+    // an AppleScript launcher always created its own window, even where the
+    // migration replaces the script with a Launch Services step.
+    let inferredPolicy: Bool
     if let decodedSteps = try c.decodeIfPresent([WorkspaceLauncherStep].self, forKey: .steps) {
-      steps = decodedSteps
+      steps = Self.migratedComposedSteps(decodedSteps, bundleID: bundleID)
+      inferredPolicy = !decodedSteps.contains { $0.type == .applescript }
     } else {
       let legacyType = try c.decode(LaunchType.self, forKey: .type)
       let legacyCommand = try c.decode(String.self, forKey: .command)
       steps = Self.migratedSteps(
         command: legacyCommand, type: legacyType, bundleID: bundleID)
+      inferredPolicy = legacyType != .applescript
     }
-    // Only old saved launchers infer policy from their former execution behavior.
     allowsExistingWindow =
-      try c.decodeIfPresent(Bool.self, forKey: .allowsExistingWindow)
-      ?? !steps.contains { $0.type == .applescript }
+      try c.decodeIfPresent(Bool.self, forKey: .allowsExistingWindow) ?? inferredPolicy
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -240,7 +258,7 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
     switch (type, bundleID, command) {
     case (.applescript, "com.googlecode.iterm2", legacyITermCommand),
       (.applescript, "com.googlecode.iterm2", shellLaunchingITermCommand):
-      return composedSteps(script: iTermCommand)
+      return [WorkspaceLauncherStep(action: iTermLaunch)]
     case (.applescript, "com.apple.Safari", shellLaunchingSafariCommand),
       (.applescript, "com.apple.Safari", safariCommand):
       return composedSteps(script: safariCommand)
@@ -254,6 +272,16 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
     default:
       return [step(type: type, command: command)]
     }
+  }
+
+  /// Replace the stock two-step iTerm composition with the single new-instance
+  /// launch, keeping the first step's ID. Custom compositions are left alone.
+  private static func migratedComposedSteps(
+    _ steps: [WorkspaceLauncherStep], bundleID: String
+  ) -> [WorkspaceLauncherStep] {
+    guard bundleID == "com.googlecode.iterm2", steps.map(\.action) == composedITermActions
+    else { return steps }
+    return [WorkspaceLauncherStep(id: steps[0].id, action: iTermLaunch)]
   }
 
   public var usesProfileVariable: Bool {
@@ -366,12 +394,7 @@ public enum LauncherTemplate: String, CaseIterable, Identifiable {
         appName: "iTerm",
         bundleID: "com.googlecode.iterm2",
         allowsExistingWindow: false,
-        steps: [
-          WorkspaceLauncherStep(
-            action: .launchServices(
-              WorkspaceLaunchServicesConfiguration(activates: false))),
-          WorkspaceLauncherStep(action: .appleScript(AppLauncher.iTermCommand)),
-        ]
+        steps: [WorkspaceLauncherStep(action: AppLauncher.iTermLaunch)]
       )
     case .intellij:
       return AppLauncher(

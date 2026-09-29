@@ -305,6 +305,90 @@ struct WorkspaceRestorerTests {
     #expect(result.appsLaunched == 0)
   }
 
+  @Test("A display focus failure is recorded and written to the diagnostics log")
+  func focusFailureIsLogged() throws {
+    let target = space(id: 101, uuid: "target")
+    var logs: [String] = []
+    let hooks = WorkspaceRestorerHooks(
+      createDefaultSpaces: { _, _ in 0 }, allSpaces: { [target] }, windowsBySpace: { [:] },
+      switchToSpace: { _ in },
+      focusDisplay: { _ in throw WorkspaceRestorerError.targetSpaceFocusFailed(spaceID: 101) },
+      executeLauncher: { _ in Issue.record("Must not launch") },
+      relocateFocusedWindow: { _, _, _, _ in .onTarget }, sleep: { _ in },
+      diagnosticsEnabled: { true }, frontmostApplication: { "" },
+      logDiagnostic: { logs.append($0) })
+    let restorer = WorkspaceRestorer(
+      spaceNameStore: makeNameStore([target.uuid: "Work"]), windowLayoutRestorer: nil, hooks: hooks)
+    let result = try restorer.restoreSync(
+      workspaces: [
+        WorkspaceConfigData(
+          id: "work", name: "Work", path: nil,
+          launchers: [LauncherData(label: "", type: .open, command: "Safari")])
+      ],
+      defaultNames: ["Work"])
+    #expect(result.errors.count == 1)
+    #expect(result.appsLaunched == 0)
+    let failure = try #require(logs.first { $0.contains("error") })
+    #expect(failure.contains("Work"))
+    #expect(failure.contains("Failed to switch"))
+  }
+
+  @Test(
+    "A launcher failure is logged by type and status, never with its process output",
+    arguments: [true, false])
+  func launcherFailureLogIsPayloadFree(diagnostics: Bool) throws {
+    let target = space(id: 101, uuid: "target")
+    var logs: [String] = []
+    let hooks = WorkspaceRestorerHooks(
+      createDefaultSpaces: { _, _ in 0 }, allSpaces: { [target] }, windowsBySpace: { [:] },
+      switchToSpace: { _ in }, focusDisplay: { _ in },
+      executeLauncher: { _ in
+        throw WorkspaceLauncherError.processFailed(
+          type: "shell", status: 3, output: "SECRET-TOKEN in /private/leak")
+      },
+      relocateFocusedWindow: { _, _, _, _ in .onTarget }, sleep: { _ in },
+      diagnosticsEnabled: { diagnostics }, frontmostApplication: { "" },
+      logDiagnostic: { logs.append($0) })
+    let restorer = WorkspaceRestorer(
+      spaceNameStore: makeNameStore([target.uuid: "Work"]), windowLayoutRestorer: nil, hooks: hooks)
+    let result = try restorer.restoreSync(
+      workspaces: [
+        WorkspaceConfigData(
+          id: "work", name: "Work", path: nil,
+          launchers: [
+            LauncherData(label: "", type: .shell, command: "leak", appName: "Terminal")
+          ])
+      ],
+      defaultNames: ["Work"])
+    #expect(result.errors.count == 1)
+    #expect(result.errors.first?.2.contains("SECRET-TOKEN") == true)
+    guard diagnostics else {
+      #expect(logs.isEmpty)
+      return
+    }
+    let failure = try #require(logs.first { $0.hasPrefix("error ") })
+    #expect(failure.contains("workspace=\"Work\""))
+    #expect(failure.contains("app=\"Terminal\""))
+    #expect(failure.contains("shell launcher exited with status 3"))
+    #expect(!logs.joined().contains("SECRET-TOKEN"))
+    #expect(!logs.joined().contains("/private/leak"))
+  }
+
+  @Test("Unknown errors are logged as domain and code, never their user info")
+  func unknownErrorDiagnostic() {
+    let error = NSError(
+      domain: "com.example.launch", code: 7,
+      userInfo: [
+        NSLocalizedDescriptionKey: "SECRET-TOKEN in /private/leak",
+        NSFilePathErrorKey: "/private/leak",
+      ])
+    #expect(WorkspaceRestorer.diagnosticDescription(of: error) == "com.example.launch code=7")
+    #expect(
+      WorkspaceRestorer.diagnosticDescription(
+        of: WorkspaceRestorerError.targetSpaceFocusFailed(spaceID: 42))
+        == "Could not safely focus workspace Space 42")
+  }
+
   @Test(
     "Window reuse follows launcher policy even with an AppleScript step", arguments: [true, false])
   func composedWindowReusePolicy(allowsExisting: Bool) throws {

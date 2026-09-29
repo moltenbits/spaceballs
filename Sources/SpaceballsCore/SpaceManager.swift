@@ -2001,9 +2001,14 @@ public class SpaceManager {
       return
     }
 
+    func fail(_ reason: String) -> WorkspaceRestorerError {
+      Diagnostics.log("workspace-restore", "display focus failed space=\(spaceID): \(reason)")
+      return .targetSpaceFocusFailed(spaceID: spaceID)
+    }
+
     guard let space = allSpaces.first(where: { $0.id == spaceID }),
       let screenNumber = Self.displayIDForUUID(space.displayUUID)
-    else { throw WorkspaceRestorerError.targetSpaceFocusFailed(spaceID: spaceID) }
+    else { throw fail("no display for the target Space") }
 
     // Find the NSScreen matching this display
     guard
@@ -2012,32 +2017,98 @@ public class SpaceManager {
         return (desc[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID)
           == screenNumber
       })
-    else { throw WorkspaceRestorerError.targetSpaceFocusFailed(spaceID: spaceID) }
+    else { throw fail("no screen for display \(screenNumber)") }
 
-    // Only an exposed desktop point is safe. Ignore our own click-through overlay
-    // and desktop-layer windows, but count other visible windows as obstacles.
+    // Only an exposed desktop point is safe. Each candidate is hit-tested the way
+    // a mouse-down would be: the window server reports the window the click lands
+    // on, seeing through windows and regions that ignore mouse events (Notification
+    // Center's display-sized backing window, for one), so window bounds alone are
+    // neither necessary nor sufficient.
     let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
     let visible = screen.visibleFrame
     let frame = CGRect(
       x: visible.minX, y: primaryHeight - visible.maxY,
       width: visible.width, height: visible.height)
-    var obstacles: [CGRect] = []
-    for entry in dataSource.fetchOnScreenWindowList() {
-      if (entry[kCGWindowOwnerPID as String] as? Int)
-        == Int(ProcessInfo.processInfo.processIdentifier)
-      {
-        continue
-      }
-      if let layer = entry[kCGWindowLayer as String] as? Int, layer < 0 { continue }
-      guard let bounds = Self.windowBounds(in: entry) else {
-        throw WorkspaceRestorerError.targetSpaceFocusFailed(spaceID: spaceID)
-      }
-      obstacles.append(bounds)
+    guard Self.ensureHitTestingAvailable() else {
+      throw fail("AppKit is not initialized, so candidates cannot be hit-tested")
     }
-    guard let point = Self.workspaceDesktopFocusPoint(in: frame, occupiedBounds: obstacles) else {
-      throw WorkspaceRestorerError.targetSpaceFocusFailed(spaceID: spaceID)
+    var blocked: [String] = []
+    let point = Self.workspaceDesktopFocusPoint(in: frame) { candidate in
+      let hit = Self.windowHit(at: candidate, primaryHeight: primaryHeight)
+      if Self.workspaceDesktopHitAllows(hit) { return true }
+      blocked.append("(\(Int(candidate.x)),\(Int(candidate.y)))=\(hit)")
+      return false
+    }
+    guard let point else {
+      throw fail(
+        "no exposed desktop point on display \(screenNumber) frame=\(frame) blocked=[\(blocked.joined(separator: ", "))]"
+      )
     }
     Self.postMouseClick(at: point)
+  }
+
+  /// What a mouse-down at a candidate desktop point would reach.
+  enum WorkspaceDesktopHit: CustomStringConvertible {
+    /// No NSApplication, so the window server answers nothing for every point.
+    case unavailable
+    /// No window at all.
+    case nothing
+    /// The hit window's window-list entry (empty when the number did not resolve).
+    case window([String: Any])
+
+    var description: String {
+      switch self {
+      case .unavailable: return "unavailable"
+      case .nothing: return "nothing"
+      case .window(let entry):
+        let pid = entry[kCGWindowOwnerPID as String].map { "\($0)" } ?? "?"
+        let layer = entry[kCGWindowLayer as String].map { "\($0)" } ?? "?"
+        return "pid \(pid) layer \(layer)"
+      }
+    }
+  }
+
+  /// Whether a desktop focus click may land on what the hit test reported: nothing
+  /// at all, or a desktop-level window (Finder's desktop, the wallpaper). Any other
+  /// window, ours included, is one the click would really reach (the restore
+  /// overlay ignores mouse events, so the hit test already looks through it), and an
+  /// unavailable or unresolved hit proves nothing, so those candidates are rejected.
+  static func workspaceDesktopHitAllows(_ hit: WorkspaceDesktopHit) -> Bool {
+    switch hit {
+    case .unavailable: return false
+    case .nothing: return true
+    case .window(let entry):
+      guard let layer = entry[kCGWindowLayer as String] as? Int else { return false }
+      return layer < 0
+    }
+  }
+
+  /// `NSWindow.windowNumber(at:)` answers 0 for every point until the process has
+  /// an NSApplication. The GUI always has one; the CLI's workspace restore does
+  /// not, so create it here (on the main thread, as AppKit requires).
+  static func ensureHitTestingAvailable() -> Bool {
+    let initialize: () -> Bool = {
+      NSApplication.shared
+      return NSApp != nil
+    }
+    return Thread.isMainThread ? initialize() : DispatchQueue.main.sync(execute: initialize)
+  }
+
+  /// The window a mouse-down at `point` (CG coordinates) would hit. The AppKit hit
+  /// test wants bottom-left screen coordinates and the main thread.
+  private static func windowHit(at point: CGPoint, primaryHeight: CGFloat) -> WorkspaceDesktopHit {
+    let appKitPoint = NSPoint(x: point.x, y: primaryHeight - point.y)
+    let hit: () -> Int? = {
+      guard NSApp != nil else { return nil }
+      return NSWindow.windowNumber(at: appKitPoint, belowWindowWithWindowNumber: 0)
+    }
+    guard let number = Thread.isMainThread ? hit() : DispatchQueue.main.sync(execute: hit) else {
+      return .unavailable
+    }
+    guard number > 0 else { return .nothing }
+    let entries =
+      CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(number)) as? [[String: Any]]
+    return .window(entries?.first ?? [:])
   }
 
   static func workspaceDisplayNeedsFocus(
@@ -2046,15 +2117,17 @@ public class SpaceManager {
     displayCount > 1 && focusedWindowSpaceIDs != [targetSpaceID]
   }
 
-  static func workspaceDesktopFocusPoint(in frame: CGRect, occupiedBounds: [CGRect]) -> CGPoint? {
+  /// The first of nine candidate points (corners, edge midpoints, center, inset
+  /// from the frame) that `isExposed` accepts, or nil when none is.
+  static func workspaceDesktopFocusPoint(
+    in frame: CGRect, isExposed: (CGPoint) -> Bool
+  ) -> CGPoint? {
     let inset = frame.insetBy(dx: 12, dy: 12)
     guard inset.width > 0, inset.height > 0 else { return nil }
     for y in [inset.minY, inset.maxY, inset.midY] {
       for x in [inset.minX, inset.maxX, inset.midX] {
         let point = CGPoint(x: x, y: y)
-        if !occupiedBounds.contains(where: { $0.insetBy(dx: -2, dy: -2).contains(point) }) {
-          return point
-        }
+        if isExposed(point) { return point }
       }
     }
     return nil

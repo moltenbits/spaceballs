@@ -222,6 +222,17 @@ enum WorkspaceLauncherError: Error, LocalizedError {
       return "\(type) launcher exited with status \(status): \(detail)"
     }
   }
+
+  /// The failure without process output, which may carry paths, arguments, or
+  /// environment values that must not reach the diagnostics log.
+  var diagnosticDescription: String {
+    switch self {
+    case .processFailed(let type, let status, _):
+      return "\(type) launcher exited with status \(status)"
+    default:
+      return errorDescription ?? "\(self)"
+    }
+  }
 }
 
 private final class LaunchServicesCompletion: @unchecked Sendable {

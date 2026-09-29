@@ -46,25 +46,34 @@ struct WorkspaceConfigTests {
     }
   }
 
-  @Test("Window-specific templates explicitly compose Launch Services and AppleScript")
+  @Test("Safari templates explicitly compose Launch Services and AppleScript")
   func windowSpecificTemplatesAreComposed() {
-    let iterm = LauncherTemplate.iterm.launcher
     let safari = LauncherTemplate.safari.launcher
     let safariProfile = LauncherTemplate.safariProfile.launcher
 
-    #expect(iterm.steps.map(\.type) == [.launchServices, .applescript])
     #expect(safari.steps.map(\.type) == [.launchServices, .applescript])
     #expect(safariProfile.steps.map(\.type) == [.launchServices, .applescript])
 
-    guard case .launchServices(let launch) = iterm.steps[0].action,
-      case .appleScript(let script) = iterm.steps[1].action
+    guard case .launchServices(let launch) = safari.steps[0].action,
+      case .appleScript(let script) = safari.steps[1].action
     else {
-      Issue.record("Expected iTerm to launch first and configure its window second")
+      Issue.record("Expected Safari to launch first and configure its window second")
       return
     }
     #expect(launch.target.isEmpty)
     #expect(!launch.activates)
-    #expect(script.contains("create window with default profile"))
+    #expect(script.contains("New Window"))
+  }
+
+  @Test("The iTerm template opens the project in a new iTerm process")
+  func iTermTemplateIsASeparateInstance() throws {
+    let iterm = LauncherTemplate.iterm.launcher
+    #expect(iterm.steps.map(\.type) == [.launchServices])
+    #expect(!iterm.allowsExistingWindow)
+    let configuration = try #require(launchServicesConfiguration(of: iterm.steps[0]))
+    #expect(configuration.target == "$PATH")
+    #expect(configuration.createsNewApplicationInstance)
+    #expect(configuration.activates)
   }
 
   @Test("A composed launcher round-trips typed per-step configuration")
@@ -189,7 +198,7 @@ struct WorkspaceConfigTests {
     #expect(genericConfiguration.activates)
   }
 
-  @Test("Legacy stock iTerm launchers migrate to an explicit composed pipeline")
+  @Test("Legacy stock iTerm launchers migrate to the single new-instance launch")
   func legacyITermLauncherLaunchServicesMigration() throws {
     let migrated = try decodeLegacyLauncher(
       type: .applescript,
@@ -204,19 +213,11 @@ struct WorkspaceConfigTests {
         end tell
         """)
 
-    #expect(migrated.steps.map(\.type) == [.launchServices, .applescript])
-    guard case .launchServices(let configuration) = migrated.steps[0].action,
-      case .appleScript(let script) = migrated.steps[1].action
-    else {
-      Issue.record("Expected the migrated iTerm configuration step")
-      return
-    }
-    #expect(!configuration.activates)
-    #expect(!script.contains("do shell script"))
-    #expect(script.contains("create window with default profile"))
+    #expect(migrated.steps.map(\.action) == LauncherTemplate.iterm.launcher.steps.map(\.action))
+    #expect(!migrated.allowsExistingWindow)
   }
 
-  @Test("Current stock iTerm launchers remove their embedded shell launch")
+  @Test("Shell-prefixed stock iTerm launchers migrate to the single new-instance launch")
   func currentITermLauncherLaunchServicesMigration() throws {
     let migrated = try decodeLegacyLauncher(
       type: .applescript,
@@ -232,16 +233,73 @@ struct WorkspaceConfigTests {
         end tell
         """)
 
-    #expect(migrated.steps.map(\.type) == [.launchServices, .applescript])
-    guard case .launchServices(let configuration) = migrated.steps[0].action,
-      case .appleScript(let script) = migrated.steps[1].action
-    else {
-      Issue.record("Expected the migrated iTerm AppleScript")
-      return
+    #expect(migrated.steps.map(\.action) == LauncherTemplate.iterm.launcher.steps.map(\.action))
+  }
+
+  @Test("Stock composed iTerm launchers saved by earlier releases migrate to one step")
+  func composedStockITermLauncherMigration() throws {
+    let stock = AppLauncher(
+      appName: "iTerm", bundleID: "com.googlecode.iterm2", allowsExistingWindow: false,
+      steps: [
+        WorkspaceLauncherStep(
+          action: .launchServices(WorkspaceLaunchServicesConfiguration(activates: false))),
+        WorkspaceLauncherStep(action: .appleScript(AppLauncher.iTermCommand)),
+      ])
+    let migrated = try JSONDecoder().decode(AppLauncher.self, from: JSONEncoder().encode(stock))
+    #expect(migrated.id == stock.id)
+    #expect(migrated.steps.map(\.action) == LauncherTemplate.iterm.launcher.steps.map(\.action))
+    #expect(migrated.steps[0].id == stock.steps[0].id)
+    #expect(!migrated.allowsExistingWindow)
+
+    // The migrated form is stable.
+    let again = try JSONDecoder().decode(AppLauncher.self, from: JSONEncoder().encode(migrated))
+    #expect(again == migrated)
+  }
+
+  @Test(
+    "A composed stock iTerm payload without a stored policy infers a new window; a stored policy wins",
+    arguments: [nil, true, false])
+  func composedStockITermPolicyInference(storedPolicy: Bool?) throws {
+    let stock = AppLauncher(
+      appName: "iTerm", bundleID: "com.googlecode.iterm2",
+      steps: [
+        WorkspaceLauncherStep(
+          action: .launchServices(WorkspaceLaunchServicesConfiguration(activates: false))),
+        WorkspaceLauncherStep(action: .appleScript(AppLauncher.iTermCommand)),
+      ])
+    var object = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(stock)) as? [String: Any])
+    object["allowsExistingWindow"] = storedPolicy
+
+    let decoded = try JSONDecoder().decode(
+      AppLauncher.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.steps.map(\.action) == LauncherTemplate.iterm.launcher.steps.map(\.action))
+    #expect(decoded.allowsExistingWindow == (storedPolicy ?? false))
+    let again = try JSONDecoder().decode(AppLauncher.self, from: JSONEncoder().encode(decoded))
+    #expect(again == decoded)
+  }
+
+  @Test("Composed iTerm launchers with custom steps are not migrated")
+  func composedCustomITermLauncherIsNotMigrated() throws {
+    let customScript = AppLauncher(
+      appName: "iTerm", bundleID: "com.googlecode.iterm2", allowsExistingWindow: false,
+      steps: [
+        WorkspaceLauncherStep(
+          action: .launchServices(WorkspaceLaunchServicesConfiguration(activates: false))),
+        WorkspaceLauncherStep(action: .appleScript("tell application \"iTerm\" to activate")),
+      ])
+    let customLaunch = AppLauncher(
+      appName: "iTerm", bundleID: "com.googlecode.iterm2", allowsExistingWindow: false,
+      steps: [
+        WorkspaceLauncherStep(
+          action: .launchServices(
+            WorkspaceLaunchServicesConfiguration(arguments: ["--flag"], activates: false))),
+        WorkspaceLauncherStep(action: .appleScript(AppLauncher.iTermCommand)),
+      ])
+    for launcher in [customScript, customLaunch] {
+      let decoded = try JSONDecoder().decode(AppLauncher.self, from: JSONEncoder().encode(launcher))
+      #expect(decoded == launcher)
     }
-    #expect(!configuration.activates)
-    #expect(!script.contains("do shell script"))
-    #expect(script.contains("create window with default profile"))
   }
 
   @Test("Custom iTerm AppleScripts are not replaced by the stock migration")
@@ -367,6 +425,13 @@ struct WorkspaceConfigTests {
       AppLauncher.self, from: JSONEncoder().encode(original))
 
     #expect(decoded == original)
+  }
+
+  private func launchServicesConfiguration(
+    of step: WorkspaceLauncherStep
+  ) -> WorkspaceLaunchServicesConfiguration? {
+    guard case .launchServices(let configuration) = step.action else { return nil }
+    return configuration
   }
 
   private func decodeLegacyLauncher(
