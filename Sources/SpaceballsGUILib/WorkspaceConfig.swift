@@ -94,6 +94,18 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
     end tell
     """
 
+  /// Tower shows a repository opened through Launch Services in its key window,
+  /// replacing whichever repository that window held. Its bundled CLI's
+  /// `--new-window` flag asks for a window of its own. The CLI and the repository
+  /// are named through the shell environment, so neither path is parsed as shell.
+  static let towerLaunch = WorkspaceLauncherAction.shell(
+    "\"$\(WorkspaceShellEnvironment.applicationPath)/Contents/MacOS/gittower\" --new-window \"$\(WorkspaceShellEnvironment.workspacePath)\"",
+    waitsForExit: true)
+
+  /// The former stock Tower launch, which reused Tower's key window.
+  static let reusingTowerLaunch = WorkspaceLauncherAction.launchServices(
+    WorkspaceLaunchServicesConfiguration(target: "$PATH", activates: true))
+
   public var id: UUID
   public var label: String
   public var steps: [WorkspaceLauncherStep]
@@ -226,6 +238,12 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
     }
     allowsExistingWindow =
       try c.decodeIfPresent(Bool.self, forKey: .allowsExistingWindow) ?? inferredPolicy
+    // A launcher still on the former stock Tower launch took over another
+    // workspace's Tower window. Custom pipelines are left alone.
+    if bundleID == "com.fournova.Tower3", steps.map(\.action) == [Self.reusingTowerLaunch] {
+      steps = [WorkspaceLauncherStep(id: steps[0].id, action: Self.towerLaunch)]
+      allowsExistingWindow = false
+    }
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -412,11 +430,8 @@ public enum LauncherTemplate: String, CaseIterable, Identifiable {
         label: "",
         appName: "Tower",
         bundleID: "com.fournova.Tower3",
-        steps: [
-          WorkspaceLauncherStep(
-            action: .launchServices(
-              WorkspaceLaunchServicesConfiguration(target: "$PATH", activates: true)))
-        ]
+        allowsExistingWindow: false,
+        steps: [WorkspaceLauncherStep(action: AppLauncher.towerLaunch)]
       )
     case .safari:
       return AppLauncher(

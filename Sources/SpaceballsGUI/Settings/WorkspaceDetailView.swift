@@ -288,7 +288,7 @@ struct LauncherDetailView: View {
         isOn: $settings.workspaces[workspaceIndex].launchers[launcherIndex].allowsExistingWindow
       )
       Text(
-        "Turn off when this launcher must create a new window, such as the iTerm and Safari templates."
+        "Turn off when this launcher must create a new window, such as the iTerm, Tower, and Safari templates."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
