@@ -20,11 +20,87 @@ struct WorkspaceLauncherExecutorTests {
     }
   }
 
+  @Test("Shell steps receive the workspace and application paths as environment data")
+  func shellEnvironment() throws {
+    var calls: [(program: String, environment: [String: String])] = []
+    let executor = WorkspaceLauncherExecutor(
+      runProcess: { executable, _, environment, _ in
+        calls.append((executable.lastPathComponent, environment))
+      },
+      openWithLaunchServices: { _ in },
+      applicationURL: {
+        $0 == "com.example.Git" ? URL(fileURLWithPath: "/Volumes/Apps/Git Client.app") : nil
+      })
+
+    try executor.execute(
+      WorkspaceLaunchRequest(
+        steps: [.shell("true"), .appleScript("return 1"), .openApplication("Git Client")],
+        bundleID: "com.example.Git",
+        workspacePath: "/Users/example/Client \"A\""))
+
+    #expect(calls.map(\.program) == ["zsh", "osascript", "open"])
+    #expect(
+      calls.first?.environment == [
+        WorkspaceShellEnvironment.workspacePath: "/Users/example/Client \"A\"",
+        WorkspaceShellEnvironment.applicationPath: "/Volumes/Apps/Git Client.app",
+      ])
+    #expect(calls.dropFirst().allSatisfy { $0.environment.isEmpty })
+  }
+
+  @Test(
+    "Shell steps omit paths that are unknown",
+    arguments: [("", ""), ("com.example.Missing", "")])
+  func shellEnvironmentOmitsUnknownPaths(bundleID: String, workspacePath: String) throws {
+    var environment: [String: String]?
+    let executor = WorkspaceLauncherExecutor(
+      runProcess: { _, _, received, _ in environment = received },
+      openWithLaunchServices: { _ in },
+      applicationURL: { _ in nil })
+
+    try executor.execute(
+      WorkspaceLaunchRequest(
+        steps: [.shell("true")], bundleID: bundleID, workspacePath: workspacePath))
+
+    #expect(environment == [:])
+  }
+
+  @Test("The real shell receives environment paths verbatim and keeps its own environment")
+  func realShellEnvironment() throws {
+    let output = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: output) }
+    let path = "/tmp/Client \"A\"/$(printf SUBSTITUTED)/`printf TICK`/it's $HOME \\ end"
+
+    try WorkspaceLauncherExecutor.live.execute(
+      WorkspaceLaunchRequest(
+        steps: [
+          .shell(
+            "printf '%s\\0%s' \"$\(WorkspaceShellEnvironment.workspacePath)\" \"$HOME\" > '\(output.path)'"
+          )
+        ],
+        bundleID: "",
+        workspacePath: path))
+
+    let received = try String(contentsOf: output, encoding: .utf8)
+      .split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+    #expect(received == [path, ProcessInfo.processInfo.environment["HOME"] ?? ""])
+  }
+
+  @Test("Resolved launch requests carry the expanded workspace path")
+  func resolvedRequestCarriesWorkspacePath() {
+    let launcher = LauncherData(label: "", steps: [WorkspaceLauncherStep(action: .shell("true"))])
+
+    #expect(
+      launcher.resolvedLaunchRequest(path: "~/Client", name: "Client").workspacePath
+        == ("~/Client" as NSString).expandingTildeInPath)
+    #expect(launcher.resolvedLaunchRequest(path: nil, name: "Client").workspacePath.isEmpty)
+  }
+
   @Test("Shell preparation completes before later steps")
   func shellPreparationWaits() throws {
     var prepared = false
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, waits in
+      runProcess: { _, _, _, waits in
         #expect(waits)
         prepared = waits
       },
@@ -38,7 +114,7 @@ struct WorkspaceLauncherExecutorTests {
   func shellFailureStopsPipeline() {
     var opened = false
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, waits in
+      runProcess: { _, _, _, waits in
         if waits { throw TestError.launchFailed }
       },
       openWithLaunchServices: { _ in opened = true })
@@ -54,7 +130,7 @@ struct WorkspaceLauncherExecutorTests {
   func composedLauncherOrder() throws {
     var events: [String] = []
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { executable, arguments, waitsForExit in
+      runProcess: { executable, arguments, _, waitsForExit in
         events.append(executable.lastPathComponent)
         #expect(arguments == ["-e", "tell application \"iTerm\" to activate"])
         #expect(waitsForExit)
@@ -80,7 +156,7 @@ struct WorkspaceLauncherExecutorTests {
   func launchServicesConfiguration() throws {
     var captured: WorkspaceLaunchServicesRequest?
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in },
+      runProcess: { _, _, _, _ in },
       openWithLaunchServices: { captured = $0 })
 
     try executor.execute(
@@ -129,7 +205,7 @@ struct WorkspaceLauncherExecutorTests {
   func activatingLaunchServicesConfiguration() throws {
     var captured: WorkspaceLaunchServicesRequest?
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in },
+      runProcess: { _, _, _, _ in },
       openWithLaunchServices: { captured = $0 })
 
     try executor.execute(
@@ -151,7 +227,7 @@ struct WorkspaceLauncherExecutorTests {
   func launchServicesDropsEmptyArguments() throws {
     var captured: WorkspaceLaunchServicesRequest?
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in },
+      runProcess: { _, _, _, _ in },
       openWithLaunchServices: { captured = $0 })
 
     try executor.execute(
@@ -170,7 +246,7 @@ struct WorkspaceLauncherExecutorTests {
     var processCalls: [ProcessCall] = []
     var launchCalls: [WorkspaceLaunchServicesRequest] = []
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { executable, arguments, waitsForExit in
+      runProcess: { executable, arguments, _, waitsForExit in
         processCalls.append(
           ProcessCall(
             executable: executable, arguments: arguments,
@@ -197,7 +273,7 @@ struct WorkspaceLauncherExecutorTests {
   func launchServicesOpensApplication() throws {
     var launchCalls: [WorkspaceLaunchServicesRequest] = []
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in },
+      runProcess: { _, _, _, _ in },
       openWithLaunchServices: { launchCalls.append($0) })
 
     try executor.execute(
@@ -214,7 +290,7 @@ struct WorkspaceLauncherExecutorTests {
   func launchServicesOpensURL() throws {
     var target: URL?
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in },
+      runProcess: { _, _, _, _ in },
       openWithLaunchServices: { target = $0.target })
 
     try executor.execute(
@@ -232,7 +308,7 @@ struct WorkspaceLauncherExecutorTests {
   func appleScriptHasNoImplicitLaunch() throws {
     var processRan = false
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { executable, arguments, waitsForExit in
+      runProcess: { executable, arguments, _, waitsForExit in
         processRan = true
         #expect(executable.path == "/usr/bin/osascript")
         #expect(arguments == ["-e", "tell application \"iTerm\" to activate"])
@@ -255,7 +331,7 @@ struct WorkspaceLauncherExecutorTests {
     var processCalls: [ProcessCall] = []
     var launched = false
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { executable, arguments, waitsForExit in
+      runProcess: { executable, arguments, _, waitsForExit in
         processCalls.append(
           ProcessCall(
             executable: executable, arguments: arguments,
@@ -278,7 +354,7 @@ struct WorkspaceLauncherExecutorTests {
   func shellLauncher() throws {
     var processCall: ProcessCall?
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { executable, arguments, waitsForExit in
+      runProcess: { executable, arguments, _, waitsForExit in
         processCall = ProcessCall(
           executable: executable, arguments: arguments,
           waitsForExit: waitsForExit)
@@ -302,7 +378,7 @@ struct WorkspaceLauncherExecutorTests {
   func openLauncher(application: String) throws {
     var processCall: ProcessCall?
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { executable, arguments, waitsForExit in
+      runProcess: { executable, arguments, _, waitsForExit in
         processCall = ProcessCall(
           executable: executable, arguments: arguments,
           waitsForExit: waitsForExit)
@@ -331,7 +407,7 @@ struct WorkspaceLauncherExecutorTests {
     defer { try? FileManager.default.removeItem(at: url) }
     var arguments: [String]?
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, args, _ in arguments = args },
+      runProcess: { _, args, _, _ in arguments = args },
       openWithLaunchServices: { _ in Issue.record("Expected an Open App step") })
     try executor.execute(
       WorkspaceLaunchRequest(steps: [.openApplication(url.path)], bundleID: "example.selected"))
@@ -341,7 +417,7 @@ struct WorkspaceLauncherExecutorTests {
   @Test("Launch Services requires an application bundle")
   func launchServicesRequiresBundleID() {
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in },
+      runProcess: { _, _, _, _ in },
       openWithLaunchServices: { _ in })
 
     #expect(throws: WorkspaceLauncherError.self) {
@@ -358,7 +434,7 @@ struct WorkspaceLauncherExecutorTests {
   func failedStepStopsComposition() {
     var processRan = false
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in processRan = true },
+      runProcess: { _, _, _, _ in processRan = true },
       openWithLaunchServices: { _ in throw TestError.launchFailed })
 
     #expect(throws: TestError.self) {
@@ -376,7 +452,7 @@ struct WorkspaceLauncherExecutorTests {
   @Test("An empty composition is rejected")
   func emptyCompositionIsRejected() {
     let executor = WorkspaceLauncherExecutor(
-      runProcess: { _, _, _ in },
+      runProcess: { _, _, _, _ in },
       openWithLaunchServices: { _ in })
 
     #expect(throws: WorkspaceLauncherError.self) {

@@ -1,7 +1,7 @@
 import Foundation
-import SpaceballsCore
 import Testing
 
+@testable import SpaceballsCore
 @testable import SpaceballsGUILib
 
 @Suite("Workspace Launcher Bundle IDs")
@@ -25,10 +25,10 @@ struct WorkspaceConfigTests {
 
   @Test("Adding AppleScript does not change an existing launcher's window policy")
   func addingScriptPreservesReuse() {
-    var launcher = LauncherTemplate.tower.launcher
+    var launcher = LauncherTemplate.intellij.launcher
     launcher.steps.append(WorkspaceLauncherStep(action: .appleScript("return 1")))
     #expect(launcher.allowsExistingWindow)
-    for template in [LauncherTemplate.iterm, .safari, .safariProfile] {
+    for template in [LauncherTemplate.iterm, .tower, .safari, .safariProfile] {
       #expect(!template.launcher.allowsExistingWindow)
     }
     #expect(LauncherTemplate.genericShell.launcher.steps[0].action == .shell("echo \"$PATH\""))
@@ -157,15 +157,6 @@ struct WorkspaceConfigTests {
     #expect(intelliJConfiguration.activates)
 
     #expect(LauncherTemplate.tower.launcher.bundleID == "com.fournova.Tower3")
-    #expect(LauncherTemplate.tower.launcher.steps.map(\.type) == [.launchServices])
-    guard
-      case .launchServices(let towerConfiguration) =
-        LauncherTemplate.tower.launcher.steps[0].action
-    else {
-      Issue.record("Expected the Tower Launch Services configuration")
-      return
-    }
-    #expect(towerConfiguration.activates)
 
     #expect(LauncherTemplate.safari.launcher.bundleID == "com.apple.Safari")
 
@@ -330,16 +321,181 @@ struct WorkspaceConfigTests {
       command: "gittower \"$PATH\"")
 
     #expect(migratedIntelliJ.steps.map(\.type) == [.launchServices])
-    #expect(migratedTower.steps.map(\.type) == [.launchServices])
-    guard case .launchServices(let configuration) = migratedIntelliJ.steps[0].action,
-      case .launchServices(let towerConfiguration) = migratedTower.steps[0].action
-    else {
+    guard case .launchServices(let configuration) = migratedIntelliJ.steps[0].action else {
       Issue.record("Expected migrated IntelliJ Launch Services configuration")
       return
     }
     #expect(configuration.target == "$PATH")
     #expect(configuration.activates)
-    #expect(towerConfiguration.activates)
+    #expect(
+      migratedTower.steps.map(\.action) == LauncherTemplate.tower.launcher.steps.map(\.action))
+    #expect(!migratedTower.allowsExistingWindow)
+  }
+
+  @Test("The Tower template opens each workspace's repository in a new Tower window")
+  func towerTemplateOpensNewWindow() {
+    let tower = LauncherTemplate.tower.launcher
+
+    // Tower otherwise shows the repository in its key window, replacing another
+    // workspace's repository; one waiting step runs its bundled CLI with
+    // --new-window (what the CLI receives is covered end to end below).
+    guard tower.steps.count == 1, case .shell(let command, let waitsForExit) = tower.steps[0].action
+    else {
+      Issue.record("Expected a single shell step running Tower's CLI")
+      return
+    }
+    #expect(command.contains("--new-window"))
+    #expect(waitsForExit)
+    // Relocating the focused pre-existing window would move another workspace's
+    // Tower window if Tower focuses it before the new window appears.
+    #expect(!tower.allowsExistingWindow)
+  }
+
+  @Test("The Tower template keeps the workspace path out of shell source")
+  func towerTemplateKeepsPathOutOfShellSource() {
+    let path = "/tmp/Client \"A\"/$(printf SUBSTITUTED)/it's"
+
+    let request = launcherData(LauncherTemplate.tower.launcher)
+      .resolvedLaunchRequest(path: path, name: "Client")
+
+    #expect(request.workspacePath == path)
+    for step in request.steps {
+      guard case .shell(let command, _) = step else { continue }
+      #expect(!command.contains(path))
+    }
+  }
+
+  @Test(
+    "Tower's CLI runs from outside its bundle, receives the workspace path verbatim, and is cleaned up",
+    arguments: [Int32(0), 37])
+  func towerCLIReceivesPathVerbatim(exitStatus: Int32) throws {
+    // A stand-in CLI inside a stand-in bundle, found by bundle ID as the real one is.
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = root.appendingPathComponent("Tower Beta.app")
+    let executables = app.appendingPathComponent("Contents/MacOS")
+    try FileManager.default.createDirectory(at: executables, withIntermediateDirectories: true)
+    let cli = executables.appendingPathComponent("gittower")
+    let receipt = root.appendingPathComponent("received")
+    try
+      "#!/bin/sh\nprintf '%s\\0' \"$0\" \"$(readlink \"$0\")\" \"$@\" > '\(receipt.path)'\nexit \(exitStatus)\n"
+      .write(to: cli, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
+    let path = "/tmp/Client \"A\"/$(printf SUBSTITUTED)/`printf TICK`/it's $HOME \\ end"
+
+    let executor = WorkspaceLauncherExecutor(
+      runProcess: WorkspaceLauncherExecutor.live.runProcess,
+      openWithLaunchServices: { _ in Issue.record("Tower launches through its CLI") },
+      applicationURL: { $0 == "com.fournova.Tower3" ? app : nil })
+    do {
+      try executor.execute(
+        launcherData(LauncherTemplate.tower.launcher)
+          .resolvedLaunchRequest(path: path, name: "Client"))
+      #expect(exitStatus == 0)
+    } catch WorkspaceLauncherError.processFailed(let type, let status, _) {
+      // A failing CLI still fails the launcher, after the temporary link is removed.
+      #expect(type == "shell")
+      #expect(status == exitStatus)
+    }
+
+    // The invoked path, its symlink target (empty when not a symlink), then arguments.
+    let received = try String(contentsOf: receipt, encoding: .utf8)
+      .split(separator: "\0", omittingEmptySubsequences: false).dropLast().map(String.init)
+    #expect(Array(received.dropFirst(2)) == ["--new-window", path])
+    // Run from inside its bundle, the CLI's main bundle is Tower itself, and
+    // Foundation rejects the defaults suite that carries its new-window request
+    // ("Using your own bundle identifier as an NSUserDefaults suite name does not
+    // make sense and will not work"); Tower then reuses its key window. It must
+    // run from a path outside the bundle, as an installed `gittower` symlink does,
+    // and that temporary path must not outlive the launch.
+    try #require(received.count >= 2)
+    let invoked = received[0]
+    #expect(received[1] == cli.path)
+    #expect(!invoked.hasPrefix(app.path + "/"))
+    #expect((try? FileManager.default.attributesOfItem(atPath: invoked)) == nil)
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: URL(fileURLWithPath: invoked).deletingLastPathComponent().path))
+  }
+
+  @Test("Launchers saved from the window-reusing Tower template open a new window")
+  func savedReusingTowerLauncherMigrates() throws {
+    let stepID = UUID()
+    let saved = AppLauncher(
+      appName: "Tower",
+      bundleID: "com.fournova.Tower3",
+      allowsExistingWindow: true,
+      steps: [
+        WorkspaceLauncherStep(
+          id: stepID,
+          action: .launchServices(
+            WorkspaceLaunchServicesConfiguration(target: "$PATH", activates: true)))
+      ])
+
+    let migrated = try roundTrip(saved)
+
+    #expect(migrated.steps.map(\.id) == [stepID])
+    #expect(migrated.steps.map(\.action) == LauncherTemplate.tower.launcher.steps.map(\.action))
+    #expect(!migrated.allowsExistingWindow)
+    #expect(try roundTrip(migrated) == migrated)
+  }
+
+  @Test(
+    "Customized Tower launchers keep their pipeline and window policy",
+    arguments: [
+      // A different target, activation, or extra step is the user's own composition.
+      [
+        WorkspaceLauncherAction.launchServices(
+          WorkspaceLaunchServicesConfiguration(target: "$PATH/app", activates: true))
+      ],
+      [.launchServices(WorkspaceLaunchServicesConfiguration(target: "$PATH", activates: false))],
+      [
+        .launchServices(WorkspaceLaunchServicesConfiguration(target: "$PATH", activates: true)),
+        .appleScript("return 1"),
+      ],
+      [
+        .launchServices(
+          WorkspaceLaunchServicesConfiguration(
+            target: "$PATH", arguments: ["--verbose"], activates: true))
+      ],
+      [
+        .launchServices(
+          WorkspaceLaunchServicesConfiguration(
+            target: "$PATH",
+            environment: [WorkspaceEnvironmentVariable(name: "GIT_DIR", value: "$PATH/.git")],
+            activates: true))
+      ],
+      [
+        .launchServices(
+          WorkspaceLaunchServicesConfiguration(
+            target: "$PATH", createsNewApplicationInstance: true, activates: true))
+      ],
+      // Re-enabling relocation on the migrated launcher is a deliberate choice.
+      LauncherTemplate.tower.launcher.steps.map(\.action),
+    ])
+  func customizedTowerLauncherIsNotMigrated(actions: [WorkspaceLauncherAction]) throws {
+    let saved = AppLauncher(
+      appName: "Tower",
+      bundleID: "com.fournova.Tower3",
+      allowsExistingWindow: true,
+      steps: actions.map { WorkspaceLauncherStep(action: $0) })
+
+    #expect(try roundTrip(saved) == saved)
+  }
+
+  @Test("Only Tower's stock Launch Services pipeline is replaced by the Tower migration")
+  func otherAppsWithTowerPipelineAreNotMigrated() throws {
+    let saved = AppLauncher(
+      appName: "IntelliJ IDEA",
+      bundleID: "com.jetbrains.intellij",
+      allowsExistingWindow: true,
+      steps: [
+        WorkspaceLauncherStep(
+          action: .launchServices(
+            WorkspaceLaunchServicesConfiguration(target: "$PATH", activates: true)))
+      ])
+
+    #expect(try roundTrip(saved) == saved)
   }
 
   @Test("Custom project shell launchers are not migrated")
@@ -432,6 +588,20 @@ struct WorkspaceConfigTests {
   ) -> WorkspaceLaunchServicesConfiguration? {
     guard case .launchServices(let configuration) = step.action else { return nil }
     return configuration
+  }
+
+  /// The restore-time form of a launcher, as the app hands it to the restorer.
+  private func launcherData(_ launcher: AppLauncher) -> LauncherData {
+    LauncherData(
+      label: launcher.label,
+      steps: launcher.steps,
+      appName: launcher.appName,
+      bundleID: launcher.bundleID,
+      allowsExistingWindow: launcher.allowsExistingWindow)
+  }
+
+  private func roundTrip(_ launcher: AppLauncher) throws -> AppLauncher {
+    try JSONDecoder().decode(AppLauncher.self, from: JSONEncoder().encode(launcher))
   }
 
   private func decodeLegacyLauncher(

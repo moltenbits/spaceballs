@@ -278,7 +278,7 @@ struct LauncherDetailView: View {
         .font(.headline)
 
       Text(
-        "Steps run from top to bottom. Steps that wait stop the pipeline on failure; background shell steps continue immediately. Use $PATH, $NAME, and $PROFILE in configurable values."
+        "Steps run from top to bottom. Steps that wait stop the pipeline on failure; background shell steps continue immediately. Use $PATH, $NAME, and $PROFILE in configurable values. Shell steps can also read $SPACEBALLS_WORKSPACE_PATH and $SPACEBALLS_APP_PATH, which keep every character of those paths intact."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -288,7 +288,7 @@ struct LauncherDetailView: View {
         isOn: $settings.workspaces[workspaceIndex].launchers[launcherIndex].allowsExistingWindow
       )
       Text(
-        "Turn off when this launcher must create a new window, such as the iTerm and Safari templates."
+        "Turn off when this launcher must create a new window, such as the iTerm, Tower, and Safari templates."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
