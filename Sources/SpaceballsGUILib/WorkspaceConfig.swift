@@ -96,10 +96,14 @@ public struct AppLauncher: Codable, Equatable, Identifiable {
 
   /// Tower shows a repository opened through Launch Services in its key window,
   /// replacing whichever repository that window held. Its bundled CLI's
-  /// `--new-window` flag asks for a window of its own. The CLI and the repository
-  /// are named through the shell environment, so neither path is parsed as shell.
+  /// `--new-window` flag asks for a window of its own, but only when the CLI runs
+  /// from outside Tower.app, as an installed `gittower` symlink does: run from
+  /// its bundle path, the CLI's main bundle is Tower itself, Foundation rejects
+  /// the defaults suite carrying the request, and Tower reuses its key window. So
+  /// the step runs it through a temporary symlink. The CLI and the repository are
+  /// named through the shell environment, so neither path is parsed as shell.
   static let towerLaunch = WorkspaceLauncherAction.shell(
-    "\"$\(WorkspaceShellEnvironment.applicationPath)/Contents/MacOS/gittower\" --new-window \"$\(WorkspaceShellEnvironment.workspacePath)\"",
+    "dir=\"$(mktemp -d)\" && ln -s \"$\(WorkspaceShellEnvironment.applicationPath)/Contents/MacOS/gittower\" \"$dir/gittower\" && \"$dir/gittower\" --new-window \"$\(WorkspaceShellEnvironment.workspacePath)\"; rc=$?; rm -rf \"$dir\"; exit $rc",
     waitsForExit: true)
 
   /// The former stock Tower launch, which reused Tower's key window.

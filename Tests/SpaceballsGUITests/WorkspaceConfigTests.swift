@@ -337,15 +337,15 @@ struct WorkspaceConfigTests {
     let tower = LauncherTemplate.tower.launcher
 
     // Tower otherwise shows the repository in its key window, replacing another
-    // workspace's repository; its bundled CLI's --new-window flag prevents that.
-    // The CLI is found through the app's bundle ID, and both paths arrive as
-    // environment data rather than shell source.
-    #expect(
-      tower.steps.map(\.action) == [
-        .shell(
-          "\"$SPACEBALLS_APP_PATH/Contents/MacOS/gittower\" --new-window \"$SPACEBALLS_WORKSPACE_PATH\"",
-          waitsForExit: true)
-      ])
+    // workspace's repository; one waiting step runs its bundled CLI with
+    // --new-window (what the CLI receives is covered end to end below).
+    guard tower.steps.count == 1, case .shell(let command, let waitsForExit) = tower.steps[0].action
+    else {
+      Issue.record("Expected a single shell step running Tower's CLI")
+      return
+    }
+    #expect(command.contains("--new-window"))
+    #expect(waitsForExit)
     // Relocating the focused pre-existing window would move another workspace's
     // Tower window if Tower focuses it before the new window appears.
     #expect(!tower.allowsExistingWindow)
@@ -365,8 +365,10 @@ struct WorkspaceConfigTests {
     }
   }
 
-  @Test("Tower's CLI receives the workspace path verbatim, whatever its characters")
-  func towerCLIReceivesPathVerbatim() throws {
+  @Test(
+    "Tower's CLI runs from outside its bundle, receives the workspace path verbatim, and is cleaned up",
+    arguments: [Int32(0), 37])
+  func towerCLIReceivesPathVerbatim(exitStatus: Int32) throws {
     // A stand-in CLI inside a stand-in bundle, found by bundle ID as the real one is.
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -374,7 +376,9 @@ struct WorkspaceConfigTests {
     let executables = app.appendingPathComponent("Contents/MacOS")
     try FileManager.default.createDirectory(at: executables, withIntermediateDirectories: true)
     let cli = executables.appendingPathComponent("gittower")
-    try "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$(dirname \"$0\")/received\"\n"
+    let receipt = root.appendingPathComponent("received")
+    try
+      "#!/bin/sh\nprintf '%s\\0' \"$0\" \"$(readlink \"$0\")\" \"$@\" > '\(receipt.path)'\nexit \(exitStatus)\n"
       .write(to: cli, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
     let path = "/tmp/Client \"A\"/$(printf SUBSTITUTED)/`printf TICK`/it's $HOME \\ end"
@@ -383,13 +387,35 @@ struct WorkspaceConfigTests {
       runProcess: WorkspaceLauncherExecutor.live.runProcess,
       openWithLaunchServices: { _ in Issue.record("Tower launches through its CLI") },
       applicationURL: { $0 == "com.fournova.Tower3" ? app : nil })
-    try executor.execute(
-      launcherData(LauncherTemplate.tower.launcher)
-        .resolvedLaunchRequest(path: path, name: "Client"))
+    do {
+      try executor.execute(
+        launcherData(LauncherTemplate.tower.launcher)
+          .resolvedLaunchRequest(path: path, name: "Client"))
+      #expect(exitStatus == 0)
+    } catch WorkspaceLauncherError.processFailed(let type, let status, _) {
+      // A failing CLI still fails the launcher, after the temporary link is removed.
+      #expect(type == "shell")
+      #expect(status == exitStatus)
+    }
 
-    let received = try String(
-      contentsOf: executables.appendingPathComponent("received"), encoding: .utf8)
-    #expect(received.split(separator: "\0").map(String.init) == ["--new-window", path])
+    // The invoked path, its symlink target (empty when not a symlink), then arguments.
+    let received = try String(contentsOf: receipt, encoding: .utf8)
+      .split(separator: "\0", omittingEmptySubsequences: false).dropLast().map(String.init)
+    #expect(Array(received.dropFirst(2)) == ["--new-window", path])
+    // Run from inside its bundle, the CLI's main bundle is Tower itself, and
+    // Foundation rejects the defaults suite that carries its new-window request
+    // ("Using your own bundle identifier as an NSUserDefaults suite name does not
+    // make sense and will not work"); Tower then reuses its key window. It must
+    // run from a path outside the bundle, as an installed `gittower` symlink does,
+    // and that temporary path must not outlive the launch.
+    try #require(received.count >= 2)
+    let invoked = received[0]
+    #expect(received[1] == cli.path)
+    #expect(!invoked.hasPrefix(app.path + "/"))
+    #expect((try? FileManager.default.attributesOfItem(atPath: invoked)) == nil)
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: URL(fileURLWithPath: invoked).deletingLastPathComponent().path))
   }
 
   @Test("Launchers saved from the window-reusing Tower template open a new window")
