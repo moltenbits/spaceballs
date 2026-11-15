@@ -2099,10 +2099,11 @@ public final class SwitcherViewModel: ObservableObject {
       icon = nil
     }
 
+    let names = SwitcherRowNames(ownerName: window.ownerName, windowName: window.name ?? "")
     return SwitcherRow(
       id: window.id,
-      appName: window.ownerName,
-      windowTitle: window.name ?? "",
+      appName: names.appName,
+      windowTitle: names.windowTitle,
       appIcon: icon,
       pid: window.pid,
       isSticky: window.isSticky,

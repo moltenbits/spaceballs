@@ -1137,6 +1137,23 @@ struct RefreshTests {
     #expect(terminalRow?.pid == 200)
   }
 
+  @Test("A renamed web-app instance shows its instance name as the window title")
+  func renamedWebAppInstanceRow() {
+    var ds = makeTwoSpaceDataSource()
+    ds.windowList.append(
+      makeWindowDict(id: 30, ownerName: "T3 Code (Spaceballs)", name: "T3 Code", pid: 300))
+    ds.windowSpaces[30] = [1]
+    let vm = makeTestSwitcherViewModel(spaceManager: SpaceManager(dataSource: ds))
+    vm.refresh()
+
+    let instanceRow = vm.flatFilteredRows.first(where: { $0.id == 30 })
+    #expect(instanceRow?.appName == "T3 Code")
+    #expect(instanceRow?.windowTitle == "T3 Code (Spaceballs)")
+
+    vm.searchText = "spaceballs"
+    #expect(vm.flatFilteredRows.map(\.id) == [30])
+  }
+
   @Test("Sticky window is marked")
   func stickyWindowMarked() {
     var ds = MockDataSource()
