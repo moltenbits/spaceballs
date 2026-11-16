@@ -906,6 +906,7 @@ public class SpaceManager {
     DispatchQueue.global(qos: .userInteractive).async {
       guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 1.0)
       else {
+        Self.reportMCFailure("createSpace: Mission Control AX tree not found")
         completion?(.failure(.missionControlNotFound))
         return
       }
@@ -940,6 +941,7 @@ public class SpaceManager {
 
       guard let addResult else {
         // Dismiss Mission Control before reporting error
+        Self.reportMCFailure("createSpace: Add Desktop button not found in Mission Control")
         Self.dismissMissionControl()
         completion?(.failure(.addButtonNotFound))
         return
@@ -1151,6 +1153,8 @@ public class SpaceManager {
         let tree = Self.awaitMissionControlTree(
           dockElement: dockElement, timeout: 1.0, requiredDisplays: [screenNumber])
       else {
+        Self.reportMCFailure(
+          "closeSpace: Mission Control AX tree not found for display \(screenNumber)")
         completion?(.failure(.missionControlNotFound))
         return
       }
