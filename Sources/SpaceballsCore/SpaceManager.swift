@@ -2538,6 +2538,7 @@ public class SpaceManager {
     let sourceScreenNumber = sourceSpace.flatMap { Self.displayIDForUUID($0.displayUUID) }
     let moved = moveWindowInMC(
       windowTitle: request.windowTitle, windowID: windowID, targetSpaceTitle: targetSpaceTitle,
+      targetSpaceID: targetSpace.id,
       targetSpaceIndex: Self.perDisplayDesktopIndex(of: targetSpace.id, in: allSpaces),
       targetScreenNumber: targetScreenNumber, sourceScreenNumber: sourceScreenNumber,
       switchToTarget: activateAfterMove)
@@ -2766,6 +2767,7 @@ public class SpaceManager {
   @discardableResult
   public func moveWindowInMC(
     windowTitle: String, windowID: Int? = nil, targetSpaceTitle: String,
+    targetSpaceID: UInt64? = nil,
     targetSpaceIndex: Int? = nil, targetScreenNumber: CGDirectDisplayID? = nil,
     sourceScreenNumber: CGDirectDisplayID? = nil, verbose: Bool = false,
     switchToTarget: Bool = true
@@ -2952,7 +2954,37 @@ public class SpaceManager {
         "move-space", "drop tile=\"\(tileTitle)\" at (\(Int(dropPoint.x)),\(Int(dropPoint.y)))")
       Self.postMouseUp(at: dropPoint)
 
-      Thread.sleep(forTimeInterval: 0.3)
+      // Mission Control commits the drop some time after the release, and
+      // pressing a tile or dismissing before then cancels it. Keep the
+      // session open until the window server reports the window in the
+      // target Space; a window that never gets there was not moved.
+      if let windowID, let targetSpaceID {
+        let released = Date()
+        let verifier = MissionControlDropVerifier()
+        let outcome = verifier.awaitArrival(
+          in: targetSpaceID,
+          .init(
+            windowSpaceIDs: { self.dataSource.fetchSpacesForWindow(windowID) },
+            sleep: { Thread.sleep(forTimeInterval: $0) },
+            now: { Date() }))
+        guard outcome == .arrived else {
+          var left = "unknown Spaces"
+          if case .timedOut(let lastSpaceIDs) = outcome { left = "Spaces \(lastSpaceIDs)" }
+          Self.reportMCFailure(
+            "moveWindowInMC: window \(windowID) not in Space \(targetSpaceID) "
+              + "\(verifier.timeout)s after the drop; left in \(left)")
+          Self.dismissMissionControlIfPresent(dockElement: dockElement)
+          return
+        }
+        Diagnostics.log(
+          "move-space",
+          "drop verified windowID=\(windowID) in space \(targetSpaceID) after "
+            + "\(Int(Date().timeIntervalSince(released) * 1000))ms")
+      } else {
+        // No window or Space identity to verify against (the title-driven
+        // debug command): wait out the commit instead.
+        Thread.sleep(forTimeInterval: 1.0)
+      }
       if switchToTarget {
         // Click the target space to switch to it (also dismisses MC)
         AXUIElementPerformAction(targetButton, kAXPressAction as CFString)
