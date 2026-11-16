@@ -3227,7 +3227,7 @@ public class SpaceManager {
       // A lingering Mission Control (pre-switch tile press still closing, a
       // failed earlier attempt, or user-opened) would turn the awake TOGGLE
       // into a dismissal — make sure it's fully gone, then open fresh.
-      if Self.axChildWithIdentifier(dockElement, identifier: "mc") != nil {
+      if Self.missionControlExposure(dockElement: dockElement).isOpen {
         Self.dismissMissionControl()
         _ = Self.awaitMissionControlDismissed(timeout: 2.0)
         Thread.sleep(forTimeInterval: 0.5)
@@ -3426,16 +3426,16 @@ public class SpaceManager {
     return true
   }
 
-  /// Dismisses Mission Control only when its AX group is still present. The
+  /// Dismisses Mission Control only when it is still open. The
   /// awake notification TOGGLES Mission Control, so firing it blind after a
   /// drop that already dismissed MC would re-open it.
   private static func dismissMissionControlIfPresent(dockElement: AXUIElement) {
-    if axChildWithIdentifier(dockElement, identifier: "mc") != nil {
+    if missionControlExposure(dockElement: dockElement).isOpen {
       dismissMissionControl()
     }
   }
 
-  /// True when the Dock currently exposes a Mission Control AX group.
+  /// True while Mission Control is open (`MissionControlExposure.isOpen`).
   static func missionControlPresent() -> Bool {
     guard
       let dockApp = NSRunningApplication.runningApplications(
@@ -3443,10 +3443,10 @@ public class SpaceManager {
       ).first
     else { return false }
     let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
-    return axChildWithIdentifier(dockElement, identifier: "mc") != nil
+    return missionControlExposure(dockElement: dockElement).isOpen
   }
 
-  /// Polls until Mission Control's AX group disappears from the Dock.
+  /// Polls until Mission Control no longer reads as open.
   /// Sequencing guard for flows that must not send the awake TOGGLE while a
   /// previous Mission Control appearance is still closing.
   @discardableResult
@@ -3502,7 +3502,7 @@ public class SpaceManager {
         print("hovered bar; first tile \"\(firstTitle)\" located at \(String(describing: aim))")
       }
 
-      let host = tree.root == tree.dockGroup ? "Dock" : "WindowManager"
+      let host = tree.host == .dock ? "Dock" : "WindowManager"
       print("=== Mission Control AX Tree (hosted by \(host)) ===\n")
       Self.dumpAXElement(tree.root, indent: 0)
       print("\n=== End AX Tree ===")

@@ -5,18 +5,26 @@ import Cocoa
 ///
 /// Through macOS 26 the Dock exposes an `mc` group whose children are one
 /// `mc.display` group per display, each holding `mc.windows` (thumbnails) and
-/// `mc.spaces` (the bar). On macOS 27 the Dock still exposes the `mc` group
-/// while Mission Control is open — but as an empty stub — and the real tree
-/// moved to the WindowManager process: `mc.display` groups are direct children
-/// of its application element, window thumbnails are direct children of each
-/// display (no `mc.windows` container) carrying a `wid` attribute with their
-/// CGWindowID, and the `mc.spaces` → `mc.spaces.list` bar is unchanged.
+/// `mc.spaces` (the bar). On macOS 27 the real tree moved to the
+/// WindowManager process: `mc.display` groups are direct children of its
+/// application element while Mission Control is open (it has no children
+/// otherwise), window thumbnails are direct children of each display (no
+/// `mc.windows` container) carrying a `wid` attribute with their CGWindowID,
+/// and the `mc.spaces` → `mc.spaces.list` bar is unchanged. The Dock's `mc`
+/// group survived on macOS 27.0 as an empty stub and is gone from macOS 27.2,
+/// so neither tree-finding nor the open/closed signal may depend on it
+/// (`MissionControlExposure`).
 struct MissionControlTree {
-  /// The Dock's `mc` group. Present exactly while Mission Control is open on
-  /// every supported macOS, which keeps it the open/closed signal.
-  let dockGroup: AXUIElement
+  /// The process whose accessibility tree holds the `mc.display` groups.
+  enum Host: Equatable {
+    case dock
+    case windowManager
+  }
+
   /// Element whose children are the `mc.display` groups.
   let root: AXUIElement
+  /// The process `root` belongs to.
+  let host: Host
   /// Number of displays the system currently has; bounds the single-display
   /// fallback of `display(matching:)`.
   let activeDisplayCount: Int
@@ -93,48 +101,86 @@ struct MissionControlTree {
   }
 }
 
+/// What the Dock and WindowManager expose of Mission Control at one moment.
+///
+/// `Element` is an accessibility element in production; tests use plain values.
+struct MissionControlExposure<Element> {
+  /// An element together with the `AXDisplayID` of each `mc.display` group
+  /// directly under it (nil for a group whose ID can't be read).
+  struct DisplayHolder {
+    var element: Element
+    var displayIDs: [CGDirectDisplayID?]
+  }
+
+  /// The Dock's `mc` group, when the Dock exposes one.
+  var dockGroup: DisplayHolder?
+  /// WindowManager's application element, per running WindowManager process.
+  var windowManager: [DisplayHolder]
+
+  /// Whether Mission Control is open: the Dock exposes its `mc` group, or
+  /// WindowManager exposes `mc.display` groups. Each exists only while
+  /// Mission Control is open; which one appears depends on the macOS version.
+  var isOpen: Bool {
+    dockGroup != nil || windowManager.contains { !$0.displayIDs.isEmpty }
+  }
+
+  /// The element holding the `mc.display` groups of every display in
+  /// `requiredDisplays` (of any display when that is empty), and the process
+  /// it belongs to. The Dock's group is preferred over WindowManager.
+  func root(requiring requiredDisplays: [CGDirectDisplayID])
+    -> (element: Element, host: MissionControlTree.Host)?
+  {
+    let candidates =
+      (dockGroup.map { [($0, MissionControlTree.Host.dock)] } ?? [])
+      + windowManager.map { ($0, .windowManager) }
+    for (holder, host) in candidates {
+      guard !holder.displayIDs.isEmpty else { continue }
+      let exposed = Set(holder.displayIDs.compactMap { $0 })
+      guard requiredDisplays.allSatisfy(exposed.contains) else { continue }
+      return (holder.element, host)
+    }
+    return nil
+  }
+}
+
 extension SpaceManager {
   static let windowManagerBundleID = "com.apple.WindowManager"
 
-  /// Polls until Mission Control's tree is readable: the Dock's `mc` group has
-  /// appeared and `mc.display` groups are exposed — under that group, or
-  /// under WindowManager when the Dock's group is only a stub — for every
-  /// display in `requiredDisplays` (any one display when that is empty).
-  /// Returns nil at the deadline. Callers still owe Mission Control its
-  /// settle time before interacting: the elements appear before they are
-  /// interactive.
+  /// Polls until Mission Control's tree is readable: `mc.display` groups are
+  /// exposed — by the Dock's `mc` group or by WindowManager, see
+  /// `MissionControlExposure` — for every display in `requiredDisplays` (any
+  /// one display when that is empty). Returns nil at the deadline. Callers
+  /// still owe Mission Control its settle time before interacting: the
+  /// elements appear before they are interactive.
   static func awaitMissionControlTree(
     dockElement: AXUIElement, timeout: TimeInterval,
     requiredDisplays: [CGDirectDisplayID] = []
   ) -> MissionControlTree? {
     let deadline = Date().addingTimeInterval(timeout)
-    var dockGroup: AXUIElement?
     repeat {
-      if dockGroup == nil {
-        dockGroup = axChildWithIdentifier(dockElement, identifier: "mc")
-      }
-      if let dockGroup,
-        let tree = missionControlTree(dockGroup: dockGroup, requiredDisplays: requiredDisplays)
-      {
-        return tree
+      let exposure = missionControlExposure(dockElement: dockElement)
+      if let located = exposure.root(requiring: requiredDisplays) {
+        return MissionControlTree(
+          root: located.element, host: located.host, activeDisplayCount: activeDisplayCount())
       }
       Thread.sleep(forTimeInterval: 0.01)
     } while Date() < deadline
     return nil
   }
 
-  private static func missionControlTree(
-    dockGroup: AXUIElement, requiredDisplays: [CGDirectDisplayID]
-  ) -> MissionControlTree? {
-    for root in [dockGroup] + windowManagerElements() {
-      let displays = MissionControlTree.displays(under: root)
-      guard !displays.isEmpty else { continue }
-      let exposed = Set(displays.compactMap(MissionControlTree.displayID(of:)))
-      guard requiredDisplays.allSatisfy(exposed.contains) else { continue }
-      return MissionControlTree(
-        dockGroup: dockGroup, root: root, activeDisplayCount: activeDisplayCount())
+  /// Live read of what the Dock and WindowManager expose of Mission Control.
+  static func missionControlExposure(dockElement: AXUIElement)
+    -> MissionControlExposure<AXUIElement>
+  {
+    func holder(_ element: AXUIElement) -> MissionControlExposure<AXUIElement>.DisplayHolder {
+      .init(
+        element: element,
+        displayIDs: MissionControlTree.displays(under: element)
+          .map(MissionControlTree.displayID(of:)))
     }
-    return nil
+    return MissionControlExposure(
+      dockGroup: axChildWithIdentifier(dockElement, identifier: "mc").map(holder),
+      windowManager: windowManagerElements().map(holder))
   }
 
   static func activeDisplayCount() -> Int {
@@ -195,7 +241,7 @@ extension MissionControlTree {
   /// tile positions as centers; the Dock reported top-left origins. A
   /// property of the host, not a heuristic: inferring it from the row's
   /// symmetry misclassified a two-tile bar, whose row is not centered.
-  var tileAnchor: TileAnchor { root == dockGroup ? .origin : .center }
+  var tileAnchor: TileAnchor { host == .dock ? .origin : .center }
 
   /// The point to aim at for a tile. A `.center` position IS the tile's
   /// visible center, so it is used as-is. An `.origin` position gives the
