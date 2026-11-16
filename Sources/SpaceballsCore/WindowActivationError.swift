@@ -18,6 +18,14 @@ public enum WindowActivationError: Error, Equatable, LocalizedError {
   }
 }
 
+/// Where System Settings lists the apps granted the accessibility permission.
+public enum AccessibilitySettingsPane {
+  /// The pane's location as the user reads it. macOS 27 renamed the pane from
+  /// "Accessibility" to "Device Control and Data Access"; the permission and
+  /// its API are unchanged.
+  public static let path = "System Settings > Privacy & Security > Device Control and Data Access"
+}
+
 public enum SpaceCreateError: Error, Equatable, LocalizedError {
   case accessibilityNotTrusted
   case dockNotRunning
@@ -28,7 +36,7 @@ public enum SpaceCreateError: Error, Equatable, LocalizedError {
     switch self {
     case .accessibilityNotTrusted:
       return
-        "Accessibility permission required. Grant access in System Settings > Privacy & Security > Accessibility."
+        "Accessibility permission required. Grant access in \(AccessibilitySettingsPane.path)."
     case .dockNotRunning:
       return "The Dock process is not running."
     case .missionControlNotFound:
@@ -52,7 +60,7 @@ public enum SpaceCloseError: Error, Equatable, LocalizedError {
     switch self {
     case .accessibilityNotTrusted:
       return
-        "Accessibility permission required. Grant access in System Settings > Privacy & Security > Accessibility."
+        "Accessibility permission required. Grant access in \(AccessibilitySettingsPane.path)."
     case .dockNotRunning:
       return "The Dock process is not running."
     case .missionControlNotFound:

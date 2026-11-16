@@ -1109,7 +1109,7 @@ extension AppDelegate: KeyInterceptorDelegate {
     let focusRestore = viewModel.focusRestoreTarget(afterClosing: spaceID)
     Diagnostics.log(
       "close-space",
-      "panel close requested space=\(spaceID) selected=\(viewModel.selectedItem) restore=\(String(describing: focusRestore))"
+      "panel close requested space=\(spaceID) selected=\(String(describing: viewModel.selectedItem)) restore=\(String(describing: focusRestore))"
     )
 
     keyInterceptor.setSuppressConfirm(true)

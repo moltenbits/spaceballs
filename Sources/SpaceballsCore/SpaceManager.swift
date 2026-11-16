@@ -504,8 +504,8 @@ public class SpaceManager {
   /// Checks AX trust with an OS prompt if not yet granted.
   ///
   /// On first call for an untrusted process, macOS shows a system dialog
-  /// and opens System Settings → Privacy & Security → Accessibility with
-  /// the app pre-listed. Returns `true` if already trusted.
+  /// and opens the accessibility pane of System Settings
+  /// (`AccessibilitySettingsPane`) with the app pre-listed. Returns `true` if already trusted.
   @discardableResult
   public static func ensureAccessibilityTrusted() -> Bool {
     let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
@@ -906,6 +906,7 @@ public class SpaceManager {
     DispatchQueue.global(qos: .userInteractive).async {
       guard let tree = Self.awaitMissionControlTree(dockElement: dockElement, timeout: 1.0)
       else {
+        Self.reportMCFailure("createSpace: Mission Control AX tree not found")
         completion?(.failure(.missionControlNotFound))
         return
       }
@@ -940,6 +941,7 @@ public class SpaceManager {
 
       guard let addResult else {
         // Dismiss Mission Control before reporting error
+        Self.reportMCFailure("createSpace: Add Desktop button not found in Mission Control")
         Self.dismissMissionControl()
         completion?(.failure(.addButtonNotFound))
         return
@@ -1151,6 +1153,8 @@ public class SpaceManager {
         let tree = Self.awaitMissionControlTree(
           dockElement: dockElement, timeout: 1.0, requiredDisplays: [screenNumber])
       else {
+        Self.reportMCFailure(
+          "closeSpace: Mission Control AX tree not found for display \(screenNumber)")
         completion?(.failure(.missionControlNotFound))
         return
       }
@@ -2088,7 +2092,7 @@ public class SpaceManager {
   /// not, so create it here (on the main thread, as AppKit requires).
   static func ensureHitTestingAvailable() -> Bool {
     let initialize: () -> Bool = {
-      NSApplication.shared
+      _ = NSApplication.shared
       return NSApp != nil
     }
     return Thread.isMainThread ? initialize() : DispatchQueue.main.sync(execute: initialize)
@@ -2534,6 +2538,7 @@ public class SpaceManager {
     let sourceScreenNumber = sourceSpace.flatMap { Self.displayIDForUUID($0.displayUUID) }
     let moved = moveWindowInMC(
       windowTitle: request.windowTitle, windowID: windowID, targetSpaceTitle: targetSpaceTitle,
+      targetSpaceID: targetSpace.id,
       targetSpaceIndex: Self.perDisplayDesktopIndex(of: targetSpace.id, in: allSpaces),
       targetScreenNumber: targetScreenNumber, sourceScreenNumber: sourceScreenNumber,
       switchToTarget: activateAfterMove)
@@ -2762,6 +2767,7 @@ public class SpaceManager {
   @discardableResult
   public func moveWindowInMC(
     windowTitle: String, windowID: Int? = nil, targetSpaceTitle: String,
+    targetSpaceID: UInt64? = nil,
     targetSpaceIndex: Int? = nil, targetScreenNumber: CGDirectDisplayID? = nil,
     sourceScreenNumber: CGDirectDisplayID? = nil, verbose: Bool = false,
     switchToTarget: Bool = true
@@ -2948,7 +2954,37 @@ public class SpaceManager {
         "move-space", "drop tile=\"\(tileTitle)\" at (\(Int(dropPoint.x)),\(Int(dropPoint.y)))")
       Self.postMouseUp(at: dropPoint)
 
-      Thread.sleep(forTimeInterval: 0.3)
+      // Mission Control commits the drop some time after the release, and
+      // pressing a tile or dismissing before then cancels it. Keep the
+      // session open until the window server reports the window in the
+      // target Space; a window that never gets there was not moved.
+      if let windowID, let targetSpaceID {
+        let released = Date()
+        let verifier = MissionControlDropVerifier()
+        let outcome = verifier.awaitArrival(
+          in: targetSpaceID,
+          .init(
+            windowSpaceIDs: { self.dataSource.fetchSpacesForWindow(windowID) },
+            sleep: { Thread.sleep(forTimeInterval: $0) },
+            now: { Date() }))
+        guard outcome == .arrived else {
+          var left = "unknown Spaces"
+          if case .timedOut(let lastSpaceIDs) = outcome { left = "Spaces \(lastSpaceIDs)" }
+          Self.reportMCFailure(
+            "moveWindowInMC: window \(windowID) not in Space \(targetSpaceID) "
+              + "\(verifier.timeout)s after the drop; left in \(left)")
+          Self.dismissMissionControlIfPresent(dockElement: dockElement)
+          return
+        }
+        Diagnostics.log(
+          "move-space",
+          "drop verified windowID=\(windowID) in space \(targetSpaceID) after "
+            + "\(Int(Date().timeIntervalSince(released) * 1000))ms")
+      } else {
+        // No window or Space identity to verify against (the title-driven
+        // debug command): wait out the commit instead.
+        Thread.sleep(forTimeInterval: 1.0)
+      }
       if switchToTarget {
         // Click the target space to switch to it (also dismisses MC)
         AXUIElementPerformAction(targetButton, kAXPressAction as CFString)
@@ -3227,7 +3263,7 @@ public class SpaceManager {
       // A lingering Mission Control (pre-switch tile press still closing, a
       // failed earlier attempt, or user-opened) would turn the awake TOGGLE
       // into a dismissal — make sure it's fully gone, then open fresh.
-      if Self.axChildWithIdentifier(dockElement, identifier: "mc") != nil {
+      if Self.missionControlExposure(dockElement: dockElement).isOpen {
         Self.dismissMissionControl()
         _ = Self.awaitMissionControlDismissed(timeout: 2.0)
         Thread.sleep(forTimeInterval: 0.5)
@@ -3426,16 +3462,16 @@ public class SpaceManager {
     return true
   }
 
-  /// Dismisses Mission Control only when its AX group is still present. The
+  /// Dismisses Mission Control only when it is still open. The
   /// awake notification TOGGLES Mission Control, so firing it blind after a
   /// drop that already dismissed MC would re-open it.
   private static func dismissMissionControlIfPresent(dockElement: AXUIElement) {
-    if axChildWithIdentifier(dockElement, identifier: "mc") != nil {
+    if missionControlExposure(dockElement: dockElement).isOpen {
       dismissMissionControl()
     }
   }
 
-  /// True when the Dock currently exposes a Mission Control AX group.
+  /// True while Mission Control is open (`MissionControlExposure.isOpen`).
   static func missionControlPresent() -> Bool {
     guard
       let dockApp = NSRunningApplication.runningApplications(
@@ -3443,10 +3479,10 @@ public class SpaceManager {
       ).first
     else { return false }
     let dockElement = AXUIElementCreateApplication(dockApp.processIdentifier)
-    return axChildWithIdentifier(dockElement, identifier: "mc") != nil
+    return missionControlExposure(dockElement: dockElement).isOpen
   }
 
-  /// Polls until Mission Control's AX group disappears from the Dock.
+  /// Polls until Mission Control no longer reads as open.
   /// Sequencing guard for flows that must not send the awake TOGGLE while a
   /// previous Mission Control appearance is still closing.
   @discardableResult
@@ -3502,7 +3538,7 @@ public class SpaceManager {
         print("hovered bar; first tile \"\(firstTitle)\" located at \(String(describing: aim))")
       }
 
-      let host = tree.root == tree.dockGroup ? "Dock" : "WindowManager"
+      let host = tree.host == .dock ? "Dock" : "WindowManager"
       print("=== Mission Control AX Tree (hosted by \(host)) ===\n")
       Self.dumpAXElement(tree.root, indent: 0)
       print("\n=== End AX Tree ===")

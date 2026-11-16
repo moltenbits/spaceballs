@@ -269,7 +269,7 @@ spaceballs --version                  # Version
 ## Requirements
 
 - macOS 27 (Golden Gate) or newer — Spaceballs depends on private macOS APIs that can change in any macOS release, so each release targets the macOS version it was developed and tested on; on older macOS, use the last release that targeted it
-- **Accessibility permission** — required for keyboard interception and window activation (System Settings > Privacy & Security > Accessibility)
+- **Accessibility permission** — required for keyboard interception and window activation (System Settings > Privacy & Security > Device Control and Data Access, the pane macOS 27 renamed from "Accessibility")
 - **Screen Recording permission** — required for window titles to be visible (System Settings > Privacy & Security > Screen Recording)
 
 ## How It Works
