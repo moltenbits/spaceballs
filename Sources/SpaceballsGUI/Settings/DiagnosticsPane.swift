@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SpaceballsCore
 import SpaceballsGUILib
 import SwiftUI

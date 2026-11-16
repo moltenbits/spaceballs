@@ -2092,7 +2092,7 @@ public class SpaceManager {
   /// not, so create it here (on the main thread, as AppKit requires).
   static func ensureHitTestingAvailable() -> Bool {
     let initialize: () -> Bool = {
-      NSApplication.shared
+      _ = NSApplication.shared
       return NSApp != nil
     }
     return Thread.isMainThread ? initialize() : DispatchQueue.main.sync(execute: initialize)
