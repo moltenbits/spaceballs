@@ -504,8 +504,8 @@ public class SpaceManager {
   /// Checks AX trust with an OS prompt if not yet granted.
   ///
   /// On first call for an untrusted process, macOS shows a system dialog
-  /// and opens System Settings → Privacy & Security → Accessibility with
-  /// the app pre-listed. Returns `true` if already trusted.
+  /// and opens the accessibility pane of System Settings
+  /// (`AccessibilitySettingsPane`) with the app pre-listed. Returns `true` if already trusted.
   @discardableResult
   public static func ensureAccessibilityTrusted() -> Bool {
     let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary

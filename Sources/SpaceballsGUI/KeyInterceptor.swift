@@ -1,4 +1,5 @@
 import Cocoa
+import SpaceballsCore
 import SpaceballsGUILib
 
 protocol KeyInterceptorDelegate: AnyObject {
@@ -118,7 +119,7 @@ final class KeyInterceptor {
       // Prompting is owned by PermissionsCoordinator (launch + every activation);
       // this just waits for the grant and brings the tap up.
       print(
-        "Waiting for Accessibility permission... Grant access in System Settings → Privacy & Security → Accessibility."
+        "Waiting for Accessibility permission... Grant access in \(AccessibilitySettingsPane.path)."
       )
 
       // Poll until permission is granted, then create the tap
@@ -161,7 +162,7 @@ final class KeyInterceptor {
     else {
       print("ERROR: Failed to create CGEvent tap even though AXIsProcessTrusted() is true.")
       print(
-        "Try removing and re-adding Spaceballs in System Settings → Privacy & Security → Accessibility."
+        "Try removing and re-adding Spaceballs in \(AccessibilitySettingsPane.path)."
       )
       return
     }
